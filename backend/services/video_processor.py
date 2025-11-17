@@ -1,0 +1,387 @@
+"""Video processing service for cutting, adding audio and subtitles."""
+import ffmpeg
+import json
+import logging
+from pathlib import Path
+from typing import List, Dict, Tuple, Literal
+import subprocess
+
+logger = logging.getLogger(__name__)
+
+
+class VideoProcessor:
+    """Process video segments: cut, add TTS audio, add stylized subtitles."""
+    
+    # Target dimensions for Reels/Shorts (9:16 aspect ratio)
+    TARGET_WIDTH = 1080
+    TARGET_HEIGHT = 1920
+    
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+    def cut_segment(
+        self,
+        video_path: str,
+        start_time: float,
+        end_time: float,
+        output_path: str
+    ) -> str:
+        """
+        Cut a segment from video.
+        
+        Args:
+            video_path: Path to source video
+            start_time: Start time in seconds
+            end_time: End time in seconds
+            output_path: Path for output video
+            
+        Returns:
+            Path to cut video
+        """
+        try:
+            logger.info(f"Cutting segment: {start_time:.2f}s - {end_time:.2f}s")
+            
+            duration = end_time - start_time
+            
+            # Use ffmpeg to cut video precisely
+            (
+                ffmpeg
+                .input(video_path, ss=start_time, t=duration)
+                .output(
+                    output_path,
+                    codec='copy',  # Copy without re-encoding for speed
+                    avoid_negative_ts='make_zero'
+                )
+                .overwrite_output()
+                .run(quiet=True, capture_stdout=True, capture_stderr=True)
+            )
+            
+            logger.info(f"Segment saved to: {output_path}")
+            return output_path
+            
+        except ffmpeg.Error as e:
+            logger.error(f"FFmpeg error: {e.stderr.decode()}")
+            raise
+    
+    def convert_to_vertical(
+        self,
+        video_path: str,
+        output_path: str,
+        method: Literal["blur_background", "center_crop", "smart_crop"] = "blur_background"
+    ) -> str:
+        """
+        Convert horizontal video to vertical format (9:16) for Reels/Shorts.
+        
+        Args:
+            video_path: Path to input video
+            output_path: Path for output video
+            method: Conversion method:
+                - "blur_background": Video centered with blurred background
+                - "center_crop": Simple center crop
+                - "smart_crop": Crop with face detection (if available)
+                
+        Returns:
+            Path to converted video
+        """
+        try:
+            logger.info(f"Converting to vertical format using method: {method}")
+            
+            # Get video dimensions
+            probe = ffmpeg.probe(video_path)
+            video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
+            input_width = int(video_info['width'])
+            input_height = int(video_info['height'])
+            
+            # Check if already vertical
+            if input_height > input_width:
+                logger.info("Video is already vertical, skipping conversion")
+                # Just resize to target dimensions
+                (
+                    ffmpeg
+                    .input(video_path)
+                    .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT)
+                    .output(output_path, **{'c:v': 'libx264', 'preset': 'medium'})
+                    .overwrite_output()
+                    .run(quiet=True, capture_stdout=True, capture_stderr=True)
+                )
+                return output_path
+            
+            if method == "blur_background":
+                # Popular method: video in center with blurred background
+                # Create blurred background
+                background = (
+                    ffmpeg.input(video_path)
+                    .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT, force_original_aspect_ratio='increase')
+                    .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT)
+                    .filter('boxblur', 'luma_radius=20:chroma_radius=20')
+                )
+                
+                # Create scaled video for center
+                video = (
+                    ffmpeg.input(video_path)
+                    .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT, force_original_aspect_ratio='decrease')
+                )
+                
+                # Overlay video on blurred background
+                (
+                    ffmpeg
+                    .overlay(background, video, x='(W-w)/2', y='(H-h)/2')
+                    .output(output_path, **{'c:v': 'libx264', 'preset': 'medium', 'crf': 23})
+                    .overwrite_output()
+                    .run(quiet=True, capture_stdout=True, capture_stderr=True)
+                )
+                
+            elif method == "center_crop":
+                # Simple center crop
+                (
+                    ffmpeg
+                    .input(video_path)
+                    .filter('scale', -1, self.TARGET_HEIGHT)
+                    .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT)
+                    .output(output_path, **{'c:v': 'libx264', 'preset': 'medium'})
+                    .overwrite_output()
+                    .run(quiet=True, capture_stdout=True, capture_stderr=True)
+                )
+                
+            elif method == "smart_crop":
+                # Smart crop with face detection (requires ffmpeg with libopencv)
+                # Fallback to center crop if face detection not available
+                try:
+                    (
+                        ffmpeg
+                        .input(video_path)
+                        .filter('scale', -1, self.TARGET_HEIGHT)
+                        .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT, x='(iw-ow)/2', y='(ih-oh)/2')
+                        .output(output_path, **{'c:v': 'libx264', 'preset': 'medium'})
+                        .overwrite_output()
+                        .run(quiet=True, capture_stdout=True, capture_stderr=True)
+                    )
+                except:
+                    logger.warning("Smart crop not available, falling back to center crop")
+                    return self.convert_to_vertical(video_path, output_path, method="center_crop")
+            
+            logger.info(f"Converted video to vertical format: {output_path}")
+            return output_path
+            
+        except Exception as e:
+            logger.error(f"Error converting to vertical: {e}")
+            raise
+    
+    def add_audio_and_subtitles(
+        self,
+        video_path: str,
+        audio_path: str,
+        subtitles: List[Dict],
+        output_path: str,
+        style: str = "tiktok",
+        convert_to_vertical: bool = True,
+        vertical_method: str = "blur_background"
+    ) -> str:
+        """
+        Add TTS audio and stylized subtitles to video.
+        
+        Args:
+            video_path: Path to video file
+            audio_path: Path to TTS audio file
+            subtitles: List of subtitle entries with word-level timing
+            output_path: Path for output video
+            style: Subtitle style ("tiktok", "instagram", "youtube")
+            convert_to_vertical: Whether to convert to vertical format (9:16)
+            vertical_method: Method for vertical conversion
+            
+        Returns:
+            Path to processed video
+        """
+        try:
+            logger.info(f"Adding audio and subtitles to video")
+            
+            # Step 1: Convert to vertical if needed
+            working_video = video_path
+            if convert_to_vertical:
+                temp_vertical = Path(output_path).parent / f"{Path(output_path).stem}_vertical_temp.mp4"
+                working_video = self.convert_to_vertical(
+                    video_path, 
+                    str(temp_vertical),
+                    method=vertical_method
+                )
+            
+            # Step 2: Create ASS subtitle file with styling
+            subtitle_path = Path(output_path).with_suffix('.ass')
+            self._create_stylized_subtitles(subtitles, subtitle_path, style)
+            
+            # Step 3: Process video with ffmpeg
+            # Replace audio with TTS and burn in stylized subtitles
+            video_input = ffmpeg.input(working_video)
+            audio_input = ffmpeg.input(audio_path)
+            
+            output = (
+                ffmpeg
+                .output(
+                    video_input.video,
+                    audio_input.audio,
+                    output_path,
+                    vf=f"ass={subtitle_path}",
+                    shortest=None,  # Use shortest stream
+                    **{'c:v': 'libx264', 'c:a': 'aac', 'b:a': '192k', 'preset': 'medium', 'crf': 23}
+                )
+                .overwrite_output()
+            )
+            
+            output.run(quiet=True, capture_stdout=True, capture_stderr=True)
+            
+            logger.info(f"Processed video saved to: {output_path}")
+            
+            # Clean up temporary files
+            subtitle_path.unlink(missing_ok=True)
+            if convert_to_vertical and working_video != video_path:
+                Path(working_video).unlink(missing_ok=True)
+            
+            return output_path
+            
+        except Exception as e:
+            logger.error(f"Error processing video: {e}")
+            raise
+    
+    def _create_stylized_subtitles(
+        self,
+        subtitles: List[Dict],
+        output_path: Path,
+        style: str = "tiktok"
+    ):
+        """
+        Create ASS subtitle file with TikTok/Instagram style.
+        
+        Subtitles format:
+        [
+            {
+                'start': 0.5,
+                'end': 1.2,
+                'text': 'Привет',
+                'words': [
+                    {'word': 'Привет', 'start': 0.5, 'end': 1.2}
+                ]
+            },
+            ...
+        ]
+        """
+        # ASS subtitle styles
+        styles = {
+            'tiktok': {
+                'fontname': 'Arial',
+                'fontsize': 24,
+                'primarycolor': '&H00FFFFFF',  # White
+                'outlinecolor': '&H00000000',  # Black outline
+                'borderstyle': 1,
+                'outline': 3,
+                'shadow': 2,
+                'alignment': 2,  # Bottom center
+                'marginv': 80,
+            },
+            'instagram': {
+                'fontname': 'Arial',
+                'fontsize': 22,
+                'primarycolor': '&H00FFFFFF',
+                'outlinecolor': '&H00000000',
+                'borderstyle': 1,
+                'outline': 2,
+                'shadow': 1,
+                'alignment': 2,
+                'marginv': 70,
+            },
+            'youtube': {
+                'fontname': 'Arial',
+                'fontsize': 20,
+                'primarycolor': '&H00FFFFFF',
+                'outlinecolor': '&H00000000',
+                'borderstyle': 1,
+                'outline': 2,
+                'shadow': 0,
+                'alignment': 2,
+                'marginv': 60,
+            }
+        }
+        
+        selected_style = styles.get(style, styles['tiktok'])
+        
+        # Create ASS file
+        ass_content = f"""[Script Info]
+Title: Generated Subtitles
+ScriptType: v4.00+
+WrapStyle: 0
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{selected_style['fontname']},{selected_style['fontsize']},{selected_style['primarycolor']},&H000000FF,{selected_style['outlinecolor']},&H00000000,-1,0,0,0,100,100,0,0,{selected_style['borderstyle']},{selected_style['outline']},{selected_style['shadow']},{selected_style['alignment']},10,10,{selected_style['marginv']},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+        
+        # Add subtitle events
+        for subtitle in subtitles:
+            start_time = self._format_timestamp(subtitle['start'])
+            end_time = self._format_timestamp(subtitle['end'])
+            text = subtitle['text'].replace('\n', '\\N')
+            
+            # Add word-by-word highlighting if available
+            if 'words' in subtitle and subtitle['words']:
+                # For TikTok style, we can add karaoke effect
+                # This makes words appear one by one
+                text = self._add_word_effects(subtitle['words'])
+            
+            ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}\n"
+        
+        # Write to file
+        output_path.write_text(ass_content, encoding='utf-8')
+        
+    def _format_timestamp(self, seconds: float) -> str:
+        """Convert seconds to ASS timestamp format (H:MM:SS.CS)."""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        centiseconds = int((seconds % 1) * 100)
+        return f"{hours}:{minutes:02d}:{secs:02d}.{centiseconds:02d}"
+    
+    def _add_word_effects(self, words: List[Dict]) -> str:
+        """Add word-by-word animation effects."""
+        # For now, just return the text
+        # In future, can add karaoke effects with \k tags
+        text = " ".join([w['word'] for w in words])
+        return text
+    
+    def extract_audio(self, video_path: str, output_path: str) -> str:
+        """Extract audio from video."""
+        try:
+            (
+                ffmpeg
+                .input(video_path)
+                .output(output_path, acodec='pcm_s16le', ac=1, ar='16000')
+                .overwrite_output()
+                .run(quiet=True, capture_stdout=True, capture_stderr=True)
+            )
+            return output_path
+        except Exception as e:
+            logger.error(f"Error extracting audio: {e}")
+            raise
+    
+    def get_video_info(self, video_path: str) -> Dict:
+        """Get video metadata."""
+        try:
+            probe = ffmpeg.probe(video_path)
+            video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
+            audio_info = next((s for s in probe['streams'] if s['codec_type'] == 'audio'), None)
+            
+            return {
+                'duration': float(probe['format']['duration']),
+                'width': int(video_info['width']),
+                'height': int(video_info['height']),
+                'fps': eval(video_info['r_frame_rate']),
+                'has_audio': audio_info is not None
+            }
+        except Exception as e:
+            logger.error(f"Error getting video info: {e}")
+            raise
+

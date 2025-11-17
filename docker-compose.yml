@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: youtube-shorts-generator
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_VISIBLE_DEVICES=0
+      - OLLAMA_HOST=http://localhost:11434
+      - OLLAMA_MODEL=llama3.1:8b
+    ports:
+      - "8000:8000"
+      - "11434:11434"
+    volumes:
+      - ./temp:/app/temp
+      - ./output:/app/output
+      - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  ollama-data:
+

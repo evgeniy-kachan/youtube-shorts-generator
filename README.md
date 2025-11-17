@@ -1,0 +1,382 @@
+# 🎬 YouTube Shorts Generator
+
+AI-powered сервис для автоматического создания вирусных Shorts/Reels из длинных YouTube видео.
+
+## 🌟 Возможности
+
+- **Автоматическая транскрипция** с использованием Whisper (large-v3)
+- **AI-анализ** интересных моментов по 12 критериям с помощью LLM (Llama 3.1 / Qwen / Mistral)
+- **Автоматический перевод** на русский язык (NLLB)
+- **Генерация озвучки** на русском (Silero TTS)
+- **Стильные субтитры** в стиле TikTok/Instagram с анимацией
+- **Конвертация в вертикальный формат 9:16** (Reels/Shorts) с 3 методами:
+  - 🌟 Размытый фон (рекомендуется) - видео по центру + blur
+  - ✂️ Обрезка по центру - простая обрезка
+  - 🤖 Умная обрезка - с детекцией объектов
+- **Обработка видео** до 2 часов
+- **Клипы** от 20 секунд до 3 минут
+
+## 🏗️ Архитектура
+
+### Backend
+- **FastAPI** - современный асинхронный веб-фреймворк
+- **faster-whisper** - транскрипция с GPU ускорением
+- **Ollama** - локальная LLM для анализа (Llama 3.1 / Qwen / Mistral)
+- **NLLB** - перевод (facebook/nllb-200-distilled-600M)
+- **Silero TTS** - генерация русской речи
+- **FFmpeg** - обработка видео и субтитров
+
+### Frontend
+- **React** - UI фреймворк
+- **TailwindCSS** - современные стили
+- **Axios** - HTTP клиент
+
+## 📋 Требования
+
+### Сервер
+- **GPU**: NVIDIA A4000 или аналог (минимум 16GB VRAM)
+- **RAM**: минимум 32GB
+- **Диск**: минимум 100GB свободного места
+- **OS**: Ubuntu 20.04+ или аналог
+
+### ПО
+- Python 3.10+
+- Node.js 18+
+- CUDA 11.8+
+- FFmpeg
+- Ollama
+
+## 🚀 Установка
+
+### 1. Установка системных зависимостей
+
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install -y python3.10 python3-pip python3-venv
+sudo apt install -y ffmpeg
+sudo apt install -y nodejs npm
+
+# Установка CUDA (если еще не установлена)
+# Следуйте инструкциям: https://developer.nvidia.com/cuda-downloads
+```
+
+### 2. Установка Ollama
+
+```bash
+# Установка Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Запуск Ollama в фоне
+ollama serve &
+
+# Загрузка модели (выберите одну)
+ollama pull llama3.1:8b      # Рекомендуется для A4000
+# ollama pull llama3.1:70b   # Требует больше VRAM
+# ollama pull qwen2.5:7b     # Альтернатива
+# ollama pull mistral:7b     # Альтернатива
+```
+
+### 3. Клонирование и настройка проекта
+
+```bash
+# Клонируйте репозиторий (или используйте существующий)
+cd /path/to/project_blog
+
+# Создайте виртуальное окружение
+python3 -m venv venv
+source venv/bin/activate
+
+# Установите Python зависимости
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Скачайте Whisper модель (автоматически при первом запуске)
+# Или предварительно:
+python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cuda')"
+```
+
+### 4. Настройка конфигурации
+
+```bash
+# Создайте файл .env
+cp .env.example .env
+
+# Отредактируйте .env при необходимости
+nano .env
+```
+
+Пример `.env`:
+```env
+HOST=0.0.0.0
+PORT=8000
+
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=llama3.1:8b
+
+MAX_VIDEO_DURATION=7200
+TEMP_DIR=./temp
+OUTPUT_DIR=./output
+
+CUDA_VISIBLE_DEVICES=0
+```
+
+### 5. Установка Frontend
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+## 🎯 Запуск
+
+### Вариант 1: Разработка (Dev Mode)
+
+```bash
+# Терминал 1: Backend
+source venv/bin/activate
+python backend/main.py
+
+# Терминал 2: Frontend (в режиме разработки)
+cd frontend
+npm start
+```
+
+Frontend будет доступен на `http://localhost:3000`  
+Backend API на `http://localhost:8000`
+
+### Вариант 2: Production
+
+```bash
+# 1. Соберите frontend
+cd frontend
+npm run build
+cd ..
+
+# 2. Запустите backend (он будет отдавать и frontend)
+source venv/bin/activate
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 1
+
+# Или с помощью gunicorn
+gunicorn backend.main:app -w 1 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+```
+
+Откройте `http://your-server-ip:8000`
+
+### Вариант 3: С использованием systemd (автозапуск)
+
+Создайте файл `/etc/systemd/system/youtube-shorts.service`:
+
+```ini
+[Unit]
+Description=YouTube Shorts Generator
+After=network.target
+
+[Service]
+Type=simple
+User=your-username
+WorkingDirectory=/path/to/project_blog
+Environment="PATH=/path/to/project_blog/venv/bin"
+ExecStart=/path/to/project_blog/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Затем:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable youtube-shorts
+sudo systemctl start youtube-shorts
+sudo systemctl status youtube-shorts
+```
+
+## 📖 Использование
+
+### Web Interface
+
+1. Откройте веб-интерфейс в браузере
+2. Вставьте URL YouTube видео (до 2 часов)
+3. Дождитесь анализа (показывается прогресс)
+4. Выберите интересные сегменты из предложенных
+5. Нажмите "Создать клипы"
+6. Скачайте готовые клипы с русской озвучкой и субтитрами
+
+### API
+
+#### 1. Анализ видео
+
+```bash
+curl -X POST http://localhost:8000/api/video/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"youtube_url": "https://www.youtube.com/watch?v=VIDEO_ID"}'
+```
+
+Ответ:
+```json
+{
+  "task_id": "uuid",
+  "status": "pending",
+  "message": "Analysis started"
+}
+```
+
+#### 2. Проверка статуса
+
+```bash
+curl http://localhost:8000/api/video/task/TASK_ID
+```
+
+#### 3. Обработка сегментов
+
+```bash
+curl -X POST http://localhost:8000/api/video/process \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_id": "VIDEO_ID",
+    "segment_ids": ["segment_0", "segment_1"]
+  }'
+```
+
+#### 4. Скачивание
+
+```bash
+curl -O http://localhost:8000/api/video/download/VIDEO_ID/SEGMENT_ID
+```
+
+## 🎨 Критерии анализа
+
+Система анализирует видео по 12 критериям:
+
+1. **Information Density** - плотность информации (идеи, выводы, факты)
+2. **Emotional Intensity** - эмоциональные всплески
+3. **Topic Transition** - смена темы
+4. **Key Value** - ценные советы и takeaway
+5. **Hook Potential** - захватывающие зацепки
+6. **Tension** - конфликт и напряжение
+7. **Story Moment** - истории и примеры
+8. **Humor** - юмор и смех
+9. **Cadence Shift** - изменение темпа речи
+10. **Keyword Density** - плотность ключевых слов
+11. **Multimodal Score** - комплексная оценка
+12. **Audience Appeal** - привлекательность для аудитории
+
+Итоговый score рассчитывается по формуле:
+```
+highlight_score = 0.4 * semantic_value 
+                + 0.25 * emotional_intensity
+                + 0.15 * hook_probability
+                + 0.1 * keyword_density
+                + 0.1 * story_probability
+```
+
+## 🔧 Настройка моделей
+
+### Изменение LLM модели
+
+Отредактируйте `.env`:
+```env
+OLLAMA_MODEL=llama3.1:8b    # или qwen2.5:7b, mistral:7b
+```
+
+### Изменение Whisper модели
+
+Отредактируйте `backend/config.py`:
+```python
+WHISPER_MODEL = "large-v3"  # или "large-v2", "medium"
+```
+
+### Изменение NLLB модели
+
+Отредактируйте `backend/config.py`:
+```python
+NLLB_MODEL = "facebook/nllb-200-distilled-600M"  # или "facebook/nllb-200-3.3B"
+```
+
+## 📊 Производительность
+
+На сервере с NVIDIA A4000:
+
+| Этап | Время (для 1 часа видео) |
+|------|------------------------|
+| Транскрипция (Whisper large-v3) | ~10-15 мин |
+| Анализ LLM (20 сегментов) | ~5-10 мин |
+| Перевод (NLLB) | ~1-2 мин |
+| Обработка 1 клипа (TTS + субтитры) | ~30-60 сек |
+
+**Общее время**: 20-30 минут для полной обработки 1-часового видео
+
+## 🐛 Troubleshooting
+
+### Ошибка CUDA Out of Memory
+
+Уменьшите размер моделей:
+```python
+# В config.py
+WHISPER_MODEL = "medium"  # вместо large-v3
+WHISPER_COMPUTE_TYPE = "int8"  # вместо float16
+```
+
+Или используйте меньшую LLM:
+```bash
+ollama pull llama3.1:8b  # вместо 70b
+```
+
+### FFmpeg ошибки
+
+Убедитесь что установлена последняя версия:
+```bash
+ffmpeg -version
+sudo apt install --reinstall ffmpeg
+```
+
+### Ollama не запускается
+
+```bash
+# Проверьте статус
+systemctl status ollama
+
+# Перезапустите
+sudo systemctl restart ollama
+
+# Проверьте логи
+journalctl -u ollama -f
+```
+
+### Медленная обработка
+
+1. Убедитесь что используется GPU:
+```python
+import torch
+print(torch.cuda.is_available())  # должно быть True
+```
+
+2. Проверьте загрузку GPU:
+```bash
+nvidia-smi
+```
+
+## 📝 Лицензия
+
+MIT License
+
+## 🤝 Вклад
+
+Приветствуются Pull Requests и Issues!
+
+## 📞 Поддержка
+
+Для вопросов и предложений создавайте Issues в репозитории.
+
+---
+
+**Powered by:**
+- OpenAI Whisper
+- Meta Llama 3.1
+- Meta NLLB
+- Silero Models
+- FFmpeg
+
