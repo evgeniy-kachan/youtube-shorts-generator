@@ -53,6 +53,15 @@ pip install --upgrade pip
 
 # Install Python dependencies
 echo "📦 Installing Python dependencies..."
+
+# Install NumPy first
+pip install "numpy>=1.23.0,<2.0.0"
+
+# Install PyTorch with CUDA
+echo "🔥 Installing PyTorch with CUDA support..."
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Install other dependencies
 pip install -r requirements.txt
 
 # Create .env file if it doesn't exist

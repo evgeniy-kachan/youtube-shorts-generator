@@ -5,38 +5,41 @@ python-multipart==0.0.6
 aiofiles==23.2.1
 
 # YouTube Download
-yt-dlp==2023.11.16
+yt-dlp>=2024.1.0
 
 # Transcription (Whisper)
-faster-whisper==0.10.0
-torch==2.1.1
-torchaudio==2.1.1
+# NOTE: torch 2.6+ required due to security vulnerability CVE-2025-32434
+faster-whisper>=1.0.0
+
+# PyTorch - install separately with CUDA support
+# Run: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 # LLM Integration (Ollama)
-ollama==0.1.6
-httpx==0.25.2
+ollama>=0.1.6
+httpx>=0.25.2
 
 # Translation (NLLB)
-transformers==4.36.0
-sentencepiece==0.1.99
-sacremoses==0.1.1
-
-# TTS (Silero + Coqui)
-silero==0.4.1
-TTS==0.22.0
+transformers>=4.36.0
+sentencepiece>=0.1.99
+sacremoses>=0.1.1
 
 # Video Processing
-ffmpeg-python==0.2.0
-moviepy==1.0.3
-pillow==10.1.0
+ffmpeg-python>=0.2.0
+moviepy>=1.0.3
+pillow>=10.1.0
 
 # Audio Analysis
-librosa==0.10.1
-pydub==0.25.1
-soundfile==0.12.1
+librosa>=0.10.1
+pydub>=0.25.1
+soundfile>=0.12.1
 
 # Utilities
-pydantic==2.5.0
-python-dotenv==1.0.0
-numpy==1.24.3
+pydantic>=2.5.0
+python-dotenv>=1.0.0
 
+# NumPy - flexible version to avoid conflicts
+numpy>=1.23.0,<2.0.0
+
+# NOTE: Some packages removed from auto-install to avoid conflicts:
+# - TTS (will use torch.hub for Silero directly)
+# - torch/torchaudio (install manually with CUDA support)

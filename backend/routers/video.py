@@ -99,6 +99,37 @@ async def analyze_video(request: VideoAnalysisRequest, background_tasks: Backgro
     }
 
 
+@router.post("/analyze-local", response_model=dict)
+async def analyze_local_video(background_tasks: BackgroundTasks, filename: str):
+    """
+    Analyze local video file (for regions where YouTube is blocked).
+    
+    Usage:
+    1. Upload video via scp: scp video.mp4 root@SERVER:/opt/.../temp/my_video.mp4
+    2. Call this endpoint with filename=my_video.mp4
+    """
+    task_id = str(uuid.uuid4())
+    
+    tasks[task_id] = TaskStatus(
+        task_id=task_id,
+        status="pending",
+        progress=0.0,
+        message="Task created"
+    )
+    
+    background_tasks.add_task(
+        _analyze_local_video_task,
+        task_id,
+        filename
+    )
+    
+    return {
+        "task_id": task_id,
+        "status": "pending",
+        "message": "Local file analysis started"
+    }
+
+
 async def _analyze_video_task(task_id: str, youtube_url: str):
     """Background task for video analysis."""
     try:
@@ -175,6 +206,101 @@ async def _analyze_video_task(task_id: str, youtube_url: str):
         
     except Exception as e:
         logger.error(f"Error in analysis task: {e}", exc_info=True)
+        tasks[task_id].status = "failed"
+        tasks[task_id].message = str(e)
+
+
+async def _analyze_local_video_task(task_id: str, filename: str):
+    """Background task for local video analysis."""
+    try:
+        tasks[task_id].status = "processing"
+        tasks[task_id].progress = 0.1
+        tasks[task_id].message = "Processing local file..."
+        
+        video_path = TEMP_DIR / filename
+        
+        if not video_path.exists():
+            raise FileNotFoundError(f"Video file not found: {filename}. Upload to temp/ first.")
+        
+        # Get video duration
+        import ffmpeg
+        probe = ffmpeg.probe(str(video_path))
+        duration = float(probe['format']['duration'])
+        
+        if duration > 7200:
+            raise ValueError(f"Video too long: {duration/60:.1f} min (max 120 min)")
+        
+        # Extract audio
+        audio_path = TEMP_DIR / f"{video_path.stem}_audio.wav"
+        video_processor = get_service("video_processor")
+        video_processor.extract_audio(str(video_path), str(audio_path))
+        
+        video_info = {
+            'video_id': video_path.stem,
+            'title': filename,
+            'duration': duration,
+            'video_path': str(video_path),
+            'audio_path': str(audio_path)
+        }
+        
+        tasks[task_id].progress = 0.3
+        tasks[task_id].message = "Transcribing audio..."
+        
+        transcription_service = get_service("transcription")
+        segments = transcription_service.transcribe(video_info['audio_path'])
+        
+        tasks[task_id].progress = 0.5
+        tasks[task_id].message = "Analyzing content..."
+        
+        analyzer = get_service("analyzer")
+        highlights = analyzer.analyze_segments(
+            segments,
+            min_duration=config.MIN_SEGMENT_DURATION,
+            max_duration=config.MAX_SEGMENT_DURATION
+        )
+        
+        tasks[task_id].progress = 0.7
+        tasks[task_id].message = "Translating to Russian..."
+        
+        translator = get_service("translation")
+        for highlight in highlights:
+            highlight['text_ru'] = translator.translate(highlight['text'])
+        
+        tasks[task_id].progress = 0.9
+        tasks[task_id].message = "Finalizing..."
+        
+        analysis_cache[video_info['video_id']] = {
+            'video_info': video_info,
+            'highlights': highlights,
+            'segments': segments
+        }
+        
+        response = VideoAnalysisResponse(
+            video_id=video_info['video_id'],
+            title=video_info['title'],
+            duration=video_info['duration'],
+            segments=[
+                Segment(
+                    id=h['id'],
+                    start_time=h['start_time'],
+                    end_time=h['end_time'],
+                    duration=h['duration'],
+                    text_en=h['text'],
+                    text_ru=h['text_ru'],
+                    highlight_score=h['highlight_score'],
+                    criteria_scores=h['criteria_scores']
+                )
+                for h in highlights
+            ]
+        )
+        
+        tasks[task_id].status = "completed"
+        tasks[task_id].progress = 1.0
+        tasks[task_id].message = "Analysis completed"
+        tasks[task_id].result = response.dict()
+        
+    except Exception as e:
+        logger.error(f"Error in local analysis: {e}", exc_info=True)
         tasks[task_id].status = "failed"
         tasks[task_id].message = str(e)
 
