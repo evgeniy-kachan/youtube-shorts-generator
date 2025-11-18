@@ -1,0 +1,55 @@
+# Git files
+.git/
+.gitignore
+
+# Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+
+# IDE files
+.idea/
+.vscode/
+
+# Dependency directories
+node_modules/
+/frontend/build/
+
+# Temporary files
+/temp/
+/output/
+*.mp4
+*.mp3
+*.wav
+*.avi
+*.mkv
+*.flv
+*.mov
+*.webm
+*.srt
+*.vtt
+*.ass
+*.json
+
+# Environment files
+.env
+.env.*
+
+# Log files
+*.log
+server.log
+nohup.out
+
+# Backup files
+*.bak
+*.backup
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
