@@ -163,10 +163,13 @@ async def _analyze_video_task(task_id: str, youtube_url: str):
         tasks[task_id].progress = 0.7
         tasks[task_id].message = "Translating to Russian..."
         
-        # 4. Translate highlights
+        # 4. Translate highlights (batch processing for speed)
         translator = get_service("translation")
-        for highlight in highlights:
-            highlight['text_ru'] = translator.translate(highlight['text'])
+        if highlights:
+            texts = [h['text'] for h in highlights]
+            translations = translator.translate_batch(texts)
+            for highlight, translation in zip(highlights, translations):
+                highlight['text_ru'] = translation
         
         tasks[task_id].progress = 0.9
         tasks[task_id].message = "Finalizing..."
@@ -262,9 +265,13 @@ async def _analyze_local_video_task(task_id: str, filename: str):
         tasks[task_id].progress = 0.7
         tasks[task_id].message = "Translating to Russian..."
         
+        # Batch translation for speed
         translator = get_service("translation")
-        for highlight in highlights:
-            highlight['text_ru'] = translator.translate(highlight['text'])
+        if highlights:
+            texts = [h['text'] for h in highlights]
+            translations = translator.translate_batch(texts)
+            for highlight, translation in zip(highlights, translations):
+                highlight['text_ru'] = translation
         
         tasks[task_id].progress = 0.9
         tasks[task_id].message = "Finalizing..."
