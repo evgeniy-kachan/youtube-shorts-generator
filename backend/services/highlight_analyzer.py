@@ -2,7 +2,6 @@
 import json
 import logging
 from typing import List, Dict
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import ollama
 from backend.config import OLLAMA_HOST, OLLAMA_MODEL
@@ -50,15 +49,8 @@ class HighlightAnalyzer:
             logger.info(f"Created {len(potential_segments)} potential segments")
             logger.info(f"Starting parallel LLM analysis with {max_parallel} concurrent requests...")
             
-            # Analyze segments in parallel
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                analyzed_segments = loop.run_until_complete(
-                    self._analyze_segments_parallel(potential_segments, max_parallel)
-                )
-            finally:
-                loop.close()
+            # Analyze segments in parallel using ThreadPoolExecutor
+            analyzed_segments = self._analyze_segments_parallel(potential_segments, max_parallel)
             
             # Filter segments with good scores
             highlights = []
@@ -86,28 +78,24 @@ class HighlightAnalyzer:
             logger.error(f"Error analyzing segments: {e}")
             raise
     
-    async def _analyze_segments_parallel(self, segments: List[Dict], max_parallel: int) -> List[tuple]:
-        """Analyze segments in parallel using asyncio."""
-        semaphore = asyncio.Semaphore(max_parallel)
+    def _analyze_segments_parallel(self, segments: List[Dict], max_parallel: int) -> List[tuple]:
+        """Analyze segments in parallel using ThreadPoolExecutor."""
         
-        async def analyze_with_semaphore(i, segment):
-            async with semaphore:
-                logger.info(f"Analyzing segment {i+1}/{len(segments)}")
-                # Run blocking ollama call in thread pool
-                loop = asyncio.get_event_loop()
-                scores = await loop.run_in_executor(
-                    None, 
-                    self._analyze_segment_with_llm, 
-                    segment
-                )
-                return (segment, scores)
+        def analyze_single(i, segment):
+            logger.info(f"Analyzing segment {i+1}/{len(segments)}")
+            scores = self._analyze_segment_with_llm(segment)
+            return (segment, scores)
         
-        tasks = [
-            analyze_with_semaphore(i, segment) 
-            for i, segment in enumerate(segments)
-        ]
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+            futures = [
+                executor.submit(analyze_single, i, segment)
+                for i, segment in enumerate(segments)
+            ]
+            
+            # Collect results as they complete
+            results = [future.result() for future in futures]
         
-        results = await asyncio.gather(*tasks)
         return results
     
     def _create_time_windows(self, segments: List[Dict], min_duration: int, max_duration: int) -> List[Dict]:
