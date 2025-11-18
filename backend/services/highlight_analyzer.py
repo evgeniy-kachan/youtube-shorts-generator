@@ -2,6 +2,8 @@
 import json
 import logging
 from typing import List, Dict
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import ollama
 from backend.config import OLLAMA_HOST, OLLAMA_MODEL
 
@@ -28,14 +30,15 @@ class HighlightAnalyzer:
             
         logger.info(f"Initialized HighlightAnalyzer with model: {self.model_name}")
         
-    def analyze_segments(self, segments: List[Dict], min_duration: int = 20, max_duration: int = 180) -> List[Dict]:
+    def analyze_segments(self, segments: List[Dict], min_duration: int = 20, max_duration: int = 180, max_parallel: int = 5) -> List[Dict]:
         """
-        Analyze transcription segments to find highlights.
+        Analyze transcription segments to find highlights (with parallel processing).
         
         Args:
             segments: List of transcription segments with timestamps
             min_duration: Minimum segment duration in seconds
             max_duration: Maximum segment duration in seconds
+            max_parallel: Maximum number of parallel LLM requests (default: 5)
             
         Returns:
             List of highlighted segments with scores
@@ -45,15 +48,21 @@ class HighlightAnalyzer:
             potential_segments = self._create_time_windows(segments, min_duration, max_duration)
             
             logger.info(f"Created {len(potential_segments)} potential segments")
+            logger.info(f"Starting parallel LLM analysis with {max_parallel} concurrent requests...")
             
-            # Analyze each segment with LLM
+            # Analyze segments in parallel
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                analyzed_segments = loop.run_until_complete(
+                    self._analyze_segments_parallel(potential_segments, max_parallel)
+                )
+            finally:
+                loop.close()
+            
+            # Filter segments with good scores
             highlights = []
-            for i, segment in enumerate(potential_segments):
-                logger.info(f"Analyzing segment {i+1}/{len(potential_segments)}")
-                
-                scores = self._analyze_segment_with_llm(segment)
-                
-                # Calculate total highlight score
+            for i, (segment, scores) in enumerate(analyzed_segments):
                 highlight_score = self._calculate_highlight_score(scores)
                 
                 if highlight_score > 0.4:  # Threshold for interesting content
@@ -76,6 +85,30 @@ class HighlightAnalyzer:
         except Exception as e:
             logger.error(f"Error analyzing segments: {e}")
             raise
+    
+    async def _analyze_segments_parallel(self, segments: List[Dict], max_parallel: int) -> List[tuple]:
+        """Analyze segments in parallel using asyncio."""
+        semaphore = asyncio.Semaphore(max_parallel)
+        
+        async def analyze_with_semaphore(i, segment):
+            async with semaphore:
+                logger.info(f"Analyzing segment {i+1}/{len(segments)}")
+                # Run blocking ollama call in thread pool
+                loop = asyncio.get_event_loop()
+                scores = await loop.run_in_executor(
+                    None, 
+                    self._analyze_segment_with_llm, 
+                    segment
+                )
+                return (segment, scores)
+        
+        tasks = [
+            analyze_with_semaphore(i, segment) 
+            for i, segment in enumerate(segments)
+        ]
+        
+        results = await asyncio.gather(*tasks)
+        return results
     
     def _create_time_windows(self, segments: List[Dict], min_duration: int, max_duration: int) -> List[Dict]:
         """Create time windows of appropriate duration, splitting long ones."""
