@@ -36,6 +36,7 @@ soundfile>=0.12.1
 # Utilities
 pydantic>=2.5.0
 python-dotenv>=1.0.0
+click
 
 # NumPy - flexible version to avoid conflicts
 numpy>=1.23.0,<2.0.0
