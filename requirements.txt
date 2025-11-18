@@ -1,8 +1,12 @@
 # Core Web Framework
 fastapi==0.104.1
-uvicorn[standard]==0.24.0
+uvicorn==0.24.0
 python-multipart==0.0.6
 aiofiles==23.2.1
+click
+h11
+websockets
+watchfiles
 
 # YouTube Download
 yt-dlp>=2024.1.0
@@ -36,8 +40,6 @@ soundfile>=0.12.1
 # Utilities
 pydantic>=2.5.0
 python-dotenv>=1.0.0
-click
-h11
 
 # NumPy - flexible version to avoid conflicts
 numpy>=1.23.0,<2.0.0
