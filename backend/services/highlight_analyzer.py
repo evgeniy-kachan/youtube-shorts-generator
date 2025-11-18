@@ -78,13 +78,14 @@ class HighlightAnalyzer:
             raise
     
     def _create_time_windows(self, segments: List[Dict], min_duration: int, max_duration: int) -> List[Dict]:
-        """Create time windows of appropriate duration."""
+        """Create time windows of appropriate duration, splitting long ones."""
         windows = []
         
         i = 0
         while i < len(segments):
             window_start = segments[i]['start']
             window_text = segments[i]['text']
+            window_segments = [i]
             j = i + 1
             
             # Extend window until we reach max duration or run out of segments
@@ -95,21 +96,73 @@ class HighlightAnalyzer:
                     break
                     
                 window_text += " " + segments[j]['text']
+                window_segments.append(j)
                 j += 1
                 
                 # Check if we have a good window
                 if current_duration >= min_duration:
-                    windows.append({
+                    current_window = {
                         'start': window_start,
                         'end': segments[j-1]['end'],
                         'duration': current_duration,
                         'text': window_text.strip()
-                    })
+                    }
+                    
+                    # If window is too long, split it into smaller chunks
+                    if current_duration > max_duration:
+                        windows.extend(self._split_long_window(segments, window_segments, min_duration, max_duration))
+                    else:
+                        windows.append(current_window)
             
             # Move to next potential starting point (with 50% overlap)
             i += max(1, (j - i) // 2)
         
+        logger.info(f"Created {len(windows)} time windows (min: {min_duration}s, max: {max_duration}s)")
+        
         return windows
+    
+    def _split_long_window(self, segments: List[Dict], segment_indices: List[int], min_duration: int, max_duration: int) -> List[Dict]:
+        """Split a long window into multiple smaller windows."""
+        split_windows = []
+        target_duration = (min_duration + max_duration) // 2  # Target ~100s for 20-180 range
+        
+        current_start_idx = segment_indices[0]
+        current_text = ""
+        current_start_time = segments[current_start_idx]['start']
+        
+        for idx in segment_indices:
+            seg = segments[idx]
+            current_text += " " + seg['text'] if current_text else seg['text']
+            current_duration = seg['end'] - current_start_time
+            
+            # If we've reached target duration, create a window
+            if current_duration >= target_duration:
+                split_windows.append({
+                    'start': current_start_time,
+                    'end': seg['end'],
+                    'duration': current_duration,
+                    'text': current_text.strip()
+                })
+                
+                # Start new window
+                current_text = ""
+                if idx + 1 < len(segments):
+                    current_start_idx = idx + 1
+                    current_start_time = segments[current_start_idx]['start']
+        
+        # Add remaining text as final window if it meets min_duration
+        if current_text:
+            final_duration = segments[segment_indices[-1]]['end'] - current_start_time
+            if final_duration >= min_duration:
+                split_windows.append({
+                    'start': current_start_time,
+                    'end': segments[segment_indices[-1]]['end'],
+                    'duration': final_duration,
+                    'text': current_text.strip()
+                })
+        
+        logger.info(f"Split long window into {len(split_windows)} smaller windows")
+        return split_windows
     
     def _analyze_segment_with_llm(self, segment: Dict) -> Dict[str, float]:
         """Analyze a single segment using LLM."""

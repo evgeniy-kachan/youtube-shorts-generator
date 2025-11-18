@@ -37,6 +37,7 @@ WHISPER_COMPUTE_TYPE = "float16"  # or "int8" for less VRAM
 
 # Translation Configuration
 NLLB_MODEL = "facebook/nllb-200-distilled-600M"  # or "facebook/nllb-200-3.3B"
+TRANSLATION_MAX_LENGTH = 1024  # Maximum tokens for translation (increased for longer segments)
 
 # TTS Configuration
 SILERO_LANGUAGE = "ru"

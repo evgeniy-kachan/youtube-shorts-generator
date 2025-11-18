@@ -35,7 +35,7 @@ class TranslationService:
         
         logger.info(f"NLLB model loaded on {self.device}")
         
-    def translate(self, text: str, max_length: int = 512) -> str:
+    def translate(self, text: str, max_length: int = 1024) -> str:
         """
         Translate text from English to Russian.
         
@@ -77,7 +77,7 @@ class TranslationService:
             logger.error(f"Translation error: {e}")
             raise
     
-    def translate_batch(self, texts: List[str], max_length: int = 512, batch_size: int = 10) -> List[str]:
+    def translate_batch(self, texts: List[str], max_length: int = 1024, batch_size: int = 10) -> List[str]:
         """
         Translate multiple texts in batches to avoid OOM.
         
