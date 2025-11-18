@@ -77,14 +77,14 @@ class TranslationService:
             logger.error(f"Translation error: {e}")
             raise
     
-    def translate_batch(self, texts: List[str], max_length: int = 512, batch_size: int = 50) -> List[str]:
+    def translate_batch(self, texts: List[str], max_length: int = 512, batch_size: int = 10) -> List[str]:
         """
         Translate multiple texts in batches to avoid OOM.
         
         Args:
             texts: List of texts to translate
             max_length: Maximum length of translations
-            batch_size: Number of texts to translate at once (default: 50)
+            batch_size: Number of texts to translate at once (default: 10, reduced for GPU memory)
             
         Returns:
             List of translated texts
@@ -117,12 +117,12 @@ class TranslationService:
                     max_length=max_length
                 ).to(self.device)
                 
-                # Generate translations
+                # Generate translations (num_beams=3 for less GPU memory usage)
                 translated = self.model.generate(
                     **inputs,
                     forced_bos_token_id=self.tokenizer.convert_tokens_to_ids(self.tgt_lang),
                     max_length=max_length,
-                    num_beams=5,
+                    num_beams=3,
                     early_stopping=True
                 )
                 

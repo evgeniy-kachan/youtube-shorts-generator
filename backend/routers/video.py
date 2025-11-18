@@ -165,9 +165,17 @@ async def _analyze_video_task(task_id: str, youtube_url: str):
         tasks[task_id].message = "Translating to Russian..."
         
         # 4. Translate highlights (batch processing for speed)
-        # Clear CUDA cache before translation to free memory
+        # Free GPU memory: unload Ollama model and clear CUDA cache
+        try:
+            import subprocess
+            subprocess.run(["pkill", "-f", "ollama"], check=False, capture_output=True)
+            logger.info("Attempted to unload Ollama to free GPU memory")
+        except Exception as e:
+            logger.warning(f"Could not unload Ollama: {e}")
+        
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            logger.info("Cleared CUDA cache before translation")
         
         translator = get_service("translation")
         if highlights:
@@ -270,9 +278,17 @@ async def _analyze_local_video_task(task_id: str, filename: str):
         tasks[task_id].progress = 0.7
         tasks[task_id].message = "Translating to Russian..."
         
-        # Clear CUDA cache before translation to free memory
+        # Free GPU memory: unload Ollama model and clear CUDA cache
+        try:
+            import subprocess
+            subprocess.run(["pkill", "-f", "ollama"], check=False, capture_output=True)
+            logger.info("Attempted to unload Ollama to free GPU memory")
+        except Exception as e:
+            logger.warning(f"Could not unload Ollama: {e}")
+        
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            logger.info("Cleared CUDA cache before translation")
         
         # Batch translation for speed
         translator = get_service("translation")
