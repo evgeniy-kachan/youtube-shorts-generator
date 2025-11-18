@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 from typing import Dict
 import logging
+import torch
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
@@ -164,6 +165,10 @@ async def _analyze_video_task(task_id: str, youtube_url: str):
         tasks[task_id].message = "Translating to Russian..."
         
         # 4. Translate highlights (batch processing for speed)
+        # Clear CUDA cache before translation to free memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
         translator = get_service("translation")
         if highlights:
             texts = [h['text'] for h in highlights]
@@ -264,6 +269,10 @@ async def _analyze_local_video_task(task_id: str, filename: str):
         
         tasks[task_id].progress = 0.7
         tasks[task_id].message = "Translating to Russian..."
+        
+        # Clear CUDA cache before translation to free memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         # Batch translation for speed
         translator = get_service("translation")

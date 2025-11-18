@@ -77,44 +77,70 @@ class TranslationService:
             logger.error(f"Translation error: {e}")
             raise
     
-    def translate_batch(self, texts: List[str], max_length: int = 512) -> List[str]:
+    def translate_batch(self, texts: List[str], max_length: int = 512, batch_size: int = 50) -> List[str]:
         """
-        Translate multiple texts.
+        Translate multiple texts in batches to avoid OOM.
         
         Args:
             texts: List of texts to translate
             max_length: Maximum length of translations
+            batch_size: Number of texts to translate at once (default: 50)
             
         Returns:
             List of translated texts
         """
         try:
             self.tokenizer.src_lang = self.src_lang
+            all_translations = []
             
-            # Tokenize all texts
-            inputs = self.tokenizer(
-                texts,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=max_length
-            ).to(self.device)
+            # Process in chunks to avoid OOM
+            total = len(texts)
+            logger.info(f"Translating {total} texts in batches of {batch_size}...")
             
-            # Generate translations
-            translated = self.model.generate(
-                **inputs,
-                forced_bos_token_id=self.tokenizer.convert_tokens_to_ids(self.tgt_lang),
-                max_length=max_length,
-                num_beams=5,
-                early_stopping=True
-            )
+            for i in range(0, total, batch_size):
+                chunk = texts[i:i + batch_size]
+                chunk_num = (i // batch_size) + 1
+                total_chunks = (total + batch_size - 1) // batch_size
+                
+                logger.info(f"Translating batch {chunk_num}/{total_chunks} ({len(chunk)} texts)...")
+                
+                # Clear CUDA cache before each batch
+                if self.device == "cuda":
+                    torch.cuda.empty_cache()
+                
+                # Tokenize chunk
+                inputs = self.tokenizer(
+                    chunk,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=max_length
+                ).to(self.device)
+                
+                # Generate translations
+                translated = self.model.generate(
+                    **inputs,
+                    forced_bos_token_id=self.tokenizer.convert_tokens_to_ids(self.tgt_lang),
+                    max_length=max_length,
+                    num_beams=5,
+                    early_stopping=True
+                )
+                
+                # Decode chunk
+                chunk_translations = self.tokenizer.batch_decode(translated, skip_special_tokens=True)
+                all_translations.extend(chunk_translations)
+                
+                # Clear cache after each batch
+                if self.device == "cuda":
+                    torch.cuda.empty_cache()
             
-            # Decode all
-            translations = self.tokenizer.batch_decode(translated, skip_special_tokens=True)
-            
-            return translations
+            logger.info(f"Translation completed: {len(all_translations)} texts translated")
+            return all_translations
             
         except Exception as e:
             logger.error(f"Batch translation error: {e}")
+            # Clear cache on error
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
             raise
 
