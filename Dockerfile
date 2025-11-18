@@ -25,9 +25,9 @@ ENV PATH="/home/appuser/venv/bin:$PATH"
 # Upgrade pip
 RUN pip install --upgrade pip
 
-# Copy requirements and install dependencies
-# This is done in a separate step to leverage Docker layer caching
+# Install Python dependencies
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Install PyTorch and related packages first to ensure CUDA compatibility
 # Ensure torch version is compatible with CUDA 12.4 from the base image
