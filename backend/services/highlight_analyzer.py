@@ -188,40 +188,26 @@ class HighlightAnalyzer:
     def _analyze_segment_with_llm(self, segment: Dict) -> Dict[str, float]:
         """Analyze a single segment using LLM."""
         
-        prompt = f"""Analyze this video transcript segment for viral/engaging potential for Reels/Shorts.
-Rate each criterion from 0.0 to 1.0:
+        prompt = f"""Analyze this video transcript segment for its potential as a viral short video (Reels/Shorts).
+Rate each of the 5 key criteria from 0.0 to 1.0.
 
 TEXT: "{segment['text']}"
 
-Evaluate these 12 criteria:
+Evaluate these 5 criteria:
 
-1. information_density: Does it contain new ideas, insights, conclusions, or important facts?
-2. emotional_intensity: Is there emotional expression, surprise, humor, or sentiment shifts?
-3. topic_transition: Does it introduce a new topic or perspective?
-4. key_value: Does it provide actionable advice, tips, rules, or takeaways?
-5. hook_potential: Does it start with an engaging hook phrase?
-6. tension: Is there conflict, disagreement, or debate?
-7. story_moment: Does it tell a story or personal example?
-8. humor: Is there humor, jokes, or laughter?
-9. cadence_shift: Does the speaking pace or intensity change noticeably?
-10. keyword_density: Are there important domain-specific keywords?
-11. multimodal_score: Combined text quality and structural completeness
-12. audience_appeal: Would this interest a wide audience?
+1. emotional_intensity: Strength of emotion, surprise, or sentiment.
+2. hook_potential: How well the start grabs attention.
+3. key_value: Presence of actionable advice, insights, or takeaways.
+4. story_moment: Does it tell a compelling story or personal example?
+5. humor: Is there humor, jokes, or clear entertainment value?
 
-Respond ONLY with valid JSON (no markdown, no explanation):
+Respond ONLY with valid JSON (no markdown or explanations):
 {{
-  "information_density": 0.0-1.0,
   "emotional_intensity": 0.0-1.0,
-  "topic_transition": 0.0-1.0,
-  "key_value": 0.0-1.0,
   "hook_potential": 0.0-1.0,
-  "tension": 0.0-1.0,
+  "key_value": 0.0-1.0,
   "story_moment": 0.0-1.0,
-  "humor": 0.0-1.0,
-  "cadence_shift": 0.0-1.0,
-  "keyword_density": 0.0-1.0,
-  "multimodal_score": 0.0-1.0,
-  "audience_appeal": 0.0-1.0
+  "humor": 0.0-1.0
 }}"""
 
         try:
@@ -257,60 +243,25 @@ Respond ONLY with valid JSON (no markdown, no explanation):
             logger.warning(f"Error parsing LLM response, using default scores: {e}")
             # Return neutral scores if parsing fails
             return {
-                'information_density': 0.5,
                 'emotional_intensity': 0.5,
-                'topic_transition': 0.5,
-                'key_value': 0.5,
                 'hook_potential': 0.5,
-                'tension': 0.5,
+                'key_value': 0.5,
                 'story_moment': 0.5,
                 'humor': 0.5,
-                'cadence_shift': 0.5,
-                'keyword_density': 0.5,
-                'multimodal_score': 0.5,
-                'audience_appeal': 0.5,
             }
     
     def _calculate_highlight_score(self, scores: Dict[str, float]) -> float:
         """
-        Calculate weighted highlight score.
-        
-        Based on your formula:
-        highlight_score = 0.4 * semantic_value + 0.25 * emotional_intensity +
-                         0.15 * hook_probability + 0.1 * keyword_density +
-                         0.1 * story_probability
+        Calculate weighted highlight score based on 5 key criteria.
         """
-        # Semantic value: average of information density, key value, and topic transition
-        semantic_value = (
-            scores.get('information_density', 0) +
-            scores.get('key_value', 0) +
-            scores.get('topic_transition', 0)
-        ) / 3
-        
-        emotional_intensity = scores.get('emotional_intensity', 0)
-        hook_probability = scores.get('hook_potential', 0)
-        keyword_density = scores.get('keyword_density', 0)
-        story_probability = scores.get('story_moment', 0)
-        
+        # New weighted formula for 5 criteria
         highlight_score = (
-            0.4 * semantic_value +
-            0.25 * emotional_intensity +
-            0.15 * hook_probability +
-            0.1 * keyword_density +
-            0.1 * story_probability
+            0.30 * scores.get('emotional_intensity', 0) +
+            0.30 * scores.get('hook_potential', 0) +
+            0.20 * scores.get('key_value', 0) +
+            0.15 * scores.get('story_moment', 0) +
+            0.05 * scores.get('humor', 0)
         )
-        
-        # Bonus for high audience appeal
-        if scores.get('audience_appeal', 0) > 0.7:
-            highlight_score *= 1.1
-        
-        # Bonus for humor
-        if scores.get('humor', 0) > 0.7:
-            highlight_score *= 1.05
-        
-        # Bonus for tension/conflict
-        if scores.get('tension', 0) > 0.7:
-            highlight_score *= 1.05
         
         return min(1.0, highlight_score)
 
