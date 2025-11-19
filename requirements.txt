@@ -40,3 +40,4 @@ soundfile>=0.12.1
 pydantic>=2.5.0
 python-dotenv>=1.0.0
 numpy>=1.23.0,<2.0.0
+sentence-splitter
