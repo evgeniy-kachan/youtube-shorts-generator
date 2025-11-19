@@ -24,7 +24,7 @@ from backend.services.highlight_analyzer import HighlightAnalyzer
 from backend.services.translation import Translator
 from backend.services.tts import TextToSpeechService
 from backend.services.video_processor import VideoProcessor
-from backend.config import TEMP_DIR, OUTPUT_DIR, VERTICAL_CONVERSION_METHOD
+from backend.config import TEMP_DIR, OUTPUT_DIR
 import backend.config as config
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ def get_service(name: str):
             _services[name] = HighlightAnalyzer()
         elif name == "translation":
             _services[name] = Translator(
-                model_name=config.NLLB_MODEL,
+                model_name=config.TRANSLATION_MODEL_NAME,
                 device="cuda"
             )
         elif name == "tts":
@@ -294,9 +294,12 @@ async def _analyze_local_video_task(task_id: str, filename: str):
         translator = get_service("translation")
         if highlights:
             texts = [h['text'] for h in highlights]
+            logger.info("Starting batch translation...")
             translations = translator.translate_batch(texts)
+            logger.info("Batch translation finished. Assigning results...")
             for highlight, translation in zip(highlights, translations):
                 highlight['text_ru'] = translation
+            logger.info("Translation results assigned.")
         
         tasks[task_id].progress = 0.9
         tasks[task_id].message = "Finalizing..."
@@ -307,6 +310,8 @@ async def _analyze_local_video_task(task_id: str, filename: str):
             'segments': segments
         }
         
+        logger.info("Analysis results cached.")
+
         response = VideoAnalysisResponse(
             video_id=video_info['video_id'],
             title=video_info['title'],
@@ -326,6 +331,8 @@ async def _analyze_local_video_task(task_id: str, filename: str):
             ]
         )
         
+        logger.info("Response object created. Updating task to completed.")
+
         tasks[task_id].status = "completed"
         tasks[task_id].progress = 1.0
         tasks[task_id].message = "Analysis completed"

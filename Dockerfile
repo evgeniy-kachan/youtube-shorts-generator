@@ -1,4 +1,4 @@
-# Use NVIDIA CUDA base image compatible with PyTorch and Tesla T4
+# Use NVIDIA CUDA base image for GPU support
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 # Set environment variables
@@ -7,44 +7,40 @@ ENV PYTHONUNBUFFERED 1
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.10 \
     python3-pip \
-    python3.10-venv \
+    python3-venv \
     ffmpeg \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
 RUN useradd -ms /bin/bash appuser
-WORKDIR /home/appuser/app
+USER appuser
 
-# Create and activate virtual environment
-RUN python3.10 -m venv /home/appuser/venv
-ENV PATH="/home/appuser/venv/bin:$PATH"
+# Set up virtual environment
+ENV VIRTUAL_ENV=/home/appuser/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Set working directory
+WORKDIR /home/appuser/app
 
 # Upgrade pip
 RUN pip install --upgrade pip
 
 # Install PyTorch and related packages first to ensure CUDA compatibility
-# We use a pre-release version of PyTorch to satisfy the >=2.6 requirement from the security check
-RUN pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu124
+RUN pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu121
 RUN pip install torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 # Install other Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install other dependencies, ignoring numpy for now to avoid conflicts
-RUN pip install -r requirements.txt --no-deps
+# Copy application code
+COPY --chown=appuser:appuser . .
 
-# Copy the rest of the application code
-COPY . .
-
-# Change ownership to non-root user
-RUN chown -R appuser:appuser /home/appuser/app
-USER appuser
-
-# Expose port and run the application
+# Expose the port the app runs on
 EXPOSE 8000
+
+# Run the application
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
