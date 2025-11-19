@@ -13,7 +13,7 @@ class Translator:
         self.device_obj = torch.device(device)
         print(f"Loading translation model {model_name} on {self.device_obj}...")
         self.translator = pipeline(
-            'translation_en_to_ru', 
+            'translation',  # Use generic 'translation' task for NLLB
             model=model_name, 
             device=0 if device == 'cuda' else -1,
             torch_dtype=torch.float16 if device == 'cuda' else torch.float32
@@ -32,7 +32,8 @@ class Translator:
             Translated text
         """
         try:
-            return self.translator(text, max_length=max_length)[0]['translation_text']
+            # Specify source and target languages for NLLB model
+            return self.translator(text, src_lang="eng_Latn", tgt_lang="rus_Cyrl", max_length=max_length)[0]['translation_text']
             
         except Exception as e:
             logger.error(f"Translation error: {e}")
@@ -62,6 +63,8 @@ class Translator:
 
                 translated_batch = self.translator(
                     batch, 
+                    src_lang="eng_Latn",  # Specify source language for NLLB
+                    tgt_lang="rus_Cyrl",  # Specify target language for NLLB
                     max_length=max_length,
                     num_beams=num_beams,
                     truncation=True
@@ -79,4 +82,3 @@ class Translator:
 
         print("Batch translation completed.")
         return translations
-
