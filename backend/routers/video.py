@@ -21,10 +21,10 @@ from backend.models.schemas import (
 from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
 from backend.services.highlight_analyzer import HighlightAnalyzer
-from backend.services.translation import TranslationService
-from backend.services.tts import TTSService
+from backend.services.translation import Translator
+from backend.services.tts import TextToSpeechService
 from backend.services.video_processor import VideoProcessor
-from backend.config import TEMP_DIR, OUTPUT_DIR
+from backend.config import TEMP_DIR, OUTPUT_DIR, VERTICAL_CONVERSION_METHOD
 import backend.config as config
 
 logger = logging.getLogger(__name__)
@@ -55,12 +55,12 @@ def get_service(name: str):
         elif name == "analyzer":
             _services[name] = HighlightAnalyzer()
         elif name == "translation":
-            _services[name] = TranslationService(
+            _services[name] = Translator(
                 model_name=config.NLLB_MODEL,
                 device="cuda"
             )
         elif name == "tts":
-            _services[name] = TTSService(
+            _services[name] = TextToSpeechService(
                 language=config.SILERO_LANGUAGE,
                 speaker=config.SILERO_SPEAKER
             )
