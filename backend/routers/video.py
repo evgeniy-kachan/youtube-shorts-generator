@@ -132,7 +132,7 @@ async def analyze_local_video(background_tasks: BackgroundTasks, filename: str):
     }
 
 
-async def _analyze_video_task(task_id: str, youtube_url: str):
+def _analyze_video_task(task_id: str, youtube_url: str):
     """Background task for video analysis."""
     try:
         # Update status
@@ -223,7 +223,7 @@ async def _analyze_video_task(task_id: str, youtube_url: str):
         tasks[task_id].message = str(e)
 
 
-async def _analyze_local_video_task(task_id: str, filename: str):
+def _analyze_local_video_task(task_id: str, filename: str):
     """Background task for local video analysis."""
     try:
         tasks[task_id].status = "processing"
@@ -382,7 +382,7 @@ async def process_segments(request: ProcessRequest, background_tasks: Background
     }
 
 
-async def _process_segments_task(task_id: str, video_id: str, segment_ids: list, vertical_method: str = "blur_background"):
+def _process_segments_task(task_id: str, video_id: str, segment_ids: list, vertical_method: str = "blur_background"):
     """Background task for processing segments."""
     try:
         tasks[task_id].status = "processing"
