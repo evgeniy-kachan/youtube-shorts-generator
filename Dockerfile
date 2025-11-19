@@ -27,7 +27,8 @@ RUN pip install --upgrade pip
 
 # Install PyTorch and related packages first to ensure CUDA compatibility
 # We use a pre-release version of PyTorch to satisfy the >=2.6 requirement from the security check
-RUN pip install --pre torch torchaudio --index-url https://download.pytorch.org/whl/nightly/cu124
+RUN pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu124
+RUN pip install torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 # Install other Python dependencies
 COPY requirements.txt .
