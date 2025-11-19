@@ -22,7 +22,7 @@ from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
 from backend.services.highlight_analyzer import HighlightAnalyzer
 from backend.services.translation import Translator
-from backend.services.tts import TextToSpeechService
+from backend.services.tts import TTSService
 from backend.services.video_processor import VideoProcessor
 from backend.config import TEMP_DIR, OUTPUT_DIR
 import backend.config as config
@@ -60,7 +60,7 @@ def get_service(name: str):
                 device="cuda"
             )
         elif name == "tts":
-            _services[name] = TextToSpeechService(
+            _services[name] = TTSService(
                 language=config.SILERO_LANGUAGE,
                 speaker=config.SILERO_SPEAKER
             )
