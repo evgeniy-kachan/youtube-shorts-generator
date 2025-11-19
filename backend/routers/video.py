@@ -118,6 +118,7 @@ async def analyze_local_video(background_tasks: BackgroundTasks, filename: str):
         message="Task created"
     )
     
+    # Run analysis in background
     background_tasks.add_task(
         _analyze_local_video_task,
         task_id,
@@ -166,12 +167,8 @@ async def _analyze_video_task(task_id: str, youtube_url: str):
         
         # 4. Translate highlights (batch processing for speed)
         # Free GPU memory: unload Ollama model and clear CUDA cache
-        try:
-            import subprocess
-            subprocess.run(["pkill", "-f", "ollama"], check=False, capture_output=True)
-            logger.info("Attempted to unload Ollama to free GPU memory")
-        except Exception as e:
-            logger.warning(f"Could not unload Ollama: {e}")
+        del analyzer
+        _services.pop("analyzer", None)
         
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -243,13 +240,15 @@ async def _analyze_local_video_task(task_id: str, filename: str):
         probe = ffmpeg.probe(str(video_path))
         duration = float(probe['format']['duration'])
         
-        if duration > 7200:
+        if duration > 7200: # 120 minutes limit
             raise ValueError(f"Video too long: {duration/60:.1f} min (max 120 min)")
         
         # Extract audio
         audio_path = TEMP_DIR / f"{video_path.stem}_audio.wav"
-        video_processor = get_service("video_processor")
-        video_processor.extract_audio(str(video_path), str(audio_path))
+        # Check if audio already exists
+        if not audio_path.exists():
+            video_processor = get_service("video_processor")
+            video_processor.extract_audio(str(video_path), str(audio_path))
         
         video_info = {
             'video_id': video_path.stem,
@@ -279,12 +278,8 @@ async def _analyze_local_video_task(task_id: str, filename: str):
         tasks[task_id].message = "Translating to Russian..."
         
         # Free GPU memory: unload Ollama model and clear CUDA cache
-        try:
-            import subprocess
-            subprocess.run(["pkill", "-f", "ollama"], check=False, capture_output=True)
-            logger.info("Attempted to unload Ollama to free GPU memory")
-        except Exception as e:
-            logger.warning(f"Could not unload Ollama: {e}")
+        del analyzer
+        _services.pop("analyzer", None)
         
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -542,4 +537,3 @@ async def cleanup_video(video_id: str):
     except Exception as e:
         logger.error(f"Error during cleanup: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
