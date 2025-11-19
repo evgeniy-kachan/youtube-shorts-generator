@@ -25,13 +25,13 @@ ENV PATH="/home/appuser/venv/bin:$PATH"
 # Upgrade pip
 RUN pip install --upgrade pip
 
-# Install Python dependencies
+# Install PyTorch and related packages first to ensure CUDA compatibility
+# We use a pre-release version of PyTorch to satisfy the >=2.6 requirement from the security check
+RUN pip install --pre torch torchaudio --index-url https://download.pytorch.org/whl/nightly/cu124
+
+# Install other Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Install PyTorch and related packages first to ensure CUDA compatibility
-# Ensure torch version is compatible with CUDA 12.4 from the base image
-RUN pip install torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu124
 
 # Install other dependencies, ignoring numpy for now to avoid conflicts
 RUN pip install -r requirements.txt --no-deps
