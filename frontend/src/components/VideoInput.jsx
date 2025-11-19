@@ -13,7 +13,6 @@ const VideoInput = ({ onSubmit, loading }) => {
       return;
     }
     
-    // Simple validation for mp4 extension
     if (!filename.toLowerCase().endsWith('.mp4')) {
         setError('Имя файла должно заканчиваться на .mp4');
         return;
