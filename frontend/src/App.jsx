@@ -4,7 +4,7 @@ import VideoInput from './components/VideoInput';
 import ProgressBar from './components/ProgressBar';
 import SegmentsList from './components/SegmentsList';
 import DownloadList from './components/DownloadList';
-import { analyzeVideo, getTaskStatus, processSegments } from './services/api';
+import { analyzeLocalVideo, getTaskStatus, processSegments } from './services/api';
 
 function App() {
   const [stage, setStage] = useState('input'); // input, analyzing, segments, processing, download
@@ -75,14 +75,14 @@ function App() {
     };
   }, [analysisTask, processingTask, stage]);
 
-  const handleAnalyze = async (url) => {
+  const handleAnalyze = async (filename) => {
     try {
       setStage('analyzing');
       setProgress(0);
       setStatusMessage('Начинаем анализ...');
       setTaskStatus('pending');
 
-      const response = await analyzeVideo(url);
+      const response = await analyzeLocalVideo(filename);
       setAnalysisTask(response.task_id);
     } catch (error) {
       console.error('Error starting analysis:', error);

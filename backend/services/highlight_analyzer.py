@@ -4,7 +4,7 @@ import logging
 from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor
 import ollama
-from backend.config import OLLAMA_HOST, OLLAMA_MODEL
+from backend.config import OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_PORT
 
 logger = logging.getLogger(__name__)
 
@@ -12,22 +12,23 @@ logger = logging.getLogger(__name__)
 class HighlightAnalyzer:
     """Analyze video segments to find interesting moments."""
     
-    def __init__(self, model_name: str = None, host: str = None):
+    def __init__(self, model_name: str = None, host: str = None, port: int = None):
         """
         Initialize analyzer with LLM.
         
         Args:
             model_name: Ollama model name (e.g., "llama3.1:8b", "qwen2.5:7b", "mistral:7b")
-            host: Ollama host URL
+            host: Ollama host name
+            port: Ollama port number
         """
         self.model_name = model_name or OLLAMA_MODEL
-        self.host = host or OLLAMA_HOST
+        host = host or OLLAMA_HOST
+        port = port or OLLAMA_PORT
         
         # Configure ollama client
-        if self.host != "http://localhost:11434":
-            ollama.Client(host=self.host)
+        self.client = ollama.Client(host=f"http://{host}:{port}")
             
-        logger.info(f"Initialized HighlightAnalyzer with model: {self.model_name}")
+        logger.info(f"Initialized HighlightAnalyzer with model: {self.model_name} on host http://{host}:{port}")
         
     def analyze_segments(self, segments: List[Dict], min_duration: int = 20, max_duration: int = 180, max_parallel: int = 5) -> List[Dict]:
         """
@@ -211,7 +212,7 @@ Respond ONLY with valid JSON (no markdown or explanations):
 }}"""
 
         try:
-            response = ollama.generate(
+            response = self.client.generate(
                 model=self.model_name,
                 prompt=prompt,
                 options={

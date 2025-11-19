@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import torch
 
 load_dotenv()
 
@@ -10,7 +11,8 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", 8000))
 
 # Ollama Configuration
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "ollama")  # Changed from localhost to ollama
+OLLAMA_PORT = int(os.getenv("OLLAMA_PORT", 11434))
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
 # Processing Configuration
@@ -35,9 +37,15 @@ WHISPER_MODEL = "large-v3"  # or "large-v2", "medium"
 WHISPER_DEVICE = "cuda"
 WHISPER_COMPUTE_TYPE = "float16"  # or "int8" for less VRAM
 
-# Translation Configuration
-NLLB_MODEL = "facebook/nllb-200-distilled-600M"  # or "facebook/nllb-200-3.3B"
-TRANSLATION_MAX_LENGTH = 1024  # Maximum tokens for translation (increased for longer segments)
+# LLM
+LLM_MODEL = os.getenv("LLM_MODEL", "llama3.1:8b")
+LLM_BASE_URL = "http://ollama:11434"
+HIGHLIGHT_CONCURRENT_REQUESTS = int(os.getenv("HIGHLIGHT_CONCURRENT_REQUESTS", 5))
+
+# Translation
+TRANSLATION_MODEL_NAME = "facebook/nllb-200-distilled-600M"
+TRANSLATION_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+TRANSLATION_MAX_LENGTH = 1024
 
 # TTS Configuration
 SILERO_LANGUAGE = "ru"

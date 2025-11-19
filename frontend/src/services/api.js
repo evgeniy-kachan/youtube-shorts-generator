@@ -16,6 +16,11 @@ export const analyzeVideo = async (youtubeUrl) => {
   return response.data;
 };
 
+export const analyzeLocalVideo = async (filename) => {
+  const response = await api.post(`/api/video/analyze-local?filename=${filename}`);
+  return response.data;
+};
+
 export const getTaskStatus = async (taskId) => {
   const response = await api.get(`/api/video/task/${taskId}`);
   return response.data;

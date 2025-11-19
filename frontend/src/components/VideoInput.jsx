@@ -1,53 +1,49 @@
 import React, { useState } from 'react';
 
 const VideoInput = ({ onSubmit, loading }) => {
-  const [url, setUrl] = useState('');
+  const [filename, setFilename] = useState('test_video.mp4');
   const [error, setError] = useState('');
-
-  const validateYouTubeUrl = (url) => {
-    const pattern = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/;
-    return pattern.test(url);
-  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     setError('');
 
-    if (!url.trim()) {
-      setError('Пожалуйста, введите URL видео');
+    if (!filename.trim()) {
+      setError('Пожалуйста, введите имя файла');
       return;
     }
-
-    if (!validateYouTubeUrl(url)) {
-      setError('Пожалуйста, введите корректную ссылку на YouTube');
-      return;
+    
+    // Simple validation for mp4 extension
+    if (!filename.toLowerCase().endsWith('.mp4')) {
+        setError('Имя файла должно заканчиваться на .mp4');
+        return;
     }
 
-    onSubmit(url);
+    onSubmit(filename);
   };
 
   return (
     <div className="card max-w-3xl mx-auto">
       <div className="text-center mb-6">
         <h2 className="text-3xl font-bold text-gray-900 mb-2">
-          Создайте вирусные Shorts из любого видео
+          Создайте вирусные Shorts из локального видео
         </h2>
         <p className="text-gray-600">
-          Вставьте ссылку на YouTube видео, и AI найдёт самые интересные моменты
+          Введите имя видеофайла (например, test_video.mp4), загруженного в папку `temp`, и AI найдёт самые интересные моменты.
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label htmlFor="youtube-url" className="block text-sm font-medium text-gray-700 mb-2">
-            YouTube URL
+          <label htmlFor="filename-input" className="block text-sm font-medium text-gray-700 mb-2">
+            Имя файла на сервере
           </label>
           <input
-            id="youtube-url"
+            id="filename-input"
             type="text"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://www.youtube.com/watch?v=..."
+            value={filename}
+            onChange={(e) => setFilename(e.target.value)}
+            placeholder="например, my_video.mp4"
             className="input-field"
             disabled={loading}
           />
@@ -86,7 +82,7 @@ const VideoInput = ({ onSubmit, loading }) => {
               Анализируем видео...
             </span>
           ) : (
-            'Анализировать видео'
+            'Анализировать локальный файл'
           )}
         </button>
       </form>
@@ -126,4 +122,3 @@ const VideoInput = ({ onSubmit, loading }) => {
 };
 
 export default VideoInput;
-

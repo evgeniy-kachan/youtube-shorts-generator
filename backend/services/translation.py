@@ -3,38 +3,23 @@ import torch
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import logging
 from typing import List
+from backend.config import TRANSLATION_DEVICE, TRANSLATION_MODEL_NAME
 
 logger = logging.getLogger(__name__)
 
 
-class TranslationService:
-    """Translate text using NLLB model."""
-    
-    def __init__(self, model_name: str = "facebook/nllb-200-distilled-600M", device: str = "cuda"):
-        """
-        Initialize NLLB translation model.
-        
-        Args:
-            model_name: NLLB model name
-                - facebook/nllb-200-distilled-600M (smaller, faster)
-                - facebook/nllb-200-1.3B
-                - facebook/nllb-200-3.3B (best quality)
-            device: Device to use (cuda, cpu)
-        """
-        logger.info(f"Loading NLLB model: {model_name}")
-        
-        self.device = device if torch.cuda.is_available() else "cpu"
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(self.device)
-        
-        # NLLB language codes
-        # English: eng_Latn
-        # Russian: rus_Cyrl
-        self.src_lang = "eng_Latn"
-        self.tgt_lang = "rus_Cyrl"
-        
-        logger.info(f"NLLB model loaded on {self.device}")
-        
+class Translator:
+    def __init__(self, model_name=TRANSLATION_MODEL_NAME, device=TRANSLATION_DEVICE):
+        self.device_obj = torch.device(device)
+        print(f"Loading translation model {model_name} on {self.device_obj}...")
+        self.translator = pipeline(
+            'translation_en_to_ru', 
+            model=model_name, 
+            device=0 if device == 'cuda' else -1,
+            torch_dtype=torch.float16 if device == 'cuda' else torch.float32
+        )
+        print(f"Translation model loaded on {self.device_obj}")
+
     def translate(self, text: str, max_length: int = 1024) -> str:
         """
         Translate text from English to Russian.
@@ -47,39 +32,15 @@ class TranslationService:
             Translated text
         """
         try:
-            # Set source language
-            self.tokenizer.src_lang = self.src_lang
-            
-            # Tokenize
-            inputs = self.tokenizer(
-                text,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=max_length
-            ).to(self.device)
-            
-            # Generate translation
-            translated = self.model.generate(
-                **inputs,
-                forced_bos_token_id=self.tokenizer.convert_tokens_to_ids(self.tgt_lang),
-                max_length=max_length,
-                num_beams=5,
-                early_stopping=True
-            )
-            
-            # Decode
-            translation = self.tokenizer.batch_decode(translated, skip_special_tokens=True)[0]
-            
-            return translation
+            return self.translator(text, max_length=max_length)[0]['translation_text']
             
         except Exception as e:
             logger.error(f"Translation error: {e}")
             raise
     
-    def translate_batch(self, texts: List[str], max_length: int = 1024, batch_size: int = 10) -> List[str]:
+    def translate_batch(self, texts: List[str], max_length: int = 1024, batch_size: int = 10, num_beams: int = 3) -> List[str]:
         """
-        Translate multiple texts in batches to avoid OOM.
+        Translate multiple texts.
         
         Args:
             texts: List of texts to translate
@@ -89,58 +50,33 @@ class TranslationService:
         Returns:
             List of translated texts
         """
-        try:
-            self.tokenizer.src_lang = self.src_lang
-            all_translations = []
-            
-            # Process in chunks to avoid OOM
-            total = len(texts)
-            logger.info(f"Translating {total} texts in batches of {batch_size}...")
-            
-            for i in range(0, total, batch_size):
-                chunk = texts[i:i + batch_size]
-                chunk_num = (i // batch_size) + 1
-                total_chunks = (total + batch_size - 1) // batch_size
-                
-                logger.info(f"Translating batch {chunk_num}/{total_chunks} ({len(chunk)} texts)...")
-                
-                # Clear CUDA cache before each batch
-                if self.device == "cuda":
+        print(f"Translating {len(texts)} segments in batches of {batch_size}...")
+        translations = []
+        
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i+batch_size]
+            try:
+                # Clear CUDA cache before processing a new batch
+                if self.device_obj.type == 'cuda':
                     torch.cuda.empty_cache()
-                
-                # Tokenize chunk
-                inputs = self.tokenizer(
-                    chunk,
-                    return_tensors="pt",
-                    padding=True,
-                    truncation=True,
-                    max_length=max_length
-                ).to(self.device)
-                
-                # Generate translations (num_beams=3 for less GPU memory usage)
-                translated = self.model.generate(
-                    **inputs,
-                    forced_bos_token_id=self.tokenizer.convert_tokens_to_ids(self.tgt_lang),
+
+                translated_batch = self.translator(
+                    batch, 
                     max_length=max_length,
-                    num_beams=3,
-                    early_stopping=True
+                    num_beams=num_beams,
+                    truncation=True
                 )
+                translations.extend([item['translation_text'] for item in translated_batch])
                 
-                # Decode chunk
-                chunk_translations = self.tokenizer.batch_decode(translated, skip_special_tokens=True)
-                all_translations.extend(chunk_translations)
-                
-                # Clear cache after each batch
-                if self.device == "cuda":
+                # Clear CUDA cache after processing a batch
+                if self.device_obj.type == 'cuda':
                     torch.cuda.empty_cache()
-            
-            logger.info(f"Translation completed: {len(all_translations)} texts translated")
-            return all_translations
-            
-        except Exception as e:
-            logger.error(f"Batch translation error: {e}")
-            # Clear cache on error
-            if self.device == "cuda":
-                torch.cuda.empty_cache()
-            raise
+                    
+            except Exception as e:
+                print(f"Error translating batch {i//batch_size + 1}: {e}")
+                # Add placeholders for failed translations
+                translations.extend(["[Translation Error]" for _ in batch])
+
+        print("Batch translation completed.")
+        return translations
 
