@@ -68,7 +68,7 @@ def get_service(name: str):
                 model_version=config.SILERO_MODEL_VERSION
             )
         elif name == "renderer":
-            _services[name] = VideoProcessor()
+            _services[name] = VideoProcessor(output_dir=get_output_dir())
         else:
             raise ValueError(f"Unknown service: {name}")
     return _services[name]
