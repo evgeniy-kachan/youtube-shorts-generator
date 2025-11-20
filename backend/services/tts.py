@@ -29,6 +29,7 @@ class TTSService:
         # Load Silero TTS model
         # Model will be downloaded automatically on first use
         try:
+            logger.info(f"Calling torch.hub.load with language={language}, speaker={speaker}")
             model_result = torch.hub.load(
                 repo_or_dir='snakers4/silero-models',
                 model='silero_tts',
@@ -37,21 +38,32 @@ class TTSService:
                 trust_repo=True
             )
             
+            logger.info(f"torch.hub.load returned type: {type(model_result)}")
+            
             # Handle different return formats from torch.hub.load
             if isinstance(model_result, tuple):
-                self.model, _ = model_result
+                logger.info(f"Result is tuple with {len(model_result)} elements")
+                self.model, example_text = model_result
+                logger.info(f"Extracted model type: {type(self.model)}")
             else:
                 self.model = model_result
+                logger.info(f"Result is not tuple, using directly. Type: {type(self.model)}")
             
             # Validate that model was loaded
             if self.model is None:
                 raise ValueError("torch.hub.load returned None - model failed to load")
             
-            self.model = self.model.to(self.device)
+            logger.info(f"Model before .to(device): {type(self.model)}, has apply_tts: {hasattr(self.model, 'apply_tts')}")
+            
+            # Silero models don't need .to(device) - they handle device internally
+            # But let's check if model has the method
+            if not hasattr(self.model, 'apply_tts'):
+                raise ValueError(f"Loaded object does not have 'apply_tts' method. Type: {type(self.model)}, dir: {dir(self.model)[:10]}")
+            
             logger.info("Silero TTS model loaded successfully")
             
         except Exception as e:
-            logger.error(f"Failed to load Silero TTS model: {e}")
+            logger.error(f"Failed to load Silero TTS model: {e}", exc_info=True)
             raise RuntimeError(f"Could not initialize TTS service: {e}") from e
         
     def synthesize(self, text: str, output_path: str, speaker: str | None = None) -> str:
@@ -67,6 +79,15 @@ class TTSService:
             Path to generated audio file
         """
         try:
+            # Validate model is still available
+            if self.model is None:
+                raise RuntimeError("TTS model is None - model was not loaded correctly")
+            
+            if not hasattr(self.model, 'apply_tts'):
+                raise RuntimeError(f"Model does not have 'apply_tts' method. Model type: {type(self.model)}")
+            
+            logger.info(f"Generating TTS audio for text length: {len(text)} chars, speaker: {speaker or self.speaker}")
+            
             # Generate audio
             audio = self.model.apply_tts(
                 text=text,
