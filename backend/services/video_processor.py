@@ -309,23 +309,83 @@ class VideoProcessor:
         logger.info(f"Final video saved to: {output_path}")
         return str(output_path)
 
-    def _generate_basic_subtitles(self, text: str, duration: float) -> List[Dict]:
+    def _generate_basic_subtitles(
+        self,
+        text: str,
+        duration: float,
+        max_words_per_line: int = 4
+    ) -> List[Dict]:
         """
-        Create a simple subtitle track that covers the entire clip duration.
+        Create a multi-line subtitle track with approximate word-level timings.
+        Each subtitle line contains up to `max_words_per_line` words so the viewer
+        sees a few words at a time, synchronized with the TTS audio.
         """
-        words = text.strip().split()
-        if not words:
-            words = [" "]
+        cleaned_text = " ".join(text.strip().split())
+        if not cleaned_text:
+            cleaned_text = "..."
 
-        subtitles = [{
-            'start': 0.0,
-            'end': duration,
-            'text': text.strip() or "",
-            'words': [
-                {'word': word, 'start': idx * duration / len(words), 'end': (idx + 1) * duration / len(words)}
-                for idx, word in enumerate(words)
-            ]
-        }]
+        words = cleaned_text.split(" ")
+        total_words = len(words)
+        if total_words == 0:
+            words = ["..."]
+            total_words = 1
+
+        # Group words into chunks (a few words per subtitle line)
+        word_chunks: List[List[str]] = []
+        current_chunk: List[str] = []
+
+        for word in words:
+            current_chunk.append(word)
+            if len(current_chunk) >= max_words_per_line:
+                word_chunks.append(current_chunk)
+                current_chunk = []
+
+        if current_chunk:
+            word_chunks.append(current_chunk)
+
+        subtitles: List[Dict] = []
+        elapsed = 0.0
+
+        for chunk in word_chunks:
+            chunk_word_count = len(chunk)
+            # Allocate duration proportionally to number of words in chunk
+            chunk_duration = duration * (chunk_word_count / total_words)
+            # Ensure last chunk ends exactly at total duration
+            if chunk is word_chunks[-1]:
+                chunk_duration = max(0.05, duration - elapsed)
+
+            start_time = elapsed
+            end_time = min(duration, start_time + chunk_duration)
+            elapsed = end_time
+
+            # Word-level timings within the chunk
+            word_entries = []
+            if chunk_word_count == 0:
+                chunk_word_count = 1
+
+            per_word = chunk_duration / chunk_word_count if chunk_duration > 0 else 0
+            for index, word in enumerate(chunk):
+                word_start = start_time + index * per_word
+                word_end = min(end_time, word_start + per_word)
+                word_entries.append({
+                    'word': word,
+                    'start': word_start,
+                    'end': word_end
+                })
+
+            subtitles.append({
+                'start': start_time,
+                'end': end_time,
+                'text': " ".join(chunk),
+                'words': word_entries
+            })
+
+        # Guard: if due to rounding we didn't cover the entire duration,
+        # extend the last subtitle slightly
+        if subtitles and subtitles[-1]['end'] < duration:
+            subtitles[-1]['end'] = duration
+            if subtitles[-1]['words']:
+                subtitles[-1]['words'][-1]['end'] = duration
 
         return subtitles
     
