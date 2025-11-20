@@ -415,34 +415,34 @@ class VideoProcessor:
         styles = {
             'tiktok': {
                 'fontname': 'Arial',
-                'fontsize': 38,
+                'fontsize': 56,
                 'primarycolor': '&H00FFFFFF',  # White fill
-                'outlinecolor': '&H00FFFFFF',  # Match fill to remove black border
+                'outlinecolor': '&H00FFFFFF',  # Same as fill
                 'borderstyle': 1,
                 'outline': 0,
-                'shadow': 0,
+                'shadow': 3,
                 'alignment': 2,  # Bottom center
                 'marginv': 90,
             },
             'instagram': {
                 'fontname': 'Arial',
-                'fontsize': 34,
+                'fontsize': 48,
                 'primarycolor': '&H00FFFFFF',
                 'outlinecolor': '&H00FFFFFF',
                 'borderstyle': 1,
                 'outline': 0,
-                'shadow': 0,
+                'shadow': 3,
                 'alignment': 2,
                 'marginv': 80,
             },
             'youtube': {
                 'fontname': 'Arial',
-                'fontsize': 32,
+                'fontsize': 42,
                 'primarycolor': '&H00FFFFFF',
                 'outlinecolor': '&H00FFFFFF',
                 'borderstyle': 1,
                 'outline': 0,
-                'shadow': 0,
+                'shadow': 3,
                 'alignment': 2,
                 'marginv': 70,
             }
