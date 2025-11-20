@@ -7,7 +7,7 @@ from typing import List, Optional
 
 import torch
 
-from backend.services.youtube_downloader import download_youtube_video, get_video_info
+from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
 from backend.services.highlight_analyzer import HighlightAnalyzer
 from backend.services.translation import Translator
@@ -122,9 +122,10 @@ def _analyze_video_task(task_id: str, youtube_url: str):
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Downloading video..."}
         
         # 1. Download video
-        video_info = get_video_info(youtube_url)
-        video_id = video_info['id']
-        video_path = download_youtube_video(youtube_url, get_temp_dir())
+        downloader = YouTubeDownloader(output_dir=get_temp_dir())
+        video_info = downloader.download(youtube_url)
+        video_id = video_info['video_id']
+        video_path = video_info['video_path']
         
         if not video_path:
             raise Exception("Failed to download video.")
