@@ -1,8 +1,10 @@
 """Text-to-Speech service using Silero TTS."""
-import torch
 import logging
 from pathlib import Path
+
+import torch
 import torchaudio
+from sentence_splitter import SentenceSplitter
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +12,14 @@ logger = logging.getLogger(__name__)
 class TTSService:
     """Text-to-Speech using Silero models."""
     
-    def __init__(self, language: str = "ru", speaker: str = "xenia", model_version: str = "v3_1_ru", device: str = "cuda"):
+    def __init__(
+        self,
+        language: str = "ru",
+        speaker: str = "xenia",
+        model_version: str = "v3_1_ru",
+        device: str = "cuda",
+        max_chunk_chars: int = 400,
+    ):
         """
         Initialize Silero TTS model.
         
@@ -19,6 +28,7 @@ class TTSService:
             speaker: Speaker name for synthesis (aidar, baya, kseniya, xenia, eugene, random)
             model_version: Model version for loading (v3_1_ru, v3_1_en, etc.)
             device: Device to use (cuda, cpu)
+            max_chunk_chars: Maximum characters per synthesized chunk
         """
         logger.info(f"Loading Silero TTS model: language={language}, speaker={speaker}, model_version={model_version}")
         
@@ -26,6 +36,8 @@ class TTSService:
         self.language = language
         self.speaker = speaker  # Speaker name for synthesis
         self.sample_rate = 48000
+        self.max_chunk_chars = max_chunk_chars
+        self.splitter = SentenceSplitter(language='ru')
         
         # Load Silero TTS model
         # Model will be downloaded automatically on first use
@@ -68,6 +80,45 @@ class TTSService:
             logger.error(f"Failed to load Silero TTS model: {e}", exc_info=True)
             raise RuntimeError(f"Could not initialize TTS service: {e}") from e
         
+    def _chunk_text(self, text: str) -> list[str]:
+        """
+        Split text into smaller chunks so Silero model can process them.
+        """
+        if len(text) <= self.max_chunk_chars:
+            return [text]
+
+        sentences = self.splitter.split(text)
+        chunks: list[str] = []
+        current = ""
+
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+
+            if len(current) + len(sentence) + 1 <= self.max_chunk_chars:
+                current = f"{current} {sentence}".strip()
+            else:
+                if current:
+                    chunks.append(current)
+                if len(sentence) > self.max_chunk_chars:
+                    # Split very long sentence into pieces
+                    for i in range(0, len(sentence), self.max_chunk_chars):
+                        chunks.append(sentence[i:i + self.max_chunk_chars])
+                    current = ""
+                else:
+                    current = sentence
+
+        if current:
+            chunks.append(current)
+
+        # Guard: make sure we always have chunks
+        if not chunks:
+            chunks = [text[:self.max_chunk_chars]]
+
+        logger.info(f"TTS text split into {len(chunks)} chunk(s), max length {self.max_chunk_chars} chars.")
+        return chunks
+
     def synthesize(self, text: str, output_path: str, speaker: str | None = None) -> str:
         """
         Synthesize speech from text.
@@ -88,14 +139,27 @@ class TTSService:
             if not hasattr(self.model, 'apply_tts'):
                 raise RuntimeError(f"Model does not have 'apply_tts' method. Model type: {type(self.model)}")
             
-            logger.info(f"Generating TTS audio for text length: {len(text)} chars, speaker: {speaker or self.speaker}")
-            
-            # Generate audio
-            audio = self.model.apply_tts(
-                text=text,
-                speaker=speaker or self.speaker,
-                sample_rate=self.sample_rate
-            )
+            speaker_name = speaker or self.speaker
+            logger.info(f"Generating TTS audio for text length: {len(text)} chars, speaker: {speaker_name}")
+
+            chunks = self._chunk_text(text)
+            audio_segments = []
+
+            for idx, chunk in enumerate(chunks, start=1):
+                logger.info(f"Synthesizing TTS chunk {idx}/{len(chunks)} (len={len(chunk)} chars)")
+                chunk_audio = self.model.apply_tts(
+                    text=chunk,
+                    speaker=speaker_name,
+                    sample_rate=self.sample_rate
+                )
+
+                if not isinstance(chunk_audio, torch.Tensor):
+                    chunk_audio = torch.tensor(chunk_audio)
+
+                audio_segments.append(chunk_audio)
+
+            # Concatenate all chunks
+            audio = torch.cat(audio_segments, dim=-1)
             
             # Save to file
             output_path = Path(output_path)
