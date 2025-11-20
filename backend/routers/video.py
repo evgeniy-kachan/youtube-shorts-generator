@@ -16,7 +16,7 @@ from backend.services.video_processor import VideoProcessor
 from backend.utils.file_utils import get_temp_dir, get_output_dir, clear_temp_dir
 from backend import config
 
-router = APIRouter()
+router = APIRouter(prefix="/api/video", tags=["video"])
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
