@@ -12,7 +12,7 @@ from backend.services.transcription import TranscriptionService
 from backend.services.highlight_analyzer import HighlightAnalyzer
 from backend.services.translation import Translator
 from backend.services.tts import TTSService
-from backend.services.video_renderer import VideoRenderer
+from backend.services.video_processor import VideoProcessor
 from backend.utils.file_utils import get_temp_dir, get_output_dir, clear_temp_dir
 from backend import config
 
@@ -67,7 +67,7 @@ def get_service(name: str):
                 speaker=config.SILERO_SPEAKER
             )
         elif name == "renderer":
-            _services[name] = VideoRenderer()
+            _services[name] = VideoProcessor()
         else:
             raise ValueError(f"Unknown service: {name}")
     return _services[name]
