@@ -91,8 +91,17 @@ def _calculate_iou(segment1: dict, segment2: dict) -> float:
         
     return intersection / union
 
-def _filter_overlapping_segments(segments: list, iou_threshold: float = 0.5) -> list:
-    """Filter out segments that have a high IoU with higher-scoring segments."""
+def _is_segment_fully_contained(inner: dict, outer: dict) -> bool:
+    """Check if inner segment is fully contained within outer segment."""
+    return (inner['start_time'] >= outer['start_time'] and 
+            inner['end_time'] <= outer['end_time'])
+
+def _filter_overlapping_segments(segments: list, iou_threshold: float = 0.7) -> list:
+    """
+    Filter out segments that have a high IoU with higher-scoring segments.
+    Uses stricter filtering: IoU threshold 0.7, checks for full containment,
+    and ensures minimum 10s gap between segment starts.
+    """
     if not segments:
         return []
 
@@ -101,29 +110,42 @@ def _filter_overlapping_segments(segments: list, iou_threshold: float = 0.5) -> 
     
     kept_segments = []
     for segment in segments:
-        is_overlapping = False
+        should_keep = True
+        
         for kept_segment in kept_segments:
+            # Check 1: Full containment - if new segment is fully inside kept one, discard it
+            if _is_segment_fully_contained(segment, kept_segment):
+                logger.info(f"Segment {segment['id']} (score: {segment['highlight_score']:.2f}, {segment['start_time']:.1f}-{segment['end_time']:.1f}s) is fully contained in {kept_segment['id']} (score: {kept_segment['highlight_score']:.2f}, {kept_segment['start_time']:.1f}-{kept_segment['end_time']:.1f}s). Discarding.")
+                should_keep = False
+                break
+            
+            # Check 2: If kept segment is fully inside new one, remove kept and keep new (if new has better score)
+            if _is_segment_fully_contained(kept_segment, segment):
+                logger.info(f"Kept segment {kept_segment['id']} (score: {kept_segment['highlight_score']:.2f}) is fully contained in new {segment['id']} (score: {segment['highlight_score']:.2f}). Replacing.")
+                kept_segments.remove(kept_segment)
+                break
+            
+            # Check 3: IoU overlap threshold (stricter: 0.7)
             iou = _calculate_iou(segment, kept_segment)
             if iou >= iou_threshold:
-                is_overlapping = True
                 logger.info(f"Segment {segment['id']} (score: {segment['highlight_score']:.2f}) overlaps with {kept_segment['id']} (score: {kept_segment['highlight_score']:.2f}) with IoU {iou:.2f}. Discarding.")
+                should_keep = False
+                break
+            
+            # Check 4: Minimum gap between starts (10 seconds)
+            if abs(segment['start_time'] - kept_segment['start_time']) < 10.0:
+                logger.info(f"Segment {segment['id']} starts too close ({abs(segment['start_time'] - kept_segment['start_time']):.1f}s) to {kept_segment['id']}. Discarding.")
+                should_keep = False
                 break
         
-        if not is_overlapping:
+        if should_keep:
             kept_segments.append(segment)
-
-    # Remove segments that start almost at the same point (difference < 5s)
-    deduped_segments = []
-    for segment in kept_segments:
-        if any(abs(segment['start_time'] - kept['start_time']) < 5.0 for kept in deduped_segments):
-            logger.info(f"Segment {segment['id']} starts within 5s of another kept segment; discarding.")
-            continue
-        deduped_segments.append(segment)
-
+            
     # Re-sort by start time for chronological order in the UI
-    deduped_segments.sort(key=lambda x: x['start_time'])
+    kept_segments.sort(key=lambda x: x['start_time'])
     
-    return deduped_segments
+    logger.info(f"Filtered {len(segments)} segments down to {len(kept_segments)} non-overlapping segments.")
+    return kept_segments
 
 def _analyze_video_task(task_id: str, youtube_url: str):
     try:

@@ -28,16 +28,31 @@ class TTSService:
         
         # Load Silero TTS model
         # Model will be downloaded automatically on first use
-        self.model, _ = torch.hub.load(
-            repo_or_dir='snakers4/silero-models',
-            model='silero_tts',
-            language=language,
-            speaker=speaker
-        )
-        
-        self.model = self.model.to(self.device)
-        
-        logger.info("Silero TTS model loaded successfully")
+        try:
+            model_result = torch.hub.load(
+                repo_or_dir='snakers4/silero-models',
+                model='silero_tts',
+                language=language,
+                speaker=speaker,
+                trust_repo=True
+            )
+            
+            # Handle different return formats from torch.hub.load
+            if isinstance(model_result, tuple):
+                self.model, _ = model_result
+            else:
+                self.model = model_result
+            
+            # Validate that model was loaded
+            if self.model is None:
+                raise ValueError("torch.hub.load returned None - model failed to load")
+            
+            self.model = self.model.to(self.device)
+            logger.info("Silero TTS model loaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to load Silero TTS model: {e}")
+            raise RuntimeError(f"Could not initialize TTS service: {e}") from e
         
     def synthesize(self, text: str, output_path: str, speaker: str | None = None) -> str:
         """
