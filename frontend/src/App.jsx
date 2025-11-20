@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Header from './components/Header';
 import VideoInput from './components/VideoInput';
 import ProgressBar from './components/ProgressBar';
@@ -18,6 +18,42 @@ function App() {
   const [taskStatus, setTaskStatus] = useState('pending');
 
   // Poll task status
+  const buildProcessedSegments = useMemo(
+    () => (result) => {
+      if (Array.isArray(result?.processed_segments)) {
+        return result.processed_segments;
+      }
+
+      if (Array.isArray(result?.output_videos)) {
+        return result.output_videos.map((relativePath) => {
+          const parts = relativePath.split('/');
+          const filename = parts[parts.length - 1] || relativePath;
+          const segmentId = filename.replace('.mp4', '');
+          const originalSegment =
+            segments.find((segment) => segment.id === segmentId) || {};
+
+          const duration =
+            typeof originalSegment.start_time === 'number' &&
+            typeof originalSegment.end_time === 'number'
+              ? originalSegment.end_time - originalSegment.start_time
+              : 0;
+
+          return {
+            segment_id: segmentId,
+            filename,
+            duration,
+            start_time: originalSegment.start_time ?? null,
+            end_time: originalSegment.end_time ?? null,
+            download_path: relativePath,
+          };
+        });
+      }
+
+      return [];
+    },
+    [segments]
+  );
+
   useEffect(() => {
     let interval;
 
@@ -55,7 +91,8 @@ function App() {
           setTaskStatus(status.status);
 
           if (status.status === 'completed') {
-            setProcessedSegments(status.result.processed_segments);
+            const processed = buildProcessedSegments(status.result);
+            setProcessedSegments(processed);
             setStage('download');
             clearInterval(interval);
           } else if (status.status === 'failed') {
@@ -73,7 +110,7 @@ function App() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [analysisTask, processingTask, stage]);
+  }, [analysisTask, processingTask, stage, segments, buildProcessedSegments]);
 
   const handleAnalyze = async (filename) => {
     try {
