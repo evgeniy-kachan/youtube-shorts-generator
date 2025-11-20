@@ -2,6 +2,7 @@ import os
 import uuid
 import logging
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -344,6 +345,21 @@ async def upload_video(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Error uploading file: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {e}")
+
+@router.get("/download/{video_id}/{segment_id}")
+async def download_segment(video_id: str, segment_id: str):
+    """Download processed video clip."""
+    output_dir = get_output_dir(video_id)
+    file_path = output_dir / f"{segment_id}.mp4"
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Processed segment not found")
+
+    return FileResponse(
+        path=file_path,
+        media_type="video/mp4",
+        filename=file_path.name
+    )
 
 @router.get("/task/{task_id}", response_model=TaskStatus)
 async def get_task_status(task_id: str):
