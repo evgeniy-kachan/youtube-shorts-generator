@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Tuple, Literal
 import subprocess
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,83 @@ class VideoProcessor:
         except Exception as e:
             logger.error(f"Error processing video: {e}")
             raise
+
+    def create_vertical_video(
+        self,
+        video_path: str,
+        audio_path: str,
+        text: str,
+        start_time: float,
+        end_time: float,
+        method: Literal["blur_background", "center_crop", "smart_crop"] = "blur_background"
+    ) -> str:
+        """
+        End-to-end helper that cuts the source video, converts it to vertical format,
+        overlays subtitles and replaces audio with synthesized TTS.
+        Returns path to the processed temporary file.
+        """
+        try:
+            duration = max(0.1, end_time - start_time)
+            temp_segment = self.output_dir / f"segment_cut_{uuid.uuid4().hex}.mp4"
+            temp_output = self.output_dir / f"segment_processed_{uuid.uuid4().hex}.mp4"
+
+            # Step 1: cut source segment
+            cut_path = self.cut_segment(
+                video_path=video_path,
+                start_time=start_time,
+                end_time=end_time,
+                output_path=str(temp_segment)
+            )
+
+            # Step 2: prepare basic subtitles
+            subtitles = self._generate_basic_subtitles(text=text, duration=duration)
+
+            # Step 3: add audio + subtitles + vertical conversion
+            processed_path = self.add_audio_and_subtitles(
+                video_path=cut_path,
+                audio_path=audio_path,
+                subtitles=subtitles,
+                output_path=str(temp_output),
+                convert_to_vertical=True,
+                vertical_method=method
+            )
+
+            return processed_path
+
+        finally:
+            # Clean up intermediate cut segment
+            if 'temp_segment' in locals():
+                Path(temp_segment).unlink(missing_ok=True)
+
+    def save_video(self, processed_path: str, output_path: str) -> str:
+        """
+        Move processed temporary video into its final location.
+        """
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        Path(processed_path).replace(output_path)
+        logger.info(f"Final video saved to: {output_path}")
+        return str(output_path)
+
+    def _generate_basic_subtitles(self, text: str, duration: float) -> List[Dict]:
+        """
+        Create a simple subtitle track that covers the entire clip duration.
+        """
+        words = text.strip().split()
+        if not words:
+            words = [" "]
+
+        subtitles = [{
+            'start': 0.0,
+            'end': duration,
+            'text': text.strip() or "",
+            'words': [
+                {'word': word, 'start': idx * duration / len(words), 'end': (idx + 1) * duration / len(words)}
+                for idx, word in enumerate(words)
+            ]
+        }]
+
+        return subtitles
     
     def _create_stylized_subtitles(
         self,
