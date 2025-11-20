@@ -49,7 +49,8 @@ TRANSLATION_MAX_LENGTH = 1024
 
 # TTS Configuration
 SILERO_LANGUAGE = "ru"
-SILERO_SPEAKER = "v3_1_ru"  # Russian voice
+SILERO_SPEAKER = "xenia"  # Russian voice (aidar, baya, kseniya, xenia, eugene, random)
+SILERO_MODEL_VERSION = "v3_1_ru"  # Model version for torch.hub.load
 
 # Video Processing Configuration
 VERTICAL_CONVERSION_METHOD = "blur_background"  # blur_background, center_crop, smart_crop

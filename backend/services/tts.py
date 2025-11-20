@@ -10,31 +10,33 @@ logger = logging.getLogger(__name__)
 class TTSService:
     """Text-to-Speech using Silero models."""
     
-    def __init__(self, language: str = "ru", speaker: str = "v3_1_ru", device: str = "cuda"):
+    def __init__(self, language: str = "ru", speaker: str = "xenia", model_version: str = "v3_1_ru", device: str = "cuda"):
         """
         Initialize Silero TTS model.
         
         Args:
             language: Language code (ru, en, etc.)
-            speaker: Speaker model ID
+            speaker: Speaker name for synthesis (aidar, baya, kseniya, xenia, eugene, random)
+            model_version: Model version for loading (v3_1_ru, v3_1_en, etc.)
             device: Device to use (cuda, cpu)
         """
-        logger.info(f"Loading Silero TTS model: {language}/{speaker}")
+        logger.info(f"Loading Silero TTS model: language={language}, speaker={speaker}, model_version={model_version}")
         
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.language = language
-        self.speaker = speaker
+        self.speaker = speaker  # Speaker name for synthesis
         self.sample_rate = 48000
         
         # Load Silero TTS model
         # Model will be downloaded automatically on first use
+        # Note: model_version is used for loading, speaker is used for synthesis
         try:
-            logger.info(f"Calling torch.hub.load with language={language}, speaker={speaker}")
+            logger.info(f"Calling torch.hub.load with language={language}, model_version={model_version}")
             model_result = torch.hub.load(
                 repo_or_dir='snakers4/silero-models',
                 model='silero_tts',
                 language=language,
-                speaker=speaker,
+                speaker=model_version,  # Use model_version for loading
                 trust_repo=True
             )
             

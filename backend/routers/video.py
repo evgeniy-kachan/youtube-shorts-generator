@@ -64,7 +64,8 @@ def get_service(name: str):
         elif name == "tts":
             _services[name] = TTSService(
                 language=config.SILERO_LANGUAGE,
-                speaker=config.SILERO_SPEAKER
+                speaker=config.SILERO_SPEAKER,
+                model_version=config.SILERO_MODEL_VERSION
             )
         elif name == "renderer":
             _services[name] = VideoProcessor()
