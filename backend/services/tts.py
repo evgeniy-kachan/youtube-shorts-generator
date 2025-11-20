@@ -39,7 +39,7 @@ class TTSService:
         
         logger.info("Silero TTS model loaded successfully")
         
-    def synthesize(self, text: str, output_path: str, speaker: str = "xenia") -> str:
+    def synthesize(self, text: str, output_path: str, speaker: str | None = None) -> str:
         """
         Synthesize speech from text.
         
@@ -55,7 +55,7 @@ class TTSService:
             # Generate audio
             audio = self.model.apply_tts(
                 text=text,
-                speaker=speaker,
+                speaker=speaker or self.speaker,
                 sample_rate=self.sample_rate
             )
             
@@ -75,6 +75,10 @@ class TTSService:
         except Exception as e:
             logger.error(f"TTS synthesis error: {e}")
             raise
+    
+    def synthesize_and_save(self, text: str, output_path: str, speaker: str | None = None) -> str:
+        """Compatibility wrapper used elsewhere in the codebase."""
+        return self.synthesize(text, output_path, speaker=speaker)
     
     def get_available_speakers(self) -> list:
         """Get list of available speakers for current language."""

@@ -104,18 +104,26 @@ def _filter_overlapping_segments(segments: list, iou_threshold: float = 0.5) -> 
         is_overlapping = False
         for kept_segment in kept_segments:
             iou = _calculate_iou(segment, kept_segment)
-            if iou > iou_threshold:
+            if iou >= iou_threshold:
                 is_overlapping = True
                 logger.info(f"Segment {segment['id']} (score: {segment['highlight_score']:.2f}) overlaps with {kept_segment['id']} (score: {kept_segment['highlight_score']:.2f}) with IoU {iou:.2f}. Discarding.")
                 break
         
         if not is_overlapping:
             kept_segments.append(segment)
-            
+
+    # Remove segments that start almost at the same point (difference < 5s)
+    deduped_segments = []
+    for segment in kept_segments:
+        if any(abs(segment['start_time'] - kept['start_time']) < 5.0 for kept in deduped_segments):
+            logger.info(f"Segment {segment['id']} starts within 5s of another kept segment; discarding.")
+            continue
+        deduped_segments.append(segment)
+
     # Re-sort by start time for chronological order in the UI
-    kept_segments.sort(key=lambda x: x['start_time'])
+    deduped_segments.sort(key=lambda x: x['start_time'])
     
-    return kept_segments
+    return deduped_segments
 
 def _analyze_video_task(task_id: str, youtube_url: str):
     try:
