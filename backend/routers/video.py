@@ -7,7 +7,7 @@ from typing import List, Optional
 
 import torch
 
-from backend.services.video_downloader import download_youtube_video, get_video_info
+from backend.services.youtube_downloader import download_youtube_video, get_video_info
 from backend.services.transcription import TranscriptionService
 from backend.services.highlight_analyzer import HighlightAnalyzer
 from backend.services.translation import Translator
