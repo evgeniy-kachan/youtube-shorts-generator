@@ -1,51 +1,79 @@
 import React, { useState } from 'react';
 
 const VideoInput = ({ onSubmit, loading }) => {
-  const [filename, setFilename] = useState('test_video.mp4');
+  const [selectedFile, setSelectedFile] = useState(null);
   const [error, setError] = useState('');
+
+  const handleFileChange = (event) => {
+    setError('');
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      setSelectedFile(null);
+      return;
+    }
+
+    const isMp4 =
+      file.type === 'video/mp4' ||
+      file.name?.toLowerCase().endsWith('.mp4');
+
+    if (!isMp4) {
+      setError('Поддерживаются только файлы MP4');
+      setSelectedFile(null);
+      return;
+    }
+
+    setSelectedFile(file);
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     setError('');
 
-    if (!filename.trim()) {
-      setError('Пожалуйста, введите имя файла');
+    if (!selectedFile) {
+      setError('Пожалуйста, выберите видеофайл MP4');
       return;
     }
-    
-    if (!filename.toLowerCase().endsWith('.mp4')) {
-        setError('Имя файла должно заканчиваться на .mp4');
-        return;
-    }
 
-    onSubmit(filename);
+    onSubmit(selectedFile);
   };
 
   return (
     <div className="card max-w-3xl mx-auto">
       <div className="text-center mb-6">
         <h2 className="text-3xl font-bold text-gray-900 mb-2">
-          Создайте вирусные Shorts из локального видео
+          Загрузите видео — AI сделает клипы
         </h2>
         <p className="text-gray-600">
-          Введите имя видеофайла (например, test_video.mp4), загруженного в папку `temp`, и AI найдёт самые интересные моменты.
+          Выберите MP4-файл на своём компьютере, мы загрузим его на сервер и найдём самые интересные моменты автоматически.
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label htmlFor="filename-input" className="block text-sm font-medium text-gray-700 mb-2">
-            Имя файла на сервере
+          <label htmlFor="video-upload" className="block text-sm font-medium text-gray-700 mb-2">
+            Видеофайл (MP4)
           </label>
           <input
-            id="filename-input"
-            type="text"
-            value={filename}
-            onChange={(e) => setFilename(e.target.value)}
-            placeholder="например, my_video.mp4"
+            id="video-upload"
+            type="file"
+            accept="video/mp4"
+            onChange={handleFileChange}
             className="input-field"
             disabled={loading}
           />
+          <p className="mt-2 text-sm text-gray-500">
+            Поддерживаются файлы MP4 до 2 ГБ.
+          </p>
+          {selectedFile && !error && (
+            <div className="mt-3 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <p className="font-medium">{selectedFile.name}</p>
+              <p>
+                Размер:{' '}
+                {(selectedFile.size / (1024 * 1024)).toFixed(2)} МБ
+              </p>
+            </div>
+          )}
           {error && (
             <p className="mt-2 text-sm text-red-600">{error}</p>
           )}
@@ -81,7 +109,7 @@ const VideoInput = ({ onSubmit, loading }) => {
               Анализируем видео...
             </span>
           ) : (
-            'Анализировать локальный файл'
+            'Загрузить и проанализировать'
           )}
         </button>
       </form>

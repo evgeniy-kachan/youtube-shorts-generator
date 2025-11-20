@@ -38,6 +38,19 @@ export const getDownloadUrl = (videoId, segmentId) => {
   return `${API_BASE_URL}/api/video/download/${videoId}/${segmentId}`;
 };
 
+export const uploadVideoFile = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await api.post('/api/video/upload-video', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+
+  return response.data;
+};
+
 export const cleanupVideo = async (videoId) => {
   const response = await api.delete(`/api/video/cleanup/${videoId}`);
   return response.data;
