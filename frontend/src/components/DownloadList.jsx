@@ -2,6 +2,9 @@ import React from 'react';
 import { getDownloadUrl } from '../services/api';
 
 const DownloadList = ({ processedSegments, videoId, onReset }) => {
+  const segments = Array.isArray(processedSegments) ? processedSegments : [];
+  const segmentCount = segments.length;
+
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -19,7 +22,7 @@ const DownloadList = ({ processedSegments, videoId, onReset }) => {
   };
 
   const downloadAll = () => {
-    processedSegments.forEach((segment, index) => {
+    segments.forEach((segment, index) => {
       setTimeout(() => {
         handleDownload(segment.segment_id, segment.filename);
       }, index * 500); // Delay to avoid browser blocking multiple downloads
@@ -49,12 +52,12 @@ const DownloadList = ({ processedSegments, videoId, onReset }) => {
             Клипы готовы!
           </h2>
           <p className="text-gray-600">
-            Ваши {processedSegments.length} клипов обработаны и готовы к скачиванию
+            Ваши {segmentCount} клипов обработаны и готовы к скачиванию
           </p>
         </div>
 
         <div className="space-y-3 mb-6">
-          {processedSegments.map((segment, index) => (
+          {segments.map((segment, index) => (
             <div
               key={segment.segment_id}
               className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200"
@@ -114,7 +117,7 @@ const DownloadList = ({ processedSegments, videoId, onReset }) => {
                 d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
               />
             </svg>
-            Скачать все ({processedSegments.length})
+            Скачать все ({segmentCount})
           </button>
           <button
             onClick={onReset}
