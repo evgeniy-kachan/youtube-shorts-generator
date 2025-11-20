@@ -109,29 +109,34 @@ class VideoProcessor:
                 return output_path
             
             if method == "blur_background":
-                # Popular method: video in center with blurred background
-                # Create blurred background
-                background = (
-                    ffmpeg.input(video_path)
-                    .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT, force_original_aspect_ratio='increase')
-                    .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT)
-                    .filter('boxblur', 'luma_radius=20:chroma_radius=20')
-                )
-                
-                # Create scaled video for center
-                video = (
-                    ffmpeg.input(video_path)
-                    .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT, force_original_aspect_ratio='decrease')
-                )
-                
-                # Overlay video on blurred background
-                (
-                    ffmpeg
-                    .overlay(background, video, x='(W-w)/2', y='(H-h)/2')
-                    .output(output_path, **{'c:v': 'libx264', 'preset': 'medium', 'crf': 23})
-                    .overwrite_output()
-                    .run(quiet=True, capture_stdout=True, capture_stderr=True)
-                )
+                try:
+                    # Popular method: video in center with blurred background
+                    # Create blurred background
+                    background = (
+                        ffmpeg.input(video_path)
+                        .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT, force_original_aspect_ratio='increase')
+                        .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT)
+                        .filter('boxblur', 'luma_radius=20:chroma_radius=20')
+                    )
+                    
+                    # Create scaled video for center
+                    video = (
+                        ffmpeg.input(video_path)
+                        .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT, force_original_aspect_ratio='decrease')
+                    )
+                    
+                    # Overlay video on blurred background
+                    (
+                        ffmpeg
+                        .overlay(background, video, x='(W-w)/2', y='(H-h)/2')
+                        .output(output_path, **{'c:v': 'libx264', 'preset': 'medium', 'crf': 23})
+                        .overwrite_output()
+                        .run(quiet=True, capture_stdout=True, capture_stderr=True)
+                    )
+                except ffmpeg.Error as e:
+                    logger.warning("Blur background conversion failed, falling back to center crop")
+                    logger.warning(e.stderr.decode(errors="ignore") if e.stderr else str(e))
+                    return self.convert_to_vertical(video_path, output_path, method="center_crop")
                 
             elif method == "center_crop":
                 # Simple center crop
@@ -165,8 +170,11 @@ class VideoProcessor:
             logger.info(f"Converted video to vertical format: {output_path}")
             return output_path
             
+        except ffmpeg.Error as e:
+            logger.error(f"FFmpeg error converting to vertical: {e.stderr.decode(errors='ignore') if e.stderr else str(e)}")
+            raise
         except Exception as e:
-            logger.error(f"Error converting to vertical: {e}")
+            logger.error(f"Error converting to vertical: {e}", exc_info=True)
             raise
     
     def add_audio_and_subtitles(
