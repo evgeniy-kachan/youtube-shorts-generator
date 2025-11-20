@@ -1,6 +1,8 @@
 """Text-to-Speech service using Silero TTS."""
 import logging
+import time
 from pathlib import Path
+from urllib.error import HTTPError
 
 import torch
 import torchaudio
@@ -39,46 +41,68 @@ class TTSService:
         self.max_chunk_chars = max_chunk_chars
         self.splitter = SentenceSplitter(language='ru')
         
-        # Load Silero TTS model
-        # Model will be downloaded automatically on first use
-        # Note: model_version is used for loading, speaker is used for synthesis
-        try:
-            logger.info(f"Calling torch.hub.load with language={language}, model_version={model_version}")
-            model_result = torch.hub.load(
-                repo_or_dir='snakers4/silero-models',
-                model='silero_tts',
-                language=language,
-                speaker=model_version,  # Use model_version for loading
-                trust_repo=True
-            )
-            
-            logger.info(f"torch.hub.load returned type: {type(model_result)}")
-            
-            # Handle different return formats from torch.hub.load
-            if isinstance(model_result, tuple):
-                logger.info(f"Result is tuple with {len(model_result)} elements")
-                self.model, example_text = model_result
-                logger.info(f"Extracted model type: {type(self.model)}")
-            else:
-                self.model = model_result
-                logger.info(f"Result is not tuple, using directly. Type: {type(self.model)}")
-            
-            # Validate that model was loaded
-            if self.model is None:
-                raise ValueError("torch.hub.load returned None - model failed to load")
-            
-            logger.info(f"Model before .to(device): {type(self.model)}, has apply_tts: {hasattr(self.model, 'apply_tts')}")
-            
-            # Silero models don't need .to(device) - they handle device internally
-            # But let's check if model has the method
-            if not hasattr(self.model, 'apply_tts'):
-                raise ValueError(f"Loaded object does not have 'apply_tts' method. Type: {type(self.model)}, dir: {dir(self.model)[:10]}")
-            
-            logger.info("Silero TTS model loaded successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to load Silero TTS model: {e}", exc_info=True)
-            raise RuntimeError(f"Could not initialize TTS service: {e}") from e
+        # Load Silero TTS model with retry to survive transient network errors (GitHub 503, etc.)
+        max_retries = 3
+        retry_delay = 5  # seconds
+        last_error = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(
+                    f"Calling torch.hub.load (attempt {attempt}/{max_retries}) "
+                    f"with language={language}, model_version={model_version}"
+                )
+                model_result = torch.hub.load(
+                    repo_or_dir='snakers4/silero-models',
+                    model='silero_tts',
+                    language=language,
+                    speaker=model_version,  # Use model_version for loading
+                    trust_repo=True
+                )
+                
+                logger.info(f"torch.hub.load returned type: {type(model_result)}")
+                
+                # Handle different return formats from torch.hub.load
+                if isinstance(model_result, tuple):
+                    logger.info(f"Result is tuple with {len(model_result)} elements")
+                    self.model, example_text = model_result
+                    logger.info(f"Extracted model type: {type(self.model)}")
+                else:
+                    self.model = model_result
+                    logger.info(f"Result is not tuple, using directly. Type: {type(self.model)}")
+                
+                # Validate that model was loaded
+                if self.model is None:
+                    raise ValueError("torch.hub.load returned None - model failed to load")
+                
+                logger.info(f"Model before .to(device): {type(self.model)}, has apply_tts: {hasattr(self.model, 'apply_tts')}")
+                
+                if not hasattr(self.model, 'apply_tts'):
+                    raise ValueError(f"Loaded object does not have 'apply_tts' method. Type: {type(self.model)}, dir: {dir(self.model)[:10]}")
+                
+                logger.info("Silero TTS model loaded successfully")
+                break
+
+            except HTTPError as http_err:
+                last_error = http_err
+                logger.warning(
+                    f"HTTP error while loading Silero TTS model (attempt {attempt}/{max_retries}): {http_err}"
+                )
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                    continue
+                logger.error("Exhausted retries downloading Silero model from GitHub.")
+                raise RuntimeError(
+                    "Could not initialize TTS service: remote repository unavailable. "
+                    "Please try again in a minute."
+                ) from http_err
+            except Exception as e:
+                last_error = e
+                logger.error(f"Failed to load Silero TTS model (attempt {attempt}/{max_retries}): {e}", exc_info=True)
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                    continue
+                raise RuntimeError(f"Could not initialize TTS service: {e}") from e
         
     def _chunk_text(self, text: str) -> list[str]:
         """
