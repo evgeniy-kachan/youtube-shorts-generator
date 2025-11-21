@@ -137,28 +137,31 @@ const SegmentsList = ({ segments, videoTitle, onProcess, loading }) => {
 
         <div className="mt-6 pt-6 border-t space-y-4">
           <div>
-            <label htmlFor="vertical-method" className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
               📱 Формат для Reels/Shorts (9:16):
             </label>
-            <select
-              id="vertical-method"
-              value={verticalMethod}
-              onChange={(e) => setVerticalMethod(e.target.value)}
-              disabled={loading}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-600"
-            >
-              <option value="blur_background">
-                🌟 Размытый фон (рекомендуется) - видео по центру + blur
-              </option>
-              <option value="center_crop">
-                ✂️ Обрезка по центру - простая обрезка
-              </option>
-              <option value="smart_crop">
-                🤖 Умная обрезка - с детекцией объектов
-              </option>
-            </select>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {[
+                { id: 'blur_background', label: '🌟 Размытый фон', description: 'Видео по центру + blur' },
+                { id: 'center_crop', label: '✂️ Центр-кроп', description: 'Простая обрезка по центру' },
+                { id: 'smart_crop', label: '🤖 Smart', description: 'Кроп с учётом объекта (beta)' },
+              ].map((method) => (
+                <button
+                  key={method.id}
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setVerticalMethod(method.id)}
+                  className={`p-4 border rounded-xl text-left transition ${
+                    verticalMethod === method.id ? 'border-purple-600 bg-purple-50' : 'hover:border-purple-500'
+                  } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <div className="font-semibold text-gray-900">{method.label}</div>
+                  <div className="text-sm text-gray-600">{method.description}</div>
+                </button>
+              ))}
+            </div>
             <p className="mt-1 text-xs text-gray-500">
-              Горизонтальное видео будет автоматически конвертировано в вертикальный формат 1080×1920
+              Видео будет автоматически переведено в вертикальный формат 1080×1920
             </p>
           </div>
 

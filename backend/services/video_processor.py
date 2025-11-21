@@ -415,7 +415,7 @@ class VideoProcessor:
         styles = {
             'capcut': {
                 'fontname': 'Montserrat',
-                'fontsize': 72,
+                'fontsize': 86,
                 'primarycolor': '&H00FFFFFF',
                 'outlinecolor': '&H00FFFFFF',
                 'borderstyle': 1,
