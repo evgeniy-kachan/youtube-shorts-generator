@@ -556,7 +556,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             tag = (
                 r"{\alpha&HFF\fscx80\fscy80"
                 rf"\t({highlight_start},{highlight_mid},\alpha&H00\fscx118\fscy118)"
-                rf"\t({highlight_mid},{highlight_end},\fscx100\fscy100)}"
+                rf"\t({highlight_mid},{highlight_end},\fscx100\fscy100)}}"
             )
 
             tokens.append(f"{tag}{word.get('word', '')}")
