@@ -422,7 +422,7 @@ class VideoProcessor:
                 'outline': 0,
                 'shadow': 4,
                 'alignment': 8,  # centered upper area
-                'marginv': 600,
+                'marginv': 450,  # slightly lower
             },
             'tiktok': {
                 'fontname': 'Arial',
@@ -485,9 +485,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             
             # Add word-by-word highlighting if available
             if 'words' in subtitle and subtitle['words']:
-                # For TikTok style, we can add karaoke effect
-                # This makes words appear one by one
-                text = self._add_word_effects(subtitle['words'])
+                if style == 'capcut':
+                    text = self._build_capcut_line(subtitle)
+                else:
+                    text = self._add_word_effects(subtitle['words'])
             
             ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}\n"
         
@@ -522,7 +523,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         # CapCut style animation: fade + scale bounce
         effect_tag = (
-            r"{\an8\pos(540,1050)\fad(40,20)"
+            r"{\an8\pos(540,1250)\fad(40,20)"
             r"\fscx85\fscy85"
             r"\alpha&HFF"
             r"\t(0,120,\fscx118\fscy118\alpha&H00)"
@@ -530,6 +531,43 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         )
 
         return f"{effect_tag}{text}"
+
+    def _build_capcut_line(self, subtitle: Dict) -> str:
+        """Animate each word sequentially so it 'pops' in and stays visible."""
+        words = subtitle.get('words', [])
+        if not words:
+            return ""
+
+        chunk_start = subtitle.get('start', 0.0)
+        chunk_end = subtitle.get('end', chunk_start)
+        chunk_duration = max(0.01, chunk_end - chunk_start)
+
+        base_tag = r"{\an8\pos(540,1250)\fad(40,20)}"
+        rendered = [base_tag]
+
+        tokens = []
+        for idx, word in enumerate(words):
+            rel_start = max(0.0, (word.get('start', chunk_start) - chunk_start) * 1000)
+            rel_end = max(rel_start + 200.0, (word.get('end', chunk_start) - chunk_start) * 1000)
+            highlight_start = int(rel_start)
+            highlight_mid = int(min(rel_start + 160.0, chunk_duration * 1000))
+            highlight_end = int(min(rel_end, chunk_duration * 1000))
+
+            tag = (
+                r"{\alpha&HFF\fscx80\fscy80"
+                rf"\t({highlight_start},{highlight_mid},\alpha&H00\fscx118\fscy118)"
+                rf"\t({highlight_mid},{highlight_end},\fscx100\fscy100)}"
+            )
+
+            tokens.append(f"{tag}{word.get('word', '')}")
+
+        # Insert line break roughly in the middle for readability
+        if len(tokens) >= 4:
+            split_index = len(tokens) // 2
+            tokens.insert(split_index, r"\N")
+
+        rendered.append(" ".join(tokens).replace(" \\N ", r"\N"))
+        return "".join(rendered)
     
     def extract_audio(self, video_path: str, output_path: str) -> str:
         """Extract audio from video."""
