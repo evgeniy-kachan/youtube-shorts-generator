@@ -183,7 +183,7 @@ class VideoProcessor:
         audio_path: str,
         subtitles: List[Dict],
         output_path: str,
-        style: str = "tiktok",
+        style: str = "capcut",
         convert_to_vertical: bool = True,
         vertical_method: str = "blur_background"
     ) -> str:
@@ -413,6 +413,17 @@ class VideoProcessor:
         """
         # ASS subtitle styles
         styles = {
+            'capcut': {
+                'fontname': 'Montserrat',
+                'fontsize': 64,
+                'primarycolor': '&H00FFFFFF',
+                'outlinecolor': '&H00FFFFFF',
+                'borderstyle': 1,
+                'outline': 0,
+                'shadow': 4,
+                'alignment': 8,  # centered upper area
+                'marginv': 600,
+            },
             'tiktok': {
                 'fontname': 'Arial',
                 'fontsize': 56,
@@ -492,11 +503,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return f"{hours}:{minutes:02d}:{secs:02d}.{centiseconds:02d}"
     
     def _add_word_effects(self, words: List[Dict]) -> str:
-        """Add word-by-word animation effects."""
-        # For now, just return the text
-        # In future, can add karaoke effects with \k tags
-        text = " ".join([w['word'] for w in words])
-        return text
+        """
+        Add CapCut-like pop animation for each subtitle chunk.
+        Words are grouped per chunk upstream; we animate the whole chunk so it
+        appears slightly below the center with a bounce + fade in.
+        """
+        if not words:
+            return ""
+
+        tokens = [w['word'] for w in words]
+
+        # break into two lines for readability if chunk is long
+        if len(tokens) >= 4:
+            split_index = len(tokens) // 2
+            text = " ".join(tokens[:split_index]) + r"\N" + " ".join(tokens[split_index:])
+        else:
+            text = " ".join(tokens)
+
+        # CapCut style animation: fade + scale bounce
+        effect_tag = (
+            r"{\an8\pos(540,1050)\fad(40,20)"
+            r"\fscx85\fscy85"
+            r"\alpha&HFF"
+            r"\t(0,120,\fscx118\fscy118\alpha&H00)"
+            r"\t(120,260,\fscx100\fscy100)}"
+        )
+
+        return f"{effect_tag}{text}"
     
     def extract_audio(self, video_path: str, output_path: str) -> str:
         """Extract audio from video."""
