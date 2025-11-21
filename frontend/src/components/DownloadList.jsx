@@ -1,7 +1,7 @@
 import React from 'react';
 import { getDownloadUrl } from '../services/api';
 
-const DownloadList = ({ processedSegments, videoId, onReset }) => {
+const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments }) => {
   const segments = Array.isArray(processedSegments) ? processedSegments : [];
   const segmentCount = segments.length;
 
@@ -99,7 +99,7 @@ const DownloadList = ({ processedSegments, videoId, onReset }) => {
           ))}
         </div>
 
-        <div className="flex space-x-3">
+        <div className="flex flex-col md:flex-row md:space-x-3 space-y-3 md:space-y-0">
           <button
             onClick={downloadAll}
             className="flex-1 btn-primary"
@@ -119,12 +119,20 @@ const DownloadList = ({ processedSegments, videoId, onReset }) => {
             </svg>
             Скачать все ({segmentCount})
           </button>
-          <button
-            onClick={onReset}
-            className="btn-secondary"
-          >
-            Обработать новое видео
-          </button>
+          <div className="flex flex-col md:w-1/3 space-y-3">
+            <button
+              onClick={onBackToSegments}
+              className="btn-secondary"
+            >
+              Назад к выбору моментов
+            </button>
+            <button
+              onClick={onReset}
+              className="btn-outline"
+            >
+              Обработать новое видео
+            </button>
+          </div>
         </div>
       </div>
     </div>

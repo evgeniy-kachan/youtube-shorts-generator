@@ -215,6 +215,7 @@ function App() {
             processedSegments={processedSegments}
             videoId={videoData?.video_id}
             onReset={handleReset}
+            onBackToSegments={() => setStage('segments')}
           />
         )}
       </main>
