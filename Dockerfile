@@ -10,7 +10,16 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-venv \
     ffmpeg \
+    fontconfig \
+    wget \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Montserrat font for subtitles
+RUN mkdir -p /usr/share/fonts/truetype/montserrat && \
+    wget -q -O /usr/share/fonts/truetype/montserrat/Montserrat.ttf \
+        "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat%5Bwght%5D.ttf" && \
+    fc-cache -f -v
 
 # Create a non-root user
 RUN useradd -ms /bin/bash appuser
