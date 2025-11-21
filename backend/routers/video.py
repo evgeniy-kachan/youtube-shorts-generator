@@ -55,7 +55,7 @@ def get_service(name: str):
             _services[name] = TranscriptionService(model_name=config.WHISPER_MODEL)
         elif name == "highlight_analyzer":
             _services[name] = HighlightAnalyzer()
-            elif name == "translation":
+        elif name == "translation":
             # Check if CUDA is available and use it for translation
             device = "cuda" if torch.cuda.is_available() else "cpu"
             logger.info(f"Translation service will use device: {device}")
