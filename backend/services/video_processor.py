@@ -313,7 +313,7 @@ class VideoProcessor:
         self,
         text: str,
         duration: float,
-        max_words_per_line: int = 4
+        max_words_per_line: int = 6
     ) -> List[Dict]:
         """
         Create a multi-line subtitle track with approximate word-level timings.
@@ -523,11 +523,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         # CapCut style animation: fade + scale bounce
         effect_tag = (
-            r"{\an8\pos(540,1250)\fad(40,20)"
-            r"\fscx85\fscy85"
+            r"{\an8\pos(540,1250)\fad(80,40)"
             r"\alpha&HFF"
-            r"\t(0,120,\fscx118\fscy118\alpha&H00)"
-            r"\t(120,260,\fscx100\fscy100)}"
+            r"\t(0,160,\alpha&H00\fscx120\fscy120)"
+            r"\t(160,320,\fscx100\fscy100)}"
         )
 
         return f"{effect_tag}{text}"
@@ -542,7 +541,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         chunk_end = subtitle.get('end', chunk_start)
         chunk_duration = max(0.01, chunk_end - chunk_start)
 
-        base_tag = r"{\an8\pos(540,1250)\fad(40,20)}"
+        base_tag = r"{\an8\pos(540,1250)\fad(80,40)}"
         rendered = [base_tag]
 
         tokens = []
@@ -554,15 +553,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             highlight_end = int(min(rel_end, chunk_duration * 1000))
 
             tag = (
-                r"{\alpha&HFF\fscx80\fscy80"
-                rf"\t({highlight_start},{highlight_mid},\alpha&H00\fscx118\fscy118)"
+                r"{\alpha&HFF"
+                rf"\t({highlight_start},{highlight_mid},\alpha&H00\fscx120\fscy120)"
                 rf"\t({highlight_mid},{highlight_end},\fscx100\fscy100)}}"
             )
 
-            tokens.append(f"{tag}{word.get('word', '')}")
+            word_text = word.get('word', '')
+            if idx != len(words) - 1:
+                word_text += " "
+
+            tokens.append(f"{tag}{word_text}")
 
         # Insert line break roughly in the middle for readability
-        if len(tokens) >= 4:
+        if len(tokens) >= 6:
             split_index = len(tokens) // 2
             tokens.insert(split_index, r"\N")
 
