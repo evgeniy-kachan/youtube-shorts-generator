@@ -14,6 +14,7 @@ from backend.services.highlight_analyzer import HighlightAnalyzer
 from backend.services.translation import Translator
 from backend.services.tts import TTSService
 from backend.services.video_processor import VideoProcessor
+from backend.services.text_markup import TextMarkupService
 from backend.utils.file_utils import get_temp_dir, get_output_dir, clear_temp_dir
 from backend import config
 
@@ -54,7 +55,7 @@ def get_service(name: str):
             _services[name] = TranscriptionService(model_name=config.WHISPER_MODEL)
         elif name == "highlight_analyzer":
             _services[name] = HighlightAnalyzer()
-        elif name == "translation":
+            elif name == "translation":
             # Check if CUDA is available and use it for translation
             device = "cuda" if torch.cuda.is_available() else "cpu"
             logger.info(f"Translation service will use device: {device}")
@@ -68,6 +69,10 @@ def get_service(name: str):
                 speaker=config.SILERO_SPEAKER,
                 model_version=config.SILERO_MODEL_VERSION
             )
+        elif name == "text_markup":
+            if not config.TTS_ENABLE_MARKUP:
+                raise ValueError("Text markup service requested but disabled in config")
+            _services[name] = TextMarkupService()
         elif name == "renderer":
             _services[name] = VideoProcessor(output_dir=get_output_dir())
         else:
@@ -209,6 +214,7 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
 
     # 5. Translate text to Russian
     translator = get_service("translation")
+    markup_service = get_service("text_markup") if config.TTS_ENABLE_MARKUP else None
     
     # Prepare texts for translation
     texts_to_translate = [seg['text'] for seg in filtered_highlights]
@@ -224,7 +230,12 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
     # Assign translations back to segments
     for i, segment in enumerate(filtered_highlights):
         segment['text_en'] = segment.pop('text')  # Rename original text
-        segment['text_ru'] = translations[i]
+        russian_text = translations[i]
+        segment['text_ru'] = russian_text
+        if markup_service:
+            segment['text_ru_tts'] = markup_service.mark_text(russian_text)
+        else:
+            segment['text_ru_tts'] = russian_text
     logger.info("Translation results assigned.")
 
     # Cache the result
@@ -275,7 +286,8 @@ def _process_segments_task(task_id: str, video_id: str, segment_ids: list, verti
         
         for segment in segments_to_process:
             audio_path = os.path.join(output_dir, f"{segment['id']}.wav")
-            tts_service.synthesize_and_save(segment['text_ru'], audio_path)
+            tts_text = segment.get('text_ru_tts') or segment.get('text_ru')
+            tts_service.synthesize_and_save(tts_text, audio_path)
             segment['audio_path'] = audio_path
             
         # 3. Render videos
