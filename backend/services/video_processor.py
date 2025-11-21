@@ -555,7 +555,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             tag = (
                 r"{\alpha&HFF"
                 rf"\t({highlight_start},{highlight_mid},\alpha&H00\fscx118\fscy118)"
-                rf"\t({highlight_mid},{highlight_end},\fscx100\fscy100)}"
+                rf"\t({highlight_mid},{highlight_end},\fscx100\fscy100)}}"
             )
 
             word_text = word.get('word', '')
