@@ -14,17 +14,10 @@ yt-dlp>=2024.1.0
 
 # Transcription (Whisper)
 # NOTE: torch >=2.6 required due to security vulnerability
-faster-whisper>=1.0.0
+faster-whisper>=1.2.1
 
-# LLM Integration (Ollama)
-ollama>=0.1.6
+# LLM Integration (DeepSeek API client)
 httpx>=0.25.2
-
-# Translation (NLLB)
-transformers>=4.36.0
-sentencepiece>=0.1.99
-sacremoses>=0.1.1
-safetensors>=0.4.0
 
 # Video Processing
 ffmpeg-python>=0.2.0

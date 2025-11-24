@@ -223,7 +223,7 @@ function App() {
       <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 mt-12">
         <div className="border-t border-gray-200 pt-6">
           <p className="text-center text-sm text-gray-500">
-            Powered by AI: Whisper, Llama 3.1, NLLB, Silero TTS
+            Powered by AI: Whisper, DeepSeek, Silero TTS
           </p>
         </div>
       </footer>

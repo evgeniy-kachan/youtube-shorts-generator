@@ -22,14 +22,13 @@ YouTube Shorts Generator - AI-powered система для автоматиче
    - VAD фильтрация
 
 3. **Highlight Analyzer** (`backend/services/highlight_analyzer.py`)
-   - LLM анализ (Llama 3.1 / Qwen / Mistral через Ollama)
+   - LLM анализ (DeepSeek reasoner)
    - 12 критериев оценки интересности
    - Автоматический scoring и ранжирование
 
 4. **Translation Service** (`backend/services/translation.py`)
-   - NLLB модель для перевода EN→RU
-   - Batch обработка
-   - GPU ускорение
+   - DeepSeek перевод EN→RU с лёгкой локализацией
+   - Batch обработка через API
 
 5. **TTS Service** (`backend/services/tts.py`)
    - Silero TTS для русской озвучки
@@ -147,11 +146,10 @@ YouTube Shorts Generator - AI-powered система для автоматиче
    - Проверка зависимостей
    - Создание venv
    - Установка пакетов
-   - Загрузка моделей
+   - Генерация .env (DeepSeek ключ)
 
 2. **run.sh** - запуск сервиса
    - Активация venv
-   - Проверка Ollama
    - Запуск backend
 
 3. **Dockerfile** - Docker образ
@@ -165,22 +163,19 @@ YouTube Shorts Generator - AI-powered система для автоматиче
    - Networking
 
 5. **docker-entrypoint.sh** - Docker entrypoint
-   - Запуск Ollama
-   - Загрузка модели
    - Запуск приложения
 
 ### Configuration
 
 1. **requirements.txt** - Python зависимости
    - FastAPI, Uvicorn
-   - faster-whisper, transformers
-   - ollama, yt-dlp
-   - FFmpeg-python, moviepy
-   - TTS, silero
+   - faster-whisper, httpx
+   - yt-dlp, ffmpeg-python, moviepy
+   - Silero TTS, sentence-splitter
 
-2. **.env.example** - конфигурация
-   - Все параметры с комментариями
-   - Значения по умолчанию
+2. **.env** - конфигурация
+   - DeepSeek API key и модель
+   - Настройки Whisper/TTS/директорий
 
 3. **.gitignore** - исключения
    - Python cache
@@ -199,8 +194,7 @@ YouTube Shorts Generator - AI-powered система для автоматиче
 - **Python 3.10+**
 - **FastAPI** - веб-фреймворк
 - **faster-whisper** - транскрипция
-- **Ollama** - LLM inference
-- **transformers** - NLLB перевод
+- **DeepSeek API** - LLM анализ/перевод/подготовка текста
 - **TTS (Silero)** - озвучка
 - **FFmpeg** - видео обработка
 - **yt-dlp** - YouTube download
@@ -214,15 +208,13 @@ YouTube Shorts Generator - AI-powered система для автоматиче
 
 ### AI Models
 - **Whisper large-v3** - транскрипция
-- **Llama 3.1 8B** - анализ (или Qwen 2.5 / Mistral)
-- **NLLB-200-distilled-600M** - перевод
+- **DeepSeek reasoner** - анализ/перевод/постобработка текста (cloud API)
 - **Silero TTS** - русская речь
 
 ### Infrastructure
 - **NVIDIA A4000** (или аналог) - GPU
 - **CUDA** - GPU computing
 - **FFmpeg** - видео processing
-- **Ollama** - LLM serving
 
 ## 📊 Возможности
 
@@ -386,8 +378,8 @@ project_blog/
 ### Функциональность
 ✅ 100% требований реализовано  
 ✅ Транскрипция - Whisper large-v3  
-✅ Анализ - Llama 3.1 + 12 критериев  
-✅ Перевод - NLLB  
+✅ Анализ - DeepSeek reasoner + 12 критериев  
+✅ Перевод - DeepSeek  
 ✅ Озвучка - Silero TTS  
 ✅ Субтитры - TikTok стиль  
 ✅ Modern UI - React + Tailwind  
@@ -411,17 +403,9 @@ project_blog/
 
 ### Оптимальные настройки для A4000
 ```env
-OLLAMA_MODEL=llama3.1:8b
+DEEPSEEK_MODEL=deepseek-reasoner
 WHISPER_MODEL=large-v3
 WHISPER_COMPUTE_TYPE=float16
-NLLB_MODEL=facebook/nllb-200-distilled-600M
-```
-
-### Если не хватает VRAM
-```env
-OLLAMA_MODEL=mistral:7b
-WHISPER_MODEL=medium
-WHISPER_COMPUTE_TYPE=int8
 ```
 
 ### Best practices

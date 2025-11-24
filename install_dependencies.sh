@@ -57,16 +57,10 @@ except Exception as e:
     print(f"❌ Faster Whisper: {e}")
 
 try:
-    import transformers
-    print(f"✅ Transformers: {transformers.__version__}")
-except:
-    print("❌ Transformers failed")
-
-try:
-    import ollama
-    print("✅ Ollama client: OK")
-except:
-    print("❌ Ollama failed")
+    import httpx
+    print(f"✅ httpx: {httpx.__version__}")
+except Exception as e:
+    print(f"❌ httpx: {e}")
 
 print("\n🎉 Installation verification complete!")
 EOF

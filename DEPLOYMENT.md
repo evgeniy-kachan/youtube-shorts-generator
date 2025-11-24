@@ -116,8 +116,9 @@ nano .env
 HOST=0.0.0.0
 PORT=8000
 
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=llama3.1:8b  # Или qwen2.5:7b
+DEEPSEEK_API_KEY=sk-xxxx
+DEEPSEEK_MODEL=deepseek-reasoner
+DEEPSEEK_BASE_URL=https://api.deepseek.com
 
 MAX_VIDEO_DURATION=7200
 TEMP_DIR=./temp
@@ -166,7 +167,6 @@ WorkingDirectory=/opt/youtube-shorts-generator
 Environment="PATH=/opt/youtube-shorts-generator/venv/bin:/usr/local/cuda-11.8/bin:/usr/bin"
 Environment="LD_LIBRARY_PATH=/usr/local/cuda-11.8/lib64"
 Environment="PYTHONPATH=/opt/youtube-shorts-generator"
-ExecStartPre=/bin/bash -c 'ollama serve > /dev/null 2>&1 &'
 ExecStart=/opt/youtube-shorts-generator/venv/bin/python backend/main.py
 Restart=always
 RestartSec=10
@@ -352,24 +352,14 @@ WHISPER_MODEL = "medium"  # вместо large-v3
 WHISPER_COMPUTE_TYPE = "int8"  # вместо float16
 ```
 
-Используйте меньшую LLM:
+Используйте `DEEPSEEK_MODEL=deepseek-chat`, если нужно снизить стоимость.
 
-```bash
-ollama pull llama3.1:8b  # вместо 70b
-```
+### Ошибки DeepSeek API
 
-### Ollama не запускается
-
-```bash
-# Переустановите Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Запустите вручную
-ollama serve
-
-# Проверьте порт
-netstat -tlnp | grep 11434
-```
+- Проверьте `DEEPSEEK_API_KEY` в `.env`
+- Убедитесь, что сервер имеет доступ к `https://api.deepseek.com`
+- Снизьте `DEEPSEEK_TRANSLATION_CHUNK_SIZE`
+- Посмотрите логи backend (`docker compose logs backend`)
 
 ### FFmpeg ошибки
 

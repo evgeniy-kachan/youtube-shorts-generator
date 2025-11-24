@@ -34,14 +34,6 @@ fi
 
 echo "✅ FFmpeg installed"
 
-# Check Ollama
-if ! command -v ollama &> /dev/null; then
-    echo "❌ Ollama is not installed. Installing..."
-    curl -fsSL https://ollama.com/install.sh | sh
-else
-    echo "✅ Ollama installed"
-fi
-
 # Create virtual environment
 echo "📦 Creating virtual environment..."
 python3 -m venv venv
@@ -71,31 +63,28 @@ if [ ! -f .env ]; then
 HOST=0.0.0.0
 PORT=8000
 
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=llama3.1:8b
+DEEPSEEK_API_KEY=replace_with_your_key
+DEEPSEEK_MODEL=deepseek-reasoner
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+WHISPER_MODEL=large-v3
+WHISPER_DEVICE=cuda
+WHISPER_COMPUTE_TYPE=float16
 
 MAX_VIDEO_DURATION=7200
 TEMP_DIR=./temp
 OUTPUT_DIR=./output
 
 CUDA_VISIBLE_DEVICES=0
+TTS_ENABLE_MARKUP=true
+TTS_MARKUP_MAX_TOKENS=200
 EOF
     echo "✅ .env file created"
 else
     echo "✅ .env file already exists"
 fi
 
-# Start Ollama if not running
-if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-    echo "🚀 Starting Ollama..."
-    ollama serve > /dev/null 2>&1 &
-    sleep 5
-fi
-
-# Download default LLM model
-MODEL=${OLLAMA_MODEL:-"llama3.1:8b"}
-echo "📥 Downloading LLM model: $MODEL (this may take a while)..."
-ollama pull "$MODEL"
+echo "ℹ️  Make sure to update DEEPSEEK_API_KEY in .env with your personal key."
 
 # Download Whisper model (will be downloaded on first use)
 echo "📥 Whisper model will be downloaded automatically on first use"

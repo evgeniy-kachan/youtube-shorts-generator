@@ -1,60 +1,67 @@
-"""LLM-powered text markup service for TTS enhancements."""
+"""LLM-powered text polishing service for TTS enhancements."""
 import logging
-
-import ollama
+import re
 
 from backend.config import (
-    OLLAMA_HOST,
-    OLLAMA_PORT,
+    DEEPSEEK_MARKUP_TEMPERATURE,
     TTS_MARKUP_MODEL,
     TTS_MARKUP_MAX_TOKENS,
 )
+from backend.services.deepseek_client import DeepSeekClient
 
 logger = logging.getLogger(__name__)
 
 
 class TextMarkupService:
     """
-    Uses Ollama-hosted LLM to lightly mark up text for TTS.
-    - Adds pauses ("...") между фразами
-    - Оборачивает важные слова в _подчёркивания_
+    Uses DeepSeek LLM to slightly smooth Russian text for TTS.
+    The output must stay plain (no Markdown, ellipses, or special markers).
     """
 
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: str = None, temperature: float = None):
         self.model_name = model_name or TTS_MARKUP_MODEL
-        host = f"http://{OLLAMA_HOST}:{OLLAMA_PORT}"
-        logger.info(f"Initializing TextMarkupService with model={self.model_name} on {host}")
-        self.client = ollama.Client(host=host)
+        self.temperature = temperature or DEEPSEEK_MARKUP_TEMPERATURE
+        self.client = DeepSeekClient(model=self.model_name)
+        logger.info("Initialized TextMarkupService with DeepSeek model: %s", self.model_name)
 
     def mark_text(self, text: str) -> str:
         if not text or not text.strip():
             return text
 
         prompt = (
-            "Сделай текст более выразительным для синтеза речи Silero.\n"
-            "Применяй только эти приёмы:\n"
-            "- ставь `...` там, где естественная пауза;\n"
-            "- оборачивай ключевые слова в `_` (например, _важно_);\n"
-            "- не добавляй новых слов и не меняй смысл.\n"
-            "Верни только обработанный текст.\n\n"
+            "Сделай текст более естественным для русской речи (легко перефразируй, убери повторы), "
+            "но не добавляй форматирование.\n"
+            "- НИКАКОГО Markdown, кавычек для акцентов, подчёркиваний, `...` и других специальных символов.\n"
+            "- Возвращай только отредактированный текст, без пояснений и без пустых строк.\n\n"
             f"Текст: {text}\n"
-            "Размеченный текст:"
+            "Обновлённый текст:"
         )
 
         try:
-            response = self.client.generate(
-                model=self.model_name,
-                prompt=prompt,
-                options={
-                    "temperature": 0.2,
-                    "num_predict": TTS_MARKUP_MAX_TOKENS,
-                },
+            response_json = self.client.chat(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Ты помогаешь создавать выразительную русскую речь для TTS.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=self.temperature,
+                max_tokens=TTS_MARKUP_MAX_TOKENS,
             )
-            processed = response["response"].strip()
-            if not processed:
-                return text
-            return processed
+            processed = DeepSeekClient.extract_text(response_json)
+            processed = self._sanitize(processed) if processed else text
+            return processed if processed else text
         except Exception as exc:
-            logger.warning(f"Text markup failed, returning original text: {exc}")
+            logger.warning("Text markup failed, returning original text: %s", exc)
             return text
+
+    @staticmethod
+    def _sanitize(text: str) -> str:
+        """Remove any markdown-like symbols and ellipses."""
+        cleaned = text.strip()
+        cleaned = re.sub(r'[*_`~]+', '', cleaned)
+        cleaned = re.sub(r'\.{3,}', '.', cleaned)
+        cleaned = re.sub(r'\s+', ' ', cleaned)
+        return cleaned
 

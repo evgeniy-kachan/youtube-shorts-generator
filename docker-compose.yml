@@ -34,24 +34,7 @@ services:
       - backend
     restart: unless-stopped
 
-  ollama:
-    image: ollama/ollama
-    container_name: shorts_generator_ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    restart: unless-stopped
-
 volumes:
-  ollama_data:
   huggingface_cache:
   silero_cache:
 

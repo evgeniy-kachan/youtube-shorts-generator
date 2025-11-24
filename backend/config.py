@@ -10,10 +10,14 @@ load_dotenv()
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", 8000))
 
-# Ollama Configuration
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "ollama")  # Changed from localhost to ollama
-OLLAMA_PORT = int(os.getenv("OLLAMA_PORT", 11434))
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+# DeepSeek Configuration
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-reasoner")
+DEEPSEEK_TIMEOUT = float(os.getenv("DEEPSEEK_TIMEOUT", 60))
+DEEPSEEK_TRANSLATION_CHUNK_SIZE = int(os.getenv("DEEPSEEK_TRANSLATION_CHUNK_SIZE", 4))
+DEEPSEEK_TRANSLATION_TEMPERATURE = float(os.getenv("DEEPSEEK_TRANSLATION_TEMPERATURE", 0.1))
+DEEPSEEK_MARKUP_TEMPERATURE = float(os.getenv("DEEPSEEK_MARKUP_TEMPERATURE", 0.15))
 
 # Processing Configuration
 MAX_VIDEO_DURATION = int(os.getenv("MAX_VIDEO_DURATION", 7200))  # 2 hours
@@ -33,13 +37,10 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 CUDA_VISIBLE_DEVICES = os.getenv("CUDA_VISIBLE_DEVICES", "0")
 
 # Whisper Configuration
-WHISPER_MODEL = "large-v3"  # or "large-v2", "medium"
-WHISPER_DEVICE = "cuda"
-WHISPER_COMPUTE_TYPE = "float16"  # or "int8" for less VRAM
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
+WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "float16")
 
-# LLM
-LLM_MODEL = os.getenv("LLM_MODEL", "llama3.1:8b")
-LLM_BASE_URL = "http://ollama:11434"
 HIGHLIGHT_CONCURRENT_REQUESTS = int(os.getenv("HIGHLIGHT_CONCURRENT_REQUESTS", 5))
 
 # Translation
@@ -52,7 +53,7 @@ SILERO_LANGUAGE = "ru"
 SILERO_SPEAKER = "eugene"  # Russian voice (aidar, baya, kseniya, xenia, eugene, random)
 SILERO_MODEL_VERSION = "v3_1_ru"  # Model version for torch.hub.load
 TTS_ENABLE_MARKUP = os.getenv("TTS_ENABLE_MARKUP", "true").lower() in ("1", "true", "yes")
-TTS_MARKUP_MODEL = os.getenv("TTS_MARKUP_MODEL", LLM_MODEL)
+TTS_MARKUP_MODEL = os.getenv("TTS_MARKUP_MODEL", DEEPSEEK_MODEL)
 TTS_MARKUP_MAX_TOKENS = int(os.getenv("TTS_MARKUP_MAX_TOKENS", 160))
 
 # Video Processing Configuration

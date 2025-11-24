@@ -9,7 +9,7 @@ sys.path.insert(0, '/opt/youtube-shorts-generator')
 from pathlib import Path
 from backend.services.transcription import TranscriptionService
 from backend.services.highlight_analyzer import HighlightAnalyzer
-from backend.services.translation import TranslationService
+from backend.services.translation import Translator
 from backend.services.video_processor import VideoProcessor
 import backend.config as config
 
@@ -65,11 +65,12 @@ if not highlights:
     sys.exit(0)
 
 # Translation
-print("\n🌐 Перевод на русский...")
-translator = TranslationService(config.NLLB_MODEL, "cuda")
-for i, h in enumerate(highlights):
-    print(f"  Переводим {i+1}/{len(highlights)}...")
-    h['text_ru'] = translator.translate(h['text'])
+print("\n🌐 Перевод на русский (DeepSeek)...")
+translator = Translator()
+texts = [h['text'] for h in highlights]
+translations = translator.translate_batch(texts)
+for h, translated in zip(highlights, translations):
+    h['text_ru'] = translated
 print("✅ Перевод завершен")
 
 # Results

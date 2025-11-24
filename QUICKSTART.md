@@ -93,9 +93,9 @@ for segment_id in segment_ids:
 
 ```env
 # .env файл
-OLLAMA_MODEL=llama3.1:8b      # или qwen2.5:7b
-WHISPER_MODEL=large-v3        # или medium для экономии памяти
-WHISPER_COMPUTE_TYPE=float16  # или int8 для экономии памяти
+DEEPSEEK_MODEL=deepseek-reasoner   # или deepseek-chat для экономии
+WHISPER_MODEL=large-v3             # или medium для экономии памяти
+WHISPER_COMPUTE_TYPE=float16       # или int8 для экономии памяти
 ```
 
 ### Если не хватает VRAM
@@ -106,10 +106,7 @@ WHISPER_MODEL = "medium"       # вместо large-v3
 WHISPER_COMPUTE_TYPE = "int8"  # вместо float16
 ```
 
-Используйте меньшую LLM:
-```bash
-ollama pull mistral:7b  # вместо llama3.1:8b
-```
+Используйте `DEEPSEEK_MODEL=deepseek-chat`, если нужно снизить стоимость/латентность.
 
 ## 🔧 Проверка установки
 
@@ -125,9 +122,6 @@ python3 --version
 
 # Проверьте FFmpeg
 ffmpeg -version
-
-# Проверьте Ollama
-ollama list
 
 # Проверьте backend
 curl http://localhost:8000/health
@@ -147,14 +141,13 @@ curl http://localhost:8000/health
 ```bash
 # Уменьшите размер моделей
 export WHISPER_MODEL=medium
-ollama pull mistral:7b
+export WHISPER_COMPUTE_TYPE=int8
 ```
 
-### "Connection refused" к Ollama
-```bash
-# Запустите Ollama
-ollama serve &
-```
+### Ошибки DeepSeek API
+- Проверьте `DEEPSEEK_API_KEY` в `.env`
+- Убедитесь, что есть доступ к `https://api.deepseek.com`
+- Снизьте размер батча (`DEEPSEEK_TRANSLATION_CHUNK_SIZE`)
 
 ### "FFmpeg not found"
 ```bash
@@ -231,7 +224,7 @@ cd frontend && npm install && cd ..
 - [ ] CUDA установлена (`nvcc --version`)
 - [ ] Python 3.10+ установлен
 - [ ] FFmpeg установлен
-- [ ] Ollama установлена и запущена
+- [ ] DeepSeek API key настроен в .env
 - [ ] Выполнен `./install.sh`
 - [ ] Загружена LLM модель
 - [ ] Сервер запустился (`./run.sh`)

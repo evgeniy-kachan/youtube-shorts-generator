@@ -6,8 +6,6 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
-import torch
-
 from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
 from backend.services.highlight_analyzer import HighlightAnalyzer
@@ -52,17 +50,15 @@ def get_service(name: str):
     if name not in _services:
         logger.info(f"Initializing service: {name}")
         if name == "transcription":
-            _services[name] = TranscriptionService(model_name=config.WHISPER_MODEL)
+            _services[name] = TranscriptionService(
+                model_name=config.WHISPER_MODEL,
+                device=config.WHISPER_DEVICE,
+                compute_type=config.WHISPER_COMPUTE_TYPE,
+            )
         elif name == "highlight_analyzer":
             _services[name] = HighlightAnalyzer()
         elif name == "translation":
-            # Check if CUDA is available and use it for translation
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            logger.info(f"Translation service will use device: {device}")
-            _services[name] = Translator(
-                model_name=config.TRANSLATION_MODEL_NAME,
-                device=device
-            )
+            _services[name] = Translator()
         elif name == "tts":
             _services[name] = TTSService(
                 language=config.SILERO_LANGUAGE,
@@ -219,10 +215,6 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
     # Prepare texts for translation
     texts_to_translate = [seg['text'] for seg in filtered_highlights]
     
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        logger.info("Cleared CUDA cache before translation")
-
     logger.info("Starting batch translation...")
     translations = translator.translate_batch(texts_to_translate)
     logger.info("Batch translation finished. Assigning results...")

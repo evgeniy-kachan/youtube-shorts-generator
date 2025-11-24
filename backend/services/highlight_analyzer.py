@@ -1,10 +1,13 @@
 """Analyze transcription to find interesting segments using LLM."""
-import json
 import logging
 from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor
-import ollama
-from backend.config import OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_PORT
+
+from backend.config import (
+    DEEPSEEK_MODEL,
+    HIGHLIGHT_CONCURRENT_REQUESTS,
+)
+from backend.services.deepseek_client import DeepSeekClient
 
 logger = logging.getLogger(__name__)
 
@@ -12,25 +15,24 @@ logger = logging.getLogger(__name__)
 class HighlightAnalyzer:
     """Analyze video segments to find interesting moments."""
     
-    def __init__(self, model_name: str = None, host: str = None, port: int = None):
+    def __init__(self, model_name: str = None):
         """
         Initialize analyzer with LLM.
         
         Args:
-            model_name: Ollama model name (e.g., "llama3.1:8b")
-            host: Ollama host name
-            port: Ollama port number
+            model_name: DeepSeek model name (e.g., "deepseek-reasoner")
         """
-        self.model_name = model_name or OLLAMA_MODEL
-        host = host or OLLAMA_HOST
-        port = port or OLLAMA_PORT
+        self.model_name = model_name or DEEPSEEK_MODEL
+        self.client = DeepSeekClient(model=self.model_name)
+        logger.info("Initialized HighlightAnalyzer with DeepSeek model: %s", self.model_name)
         
-        # Configure ollama client
-        self.client = ollama.Client(host=f"http://{host}:{port}")
-            
-        logger.info(f"Initialized HighlightAnalyzer with model: {self.model_name} on host http://{host}:{port}")
-        
-    def analyze_segments(self, segments: List[Dict], min_duration: int = 20, max_duration: int = 180, max_parallel: int = 5) -> List[Dict]:
+    def analyze_segments(
+        self,
+        segments: List[Dict],
+        min_duration: int = 20,
+        max_duration: int = 180,
+        max_parallel: int = None,
+    ) -> List[Dict]:
         """
         Analyze transcription segments to find highlights (with parallel processing).
         
@@ -47,6 +49,7 @@ class HighlightAnalyzer:
             # Create overlapping windows of fixed sizes
             potential_segments = self._create_time_windows(segments, min_duration, max_duration)
             
+            max_parallel = max_parallel or HIGHLIGHT_CONCURRENT_REQUESTS
             logger.info(f"Starting parallel LLM analysis with {max_parallel} concurrent requests...")
             
             # Analyze segments in parallel
@@ -175,24 +178,19 @@ Respond ONLY with valid JSON (no markdown or explanations):
 }}"""
 
         try:
-            response = self.client.generate(
-                model=self.model_name,
-                prompt=prompt,
-                options={
-                    'temperature': 0.3,
-                    'top_p': 0.9,
-                }
+            response_json = self.client.chat(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an editor who scores transcript fragments for viral short-form video potential. "
+                        "Deliver concise JSON scores between 0 and 1.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.25,
             )
-            
-            response_text = response['response'].strip()
-            
-            # Try to extract JSON if wrapped in markdown
-            if '```json' in response_text:
-                response_text = response_text.split('```json')[1].split('```')[0].strip()
-            elif '```' in response_text:
-                response_text = response_text.split('```')[1].split('```')[0].strip()
-            
-            scores = json.loads(response_text)
+            response_text = DeepSeekClient.extract_text(response_json)
+            scores = DeepSeekClient.extract_json(response_text)
             
             # Validate scores
             for key in scores:

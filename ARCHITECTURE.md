@@ -22,7 +22,7 @@ project_blog/
 │   │   ├── youtube_downloader.py   # Скачивание с YouTube
 │   │   ├── transcription.py        # Whisper транскрипция
 │   │   ├── highlight_analyzer.py   # LLM анализ
-│   │   ├── translation.py          # NLLB перевод
+│   │   ├── translation.py          # DeepSeek перевод
 │   │   ├── tts.py                  # Silero озвучка
 │   │   └── video_processor.py      # FFmpeg обработка
 │   │
@@ -120,7 +120,7 @@ project_blog/
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 3: HIGHLIGHT ANALYSIS                                     │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Ollama + LLM (Llama 3.1 / Qwen / Mistral)               │   │
+│  │  DeepSeek reasoner (cloud API)                           │   │
 │  │                                                            │   │
 │  │  1. Создание временных окон (20s - 3min)                 │   │
 │  │  2. Анализ каждого окна по 12 критериям:                 │   │
@@ -153,10 +153,10 @@ project_blog/
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 4: TRANSLATION                                            │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │  NLLB (facebook/nllb-200-distilled-600M)                  │   │
-│  │  • Перевод EN → RU                                        │   │
+│  │  DeepSeek translation                                     │   │
+│  │  • Перевод EN → RU с лёгкой адаптацией                    │   │
 │  │  • Batch обработка                                        │   │
-│  │  • Beam search для качества                              │   │
+│  │  • JSON вывод для subtitle_text                           │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └────────────────────────────┬────────────────────────────────────┘
                              │
@@ -264,12 +264,10 @@ project_blog/
 
 ### 3. Highlight Analyzer (`highlight_analyzer.py`)
 
-**Технологии:** Ollama + LLM
+**Технологии:** DeepSeek reasoner (cloud)
 
-**Поддерживаемые модели:**
-- Llama 3.1 (8B, 70B)
-- Qwen 2.5 (7B, 14B)
-- Mistral (7B, 12B)
+**Модель по умолчанию:**
+- `deepseek-reasoner` (thinking mode, максимальная точность)
 
 **Алгоритм:**
 
@@ -306,17 +304,18 @@ project_blog/
 
 ### 4. Translation Service (`translation.py`)
 
-**Технологии:** NLLB (No Language Left Behind)
+**Технологии:** DeepSeek API (reasoner)
 
-**Модели:**
-- `facebook/nllb-200-distilled-600M` (быстрее, рекомендуется)
-- `facebook/nllb-200-3.3B` (качественнее, медленнее)
+**Особенности:**
+- Batch запросы (по 3-5 сегментов)
+- JSON-ответ с `subtitle_text`
+- Лёгкая адаптация фраз и локализация
+- Температура 0.1 для стабильности
 
 **Параметры:**
-- Source: `eng_Latn`
-- Target: `rus_Cyrl`
-- Beam search: 5
-- Batch processing для скорости
+- HTTP client: `httpx`
+- Timeout: 60s
+- Авторизация: Bearer `DEEPSEEK_API_KEY`
 
 ### 5. TTS Service (`tts.py`)
 
@@ -447,10 +446,10 @@ App
 └──────────┘                          └────┬─────┘
                                            │
                                            ▼
-                                      ┌─────────┐
-                                      │ Ollama  │
-                                      │  LLM    │
-                                      └─────────┘
+                                      ┌──────────────┐
+                                      │ DeepSeek API │
+                                      │   (LLM)      │
+                                      └──────────────┘
 ```
 
 ## GPU Memory Usage
@@ -462,22 +461,20 @@ App
 │ Component                  │ VRAM     │
 ├────────────────────────────┼──────────┤
 │ Whisper large-v3           │ ~10 GB   │
-│ NLLB-600M                  │ ~2 GB    │
-│ Llama 3.1 8B (через Ollama)│ ~5 GB    │
 │ Silero TTS                 │ ~500 MB  │
+│ Renderer/FFmpeg            │ ~1 GB    │
 │ Overhead                   │ ~1 GB    │
 ├────────────────────────────┼──────────┤
 │ ИТОГО                      │ ~18.5 GB │
 └────────────────────────────┴──────────┘
 
-⚠️ Модели не загружены одновременно!
-Последовательная загрузка:
+⚠️ DeepSeek работает по API и не занимает VRAM на сервере.
+Последовательные этапы:
 1. Whisper (транскрипция) → выгрузка
-2. LLM (анализ) → выгрузка
-3. NLLB (перевод) → выгрузка
-4. TTS (озвучка)
+2. DeepSeek (анализ + перевод) — облачный вызов
+3. TTS (озвучка)
 
-Реальный пик: ~10-12 GB
+Реальный пик: ~11-12 GB
 ```
 
 ## Performance Optimization

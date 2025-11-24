@@ -1,73 +1,106 @@
-"""Translation service using NLLB (No Language Left Behind)."""
-import torch
-from transformers import pipeline
+"""Translation service powered by DeepSeek."""
 import logging
-from typing import List
-from sentence_splitter import SentenceSplitter
+from typing import List, Dict
 
-from backend.config import TRANSLATION_DEVICE, TRANSLATION_MODEL_NAME
+from backend.config import (
+    DEEPSEEK_MODEL,
+    DEEPSEEK_TRANSLATION_CHUNK_SIZE,
+    DEEPSEEK_TRANSLATION_TEMPERATURE,
+)
+from backend.services.deepseek_client import DeepSeekClient
 
 logger = logging.getLogger(__name__)
 
 
 class Translator:
-    def __init__(self, model_name=TRANSLATION_MODEL_NAME, device=TRANSLATION_DEVICE):
-        self.device_obj = torch.device(device)
-        print(f"Loading translation model {model_name} on {self.device_obj}...")
-        self.translator = pipeline(
-            'translation',
-            model=model_name,
-            device=0 if device == 'cuda' else -1,
-            torch_dtype=torch.float16 if device == 'cuda' else torch.float32
+    """Translate English segments to Russian using DeepSeek."""
+
+    def __init__(
+        self,
+        model_name: str = None,
+        chunk_size: int = None,
+        temperature: float = None,
+    ):
+        self.model_name = model_name or DEEPSEEK_MODEL
+        self.chunk_size = chunk_size or DEEPSEEK_TRANSLATION_CHUNK_SIZE
+        self.temperature = temperature or DEEPSEEK_TRANSLATION_TEMPERATURE
+        self.client = DeepSeekClient(model=self.model_name)
+        logger.info(
+            "Translator initialized with DeepSeek model %s (chunk_size=%s)",
+            self.model_name,
+            self.chunk_size,
         )
-        self.splitter = SentenceSplitter(language='en')
-        print(f"Translation model loaded on {self.device_obj}")
 
-    def _translate_single_text(self, text: str, max_length: int) -> str:
-        """Helper to translate a single text, splitting if too long."""
-        # NLLB has a max sequence length, translating long texts at once can lead to poor results.
-        # Let's set a practical character limit to split by sentences.
-        CHAR_LIMIT = 500  
+    def translate_batch(self, texts: List[str]) -> List[str]:
+        """Translate multiple texts, preserving order."""
+        if not texts:
+            return []
 
-        if len(text) < CHAR_LIMIT:
-            # If text is short enough, translate it directly
-            return self.translator(text, src_lang="eng_Latn", tgt_lang="rus_Cyrl", max_length=max_length)[0]['translation_text']
-        else:
-            # If text is too long, split into sentences, translate, and rejoin
-            sentences = self.splitter.split(text=text)
-            translated_sentences = self.translator(
-                sentences,
-                src_lang="eng_Latn",
-                tgt_lang="rus_Cyrl",
-                max_length=max_length,
-                truncation=True
-            )
-            return " ".join([item['translation_text'] for item in translated_sentences])
+        translations: List[str] = []
+        for start in range(0, len(texts), self.chunk_size):
+            chunk = texts[start : start + self.chunk_size]
+            payload = [
+                {"id": f"segment_{start + idx}", "text": text}
+                for idx, text in enumerate(chunk)
+            ]
+            chunk_result = self._translate_chunk(payload)
 
-    def translate(self, text: str, max_length: int = 1024) -> str:
-        """Translate text from English to Russian."""
+            for item in payload:
+                data = chunk_result.get(item["id"])
+                if data and isinstance(data.get("subtitle_text"), str):
+                    translations.append(data["subtitle_text"].strip())
+                else:
+                    logger.warning(
+                        "DeepSeek translation missing for %s, using original text",
+                        item["id"],
+                    )
+                    translations.append(item["text"])
+
+        return translations
+
+    def _translate_chunk(self, payload: List[Dict[str, str]]) -> Dict[str, Dict[str, str]]:
+        """
+        Send a chunk of segments to DeepSeek and parse the JSON response.
+        Returns a mapping {id: {"subtitle_text": str}}.
+        """
+        prompt = (
+            "You are a professional RU<>EN translator. Translate each segment to natural Russian, "
+            "allowing light adaptation for clarity but preserving meaning. Return clean text suitable "
+            "for on-screen subtitles (no markup). Respond ONLY with valid JSON in the format:\n"
+            '{\n  "results": [\n    {"id": "...", "subtitle_text": "..."},\n    ...\n  ]\n}\n\n'
+            "Segments:\n"
+        )
+
+        segments_str = "\n".join(
+            [f"- id: {item['id']}\n  text: {item['text']}" for item in payload]
+        )
+
+        response_json = self.client.chat(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You provide accurate Russian localizations with consistent style.",
+                },
+                {"role": "user", "content": f"{prompt}{segments_str}"},
+            ],
+            temperature=self.temperature,
+        )
+        response_text = DeepSeekClient.extract_text(response_json)
+
         try:
-            return self._translate_single_text(text, max_length)
-        except Exception as e:
-            logger.error(f"Translation error: {e}", exc_info=True)
-            raise
+            parsed = DeepSeekClient.extract_json(response_text)
+            results_list = parsed.get("results", [])
+        except Exception as exc:
+            logger.error("Failed to parse DeepSeek translation response: %s", exc, exc_info=True)
+            return {}
 
-    def translate_batch(self, texts: List[str], max_length: int = 1024, batch_size: int = 10) -> List[str]:
-        """Translate multiple texts, handling long texts by splitting them."""
-        print(f"Translating {len(texts)} segments...")
-        translated_texts = []
-        
-        for text in texts:
-            try:
-                if self.device_obj.type == 'cuda':
-                    torch.cuda.empty_cache()
-                
-                translated_text = self._translate_single_text(text, max_length)
-                translated_texts.append(translated_text)
-                
-            except Exception as e:
-                print(f"Error translating text: '{text[:50]}...'. Error: {e}")
-                translated_texts.append("[Translation Error]")
+        result_map: Dict[str, Dict[str, str]] = {}
+        for item in results_list:
+            seg_id = item.get("id")
+            subtitle_text = item.get("subtitle_text")
+            if seg_id and isinstance(subtitle_text, str):
+                result_map[seg_id] = {"subtitle_text": subtitle_text}
+            else:
+                logger.warning("Malformed translation item: %s", item)
 
-        print("Batch translation completed.")
-        return translated_texts
+        return result_map

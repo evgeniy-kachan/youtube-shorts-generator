@@ -20,36 +20,31 @@ This guide provides instructions for setting up and running the application usin
     ```
 
 2.  **Create an environment file:**
-    Copy the example environment file. You can customize it later if needed.
+    Create `.env` and add your DeepSeek API key along with other overrides:
 
     ```bash
-    cp .env.example .env
+    cat <<'EOF' > .env
+HOST=0.0.0.0
+PORT=8000
+DEEPSEEK_API_KEY=sk-xxxx
+DEEPSEEK_MODEL=deepseek-reasoner
+EOF
     ```
 
 3.  **Build and run the application:**
-    This command will build the Docker images for the frontend and backend, pull the Ollama image, and start all services in the background.
+    This command will build the Docker images for the frontend and backend and start all services in the background.
 
     ```bash
     docker-compose up --build -d
     ```
 
-4.  **Pull the Ollama model:**
-    Once the containers are running, you need to pull the LLM model that the application will use.
-
-    ```bash
-    docker-compose exec ollama ollama pull llama3.1:8b
-    ```
-
-    _(You can replace `llama3.1:8b` with any other model specified in your `.env` file)._
-
-5.  **Access the application:**
+4.  **Access the application:**
     Open your web browser and navigate to `http://localhost`. The React frontend should be visible and ready to accept YouTube links or local file uploads.
 
 ## Usage
 
 - **API:** The backend API is available at `http://localhost:8000/docs`.
 - **Frontend:** The user interface is at `http://localhost`.
-- **Ollama:** The Ollama API is at `http://localhost:11434`.
 
 ## Managing the Application
 
@@ -71,7 +66,7 @@ This guide provides instructions for setting up and running the application usin
   ```
 
 - **Stop and remove volumes (clears all data):**
-  Use this command if you want to start fresh, including deleting the Ollama models and model caches.
+  Use this command if you want to start fresh, removing cached Whisper/Silero models.
 
   ```bash
   docker-compose down -v
@@ -93,4 +88,4 @@ This guide provides instructions for setting up and running the application usin
 
 ## Notes on GPU Access
 
-The `docker-compose.yml` file is configured to grant the `backend` and `ollama` services access to the host's NVIDIA GPU. This requires the NVIDIA Container Toolkit to be properly installed and configured on the host machine. If you encounter GPU-related errors, ensure that `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` works correctly on your host.
+The `docker-compose.yml` file is configured to grant the `backend` service access to the host's NVIDIA GPU. This requires the NVIDIA Container Toolkit to be properly installed and configured on the host machine. If you encounter GPU-related errors, ensure that `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi` works correctly on your host.

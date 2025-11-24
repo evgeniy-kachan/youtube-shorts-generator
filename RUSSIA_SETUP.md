@@ -227,17 +227,17 @@ WHISPER_MODEL = "medium"  # В 2 раза быстрее, чуть хуже ка
 WHISPER_COMPUTE_TYPE = "int8"
 ```
 
-### LLM модели:
+### LLM настройки (DeepSeek):
 
-```bash
-# Llama 3.1 8B - лучший баланс
-ollama pull llama3.1:8b
+```env
+# Основной reasoner (лучшее качество)
+DEEPSEEK_MODEL=deepseek-reasoner
 
-# Или Mistral 7B - быстрее
-ollama pull mistral:7b
+# Эконом режим (дешевле/быстрее)
+DEEPSEEK_MODEL=deepseek-chat
 
-# Или Qwen 2.5 7B - хороший анализ
-ollama pull qwen2.5:7b
+# Не забудьте указать свой ключ
+DEEPSEEK_API_KEY=sk-xxxxxxxx
 ```
 
 ## 🎯 Checklist
