@@ -120,11 +120,17 @@ class HighlightAnalyzer:
                 window_sizes.append(avg_size)
 
         for size in window_sizes:
-            step = size // 2  # 50% overlap
+            step = max(size, 1)  # non-overlapping windows
+            max_start = max(int(video_duration - size), 0)
+            start_positions = list(range(0, max_start + 1, step)) or [0]
+
+            # Ensure we always cover the tail of the video
+            if start_positions[-1] + size < video_duration:
+                start_positions.append(max(video_duration - size, 0))
             
-            for start_time_int in range(0, int(video_duration - size), step):
+            for start_time_int in start_positions:
                 start_time = float(start_time_int)
-                end_time = start_time + size
+                end_time = min(start_time + size, video_duration)
                 
                 # Collect text from segments that fall within this window
                 window_text_parts = []
@@ -149,7 +155,11 @@ class HighlightAnalyzer:
                 unique_windows.append(window)
                 seen_texts.add(window['text'])
 
-        logger.info(f"Created {len(unique_windows)} unique time windows with sizes {window_sizes}")
+        logger.info(
+            "Created %d unique time windows with sizes %s (step equals window size)",
+            len(unique_windows),
+            window_sizes,
+        )
         return unique_windows
 
     def _analyze_segment_with_llm(self, segment: Dict) -> Dict[str, float]:
