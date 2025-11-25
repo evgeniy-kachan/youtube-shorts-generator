@@ -46,7 +46,6 @@ class TranscriptionService:
                 beam_size=5,
                 best_of=1,
                 temperature=0.0,
-                max_segment_length=40,
                 vad_filter=True,  # Voice activity detection
                 vad_parameters=dict(
                     threshold=0.5,
