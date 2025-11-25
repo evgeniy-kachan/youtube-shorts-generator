@@ -44,15 +44,16 @@ class TranscriptionService:
                 audio_path,
                 language=language,
                 beam_size=5,
-                best_of=5,
+                best_of=1,
                 temperature=0.0,
+                max_segment_length=40,
                 vad_filter=True,  # Voice activity detection
                 vad_parameters=dict(
                     threshold=0.5,
-                    min_speech_duration_ms=250,
-                    min_silence_duration_ms=100
+                    min_speech_duration_ms=450,
+                    min_silence_duration_ms=1100
                 ),
-                word_timestamps=True,  # Important for word-level subtitles
+                word_timestamps=False,
             )
             
             logger.info(f"Detected language: {info.language} (probability: {info.language_probability:.2f})")

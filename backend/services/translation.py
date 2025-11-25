@@ -5,6 +5,7 @@ from typing import List, Dict
 from backend.config import (
     DEEPSEEK_MODEL,
     DEEPSEEK_TRANSLATION_CHUNK_SIZE,
+    DEEPSEEK_TRANSLATION_MAX_GROUP_CHARS,
     DEEPSEEK_TRANSLATION_TEMPERATURE,
 )
 from backend.services.deepseek_client import DeepSeekClient
@@ -20,15 +21,18 @@ class Translator:
         model_name: str = None,
         chunk_size: int = None,
         temperature: float = None,
+        max_group_chars: int = None,
     ):
         self.model_name = model_name or DEEPSEEK_MODEL
         self.chunk_size = chunk_size or DEEPSEEK_TRANSLATION_CHUNK_SIZE
         self.temperature = temperature or DEEPSEEK_TRANSLATION_TEMPERATURE
+        self.max_group_chars = max_group_chars or DEEPSEEK_TRANSLATION_MAX_GROUP_CHARS
         self.client = DeepSeekClient(model=self.model_name)
         logger.info(
-            "Translator initialized with DeepSeek model %s (chunk_size=%s)",
+            "Translator initialized with DeepSeek model %s (chunk_size=%s, max_group_chars=%s)",
             self.model_name,
             self.chunk_size,
+            self.max_group_chars,
         )
 
     def translate_batch(self, texts: List[str]) -> List[str]:
@@ -37,12 +41,9 @@ class Translator:
             return []
 
         translations: List[str] = []
-        for start in range(0, len(texts), self.chunk_size):
-            chunk = texts[start : start + self.chunk_size]
-            payload = [
-                {"id": f"segment_{start + idx}", "text": text}
-                for idx, text in enumerate(chunk)
-            ]
+        index = 0
+        while index < len(texts):
+            payload, consumed = self._build_payload_group(texts, index)
             chunk_result = self._translate_chunk(payload)
 
             for item in payload:
@@ -56,7 +57,47 @@ class Translator:
                     )
                     translations.append(item["text"])
 
+            index += consumed
+
         return translations
+
+    def _build_payload_group(self, texts: List[str], start_index: int):
+        """
+        Build a group of segments respecting chunk_size and max_group_chars limits.
+        Returns (payload_list, consumed_count).
+        """
+        payload: List[Dict[str, str]] = []
+        consumed = 0
+        total_chars = 0
+
+        for offset in range(self.chunk_size):
+            idx = start_index + consumed
+            if idx >= len(texts):
+                break
+
+            text = texts[idx]
+            text_len = len(text)
+
+            # Avoid empty strings blocking grouping
+            if not text:
+                payload.append({"id": f"segment_{idx}", "text": ""})
+                consumed += 1
+                continue
+
+            # If adding this text would exceed char limit and we already have entries, stop grouping
+            if payload and total_chars + text_len > self.max_group_chars:
+                break
+
+            payload.append({"id": f"segment_{idx}", "text": text})
+            consumed += 1
+            total_chars += text_len
+
+        if not payload:
+            # Fallback to at least one item to avoid infinite loop
+            payload.append({"id": f"segment_{start_index}", "text": texts[start_index]})
+            consumed = 1
+
+        return payload, consumed
 
     def _translate_chunk(self, payload: List[Dict[str, str]]) -> Dict[str, Dict[str, str]]:
         """
