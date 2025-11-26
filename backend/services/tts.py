@@ -2,6 +2,7 @@
 import logging
 import time
 from pathlib import Path
+import re
 from urllib.error import HTTPError
 
 import torch
@@ -104,6 +105,25 @@ class TTSService:
                     continue
                 raise RuntimeError(f"Could not initialize TTS service: {e}") from e
         
+    def _sanitize_text(self, text: str) -> str:
+        """Normalize quotes/dashes and strip unsupported symbols."""
+        replacements = {
+            "“": '"',
+            "”": '"',
+            "„": '"',
+            "’": "'",
+            "‘": "'",
+            "—": "-",
+            "–": "-",
+            "…": "...",
+        }
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+
+        text = re.sub(r"[^0-9A-Za-zА-Яа-яЁё.,!?;:'\"()\- ]+", " ", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
     def _chunk_text(self, text: str) -> list[str]:
         """
         Split text into smaller chunks so Silero model can process them.
@@ -143,6 +163,49 @@ class TTSService:
         logger.info(f"TTS text split into {len(chunks)} chunk(s), max length {self.max_chunk_chars} chars.")
         return chunks
 
+    def _split_for_fallback(self, text: str) -> list[str]:
+        """Split text into smaller sentences for fallback synthesis."""
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        cleaned = [sentence.strip() for sentence in sentences if sentence.strip()]
+        return cleaned if cleaned else [text]
+
+    def _synthesize_chunk(self, chunk: str, speaker_name: str) -> torch.Tensor:
+        """Generate audio for a single chunk with fallback splitting."""
+        try:
+            audio = self.model.apply_tts(
+                text=chunk,
+                speaker=speaker_name,
+                sample_rate=self.sample_rate
+            )
+            return audio if isinstance(audio, torch.Tensor) else torch.tensor(audio)
+        except ValueError:
+            fallback_sentences = self._split_for_fallback(chunk)
+            if len(fallback_sentences) == 1:
+                raise
+
+            logger.warning("TTS chunk failed, retrying sentence-by-sentence fallback")
+            audio_segments: list[torch.Tensor] = []
+
+            for sentence in fallback_sentences:
+                try:
+                    sentence_audio = self.model.apply_tts(
+                        text=sentence,
+                        speaker=speaker_name,
+                        sample_rate=self.sample_rate
+                    )
+                    if not isinstance(sentence_audio, torch.Tensor):
+                        sentence_audio = torch.tensor(sentence_audio)
+                    audio_segments.append(sentence_audio)
+                except ValueError:
+                    safe_preview = sentence[:120].replace("\n", " ")
+                    logger.error("Fallback sentence synthesis failed. Preview=%r", safe_preview)
+                    continue
+
+            if not audio_segments:
+                raise
+
+            return torch.cat(audio_segments, dim=-1)
+
     def synthesize(self, text: str, output_path: str, speaker: str | None = None) -> str:
         """
         Synthesize speech from text.
@@ -166,18 +229,18 @@ class TTSService:
             speaker_name = speaker or self.speaker
             logger.info(f"Generating TTS audio for text length: {len(text)} chars, speaker: {speaker_name}")
 
-            chunks = self._chunk_text(text)
+            clean_text = self._sanitize_text(text)
+            if not clean_text:
+                raise ValueError("TTS input is empty after sanitization")
+
+            chunks = self._chunk_text(clean_text)
             audio_segments = []
 
             for idx, chunk in enumerate(chunks, start=1):
                 logger.info(f"Synthesizing TTS chunk {idx}/{len(chunks)} (len={len(chunk)} chars)")
 
                 try:
-                    chunk_audio = self.model.apply_tts(
-                        text=chunk,
-                        speaker=speaker_name,
-                        sample_rate=self.sample_rate
-                    )
+                    chunk_audio = self._synthesize_chunk(chunk, speaker_name)
                 except Exception as chunk_exc:
                     safe_preview = chunk[:200].replace("\n", " ")
                     logger.error(
@@ -187,9 +250,6 @@ class TTSService:
                         safe_preview,
                     )
                     raise
-
-                if not isinstance(chunk_audio, torch.Tensor):
-                    chunk_audio = torch.tensor(chunk_audio)
 
                 audio_segments.append(chunk_audio)
 
