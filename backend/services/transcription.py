@@ -45,12 +45,12 @@ class TranscriptionService:
                 language=language,
                 beam_size=5,
                 best_of=1,
-                temperature=0.0,
+                temperature=0.2,
                 vad_filter=True,  # Voice activity detection
                 vad_parameters=dict(
                     threshold=0.5,
-                    min_speech_duration_ms=450,
-                    min_silence_duration_ms=1100
+                    min_speech_duration_ms=300,
+                    min_silence_duration_ms=900
                 ),
                 word_timestamps=False,
             )
@@ -59,13 +59,23 @@ class TranscriptionService:
             
             # Convert segments to list of dictionaries
             result = []
-            for segment in segments:
+            for idx, segment in enumerate(segments, start=1):
                 segment_dict = {
                     'start': segment.start,
                     'end': segment.end,
                     'text': segment.text.strip(),
                     'words': []
                 }
+                duration = segment.end - segment.start
+                logger.debug(
+                    "Whisper segment %s: start=%.2f end=%.2f duration=%.2f len=%s text_preview=%r",
+                    idx,
+                    segment.start,
+                    segment.end,
+                    duration,
+                    len(segment_dict['text']),
+                    segment_dict['text'][:80]
+                )
                 
                 # Add word-level timestamps if available
                 if hasattr(segment, 'words') and segment.words:
