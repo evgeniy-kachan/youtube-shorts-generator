@@ -6,6 +6,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: shorts_generator_backend
+    env_file:
+      - .env   
     ports:
       - "8000:8000"
     volumes:
