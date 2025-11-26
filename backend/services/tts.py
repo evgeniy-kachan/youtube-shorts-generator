@@ -3,11 +3,14 @@ import logging
 import time
 from pathlib import Path
 import re
+from datetime import datetime
 from urllib.error import HTTPError
 
 import torch
 import torchaudio
 from sentence_splitter import SentenceSplitter
+
+from backend.config import TEMP_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,7 @@ class TTSService:
         self.sample_rate = 48000
         self.max_chunk_chars = max_chunk_chars
         self.splitter = SentenceSplitter(language='ru')
+        self.failed_chunk_log = Path(TEMP_DIR) / "tts_failed_chunks.log"
         
         # Load Silero TTS model with retry to survive transient network errors (GitHub 503, etc.)
         max_retries = 3
@@ -169,6 +173,39 @@ class TTSService:
         cleaned = [sentence.strip() for sentence in sentences if sentence.strip()]
         return cleaned if cleaned else [text]
 
+    def _force_split(self, text: str, max_len: int = 150) -> list[str]:
+        """Bruteforce split text into chunks without breaking words."""
+        words = text.split()
+        if not words:
+            return [text]
+
+        parts: list[str] = []
+        current = ""
+
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if len(candidate) <= max_len:
+                current = candidate
+            else:
+                if current:
+                    parts.append(current)
+                current = word
+
+        if current:
+            parts.append(current)
+
+        return parts if parts else [text]
+
+    def _log_failed_chunk(self, text: str, context: str) -> None:
+        """Persist failed chunk to a log file for manual inspection."""
+        try:
+            self.failed_chunk_log.parent.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.utcnow().isoformat()
+            with self.failed_chunk_log.open("a", encoding="utf-8") as log_file:
+                log_file.write(f"[{timestamp}] context={context}\n{text}\n---\n")
+        except Exception as log_exc:
+            logger.warning("Unable to write TTS failed chunk log: %s", log_exc)
+
     def _synthesize_chunk(self, chunk: str, speaker_name: str) -> torch.Tensor:
         """Generate audio for a single chunk with fallback splitting."""
         try:
@@ -179,9 +216,12 @@ class TTSService:
             )
             return audio if isinstance(audio, torch.Tensor) else torch.tensor(audio)
         except ValueError:
+            self._log_failed_chunk(chunk, "chunk_value_error")
             fallback_sentences = self._split_for_fallback(chunk)
             if len(fallback_sentences) == 1:
-                raise
+                fallback_sentences = self._force_split(chunk)
+                if len(fallback_sentences) == 1:
+                    raise
 
             logger.warning("TTS chunk failed, retrying sentence-by-sentence fallback")
             audio_segments: list[torch.Tensor] = []
@@ -197,6 +237,7 @@ class TTSService:
                         sentence_audio = torch.tensor(sentence_audio)
                     audio_segments.append(sentence_audio)
                 except ValueError:
+                    self._log_failed_chunk(sentence, "fallback_sentence_value_error")
                     safe_preview = sentence[:120].replace("\n", " ")
                     logger.error("Fallback sentence synthesis failed. Preview=%r", safe_preview)
                     continue
