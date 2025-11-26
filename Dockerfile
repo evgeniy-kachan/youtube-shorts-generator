@@ -5,6 +5,13 @@ FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
+# Optional APT proxy for faster builds (pass --build-arg APT_PROXY=http://host.docker.internal:3142)
+ARG APT_PROXY=""
+RUN if [ -n "$APT_PROXY" ]; then \
+        echo "Acquire::HTTP::Proxy \"${APT_PROXY}\";" > /etc/apt/apt.conf.d/01proxy && \
+        echo "Acquire::HTTPS::Proxy \"${APT_PROXY}\";" >> /etc/apt/apt.conf.d/01proxy; \
+    fi
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     python3-pip \
@@ -19,6 +26,9 @@ RUN mkdir -p /usr/share/fonts/truetype/montserrat && \
     cp /tmp/fonts/*.ttf /usr/share/fonts/truetype/montserrat/ && \
     fc-cache -f -v && \
     rm -rf /tmp/fonts
+
+# Clean up optional apt proxy configuration to avoid affecting runtime
+RUN rm -f /etc/apt/apt.conf.d/01proxy || true
 
 # Create a non-root user
 RUN useradd -ms /bin/bash appuser

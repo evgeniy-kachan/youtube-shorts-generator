@@ -171,11 +171,22 @@ class TTSService:
 
             for idx, chunk in enumerate(chunks, start=1):
                 logger.info(f"Synthesizing TTS chunk {idx}/{len(chunks)} (len={len(chunk)} chars)")
-                chunk_audio = self.model.apply_tts(
-                    text=chunk,
-                    speaker=speaker_name,
-                    sample_rate=self.sample_rate
-                )
+
+                try:
+                    chunk_audio = self.model.apply_tts(
+                        text=chunk,
+                        speaker=speaker_name,
+                        sample_rate=self.sample_rate
+                    )
+                except Exception as chunk_exc:
+                    safe_preview = chunk[:200].replace("\n", " ")
+                    logger.error(
+                        "TTS chunk %s failed. Length=%s. Preview=%r",
+                        idx,
+                        len(chunk),
+                        safe_preview,
+                    )
+                    raise
 
                 if not isinstance(chunk_audio, torch.Tensor):
                     chunk_audio = torch.tensor(chunk_audio)
