@@ -1,11 +1,13 @@
 """Translation service powered by DeepSeek."""
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 
 import httpx
 
 from backend.config import (
     DEEPSEEK_TRANSLATION_CHUNK_SIZE,
+    DEEPSEEK_TRANSLATION_CONCURRENCY,
     DEEPSEEK_TRANSLATION_MAX_GROUP_CHARS,
     DEEPSEEK_TRANSLATION_MODEL,
     DEEPSEEK_TRANSLATION_TEMPERATURE,
@@ -26,19 +28,22 @@ class Translator:
         temperature: float = None,
         max_group_chars: int = None,
         timeout: float = None,
+        max_parallel: int = None,
     ):
         self.model_name = model_name or DEEPSEEK_TRANSLATION_MODEL
         self.chunk_size = chunk_size or DEEPSEEK_TRANSLATION_CHUNK_SIZE
         self.temperature = temperature or DEEPSEEK_TRANSLATION_TEMPERATURE
         self.max_group_chars = max_group_chars or DEEPSEEK_TRANSLATION_MAX_GROUP_CHARS
         self.timeout = timeout or DEEPSEEK_TRANSLATION_TIMEOUT
+        self.max_parallel = max_parallel or DEEPSEEK_TRANSLATION_CONCURRENCY
         self.client = DeepSeekClient(model=self.model_name, timeout=self.timeout)
         logger.info(
-            "Translator initialized with DeepSeek model %s (chunk_size=%s, max_group_chars=%s, timeout=%ss)",
+            "Translator initialized with DeepSeek model %s (chunk_size=%s, max_group_chars=%s, timeout=%ss, max_parallel=%s)",
             self.model_name,
             self.chunk_size,
             self.max_group_chars,
             self.timeout,
+            self.max_parallel,
         )
 
     def translate_batch(self, texts: List[str]) -> List[str]:
@@ -46,26 +51,66 @@ class Translator:
         if not texts:
             return []
 
-        translations: List[str] = []
+        payloads: List[List[Dict[str, str]]] = []
         index = 0
         while index < len(texts):
             payload, consumed = self._build_payload_group(texts, index)
-            chunk_result = self._translate_chunk(payload)
-
-            for item in payload:
-                data = chunk_result.get(item["id"])
-                if data and isinstance(data.get("subtitle_text"), str):
-                    translations.append(data["subtitle_text"].strip())
-                else:
-                    logger.warning(
-                        "DeepSeek translation missing for %s, using original text",
-                        item["id"],
-                    )
-                    translations.append(item["text"])
-
+            payloads.append(payload)
             index += consumed
 
+        results_map = self._process_payloads(payloads)
+
+        translations: List[str] = []
+        for idx, original_text in enumerate(texts):
+            segment_id = f"segment_{idx}"
+            data = results_map.get(segment_id)
+            if data and isinstance(data.get("subtitle_text"), str):
+                translations.append(data["subtitle_text"].strip())
+            else:
+                if data is None:
+                    logger.warning(
+                        "DeepSeek translation missing for %s, using original text",
+                        segment_id,
+                    )
+                translations.append(original_text)
+
         return translations
+
+    def _process_payloads(self, payloads: List[List[Dict[str, str]]]) -> Dict[str, Dict[str, str]]:
+        """Translate payload groups sequentially or in parallel depending on config."""
+        results: Dict[str, Dict[str, str]] = {}
+        if not payloads:
+            return results
+
+        if len(payloads) == 1 or self.max_parallel <= 1:
+            for payload in payloads:
+                results.update(self._translate_chunk(payload))
+            return results
+
+        logger.info(
+            "Translating %s payload groups with up to %s concurrent requests",
+            len(payloads),
+            self.max_parallel,
+        )
+
+        with ThreadPoolExecutor(max_workers=self.max_parallel) as executor:
+            future_to_payload = {
+                executor.submit(self._translate_chunk, payload): payload for payload in payloads
+            }
+            for future in as_completed(future_to_payload):
+                payload = future_to_payload[future]
+                try:
+                    chunk_result = future.result()
+                    results.update(chunk_result)
+                except Exception as exc:
+                    logger.error(
+                        "DeepSeek translation chunk failed for ids %s: %s",
+                        [item["id"] for item in payload],
+                        exc,
+                        exc_info=True,
+                    )
+
+        return results
 
     def _build_payload_group(self, texts: List[str], start_index: int):
         """
