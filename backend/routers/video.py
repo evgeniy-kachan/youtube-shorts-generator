@@ -18,8 +18,6 @@ from backend import config
 
 router = APIRouter(prefix="/api/video", tags=["video"])
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # In-memory storage for tasks and results

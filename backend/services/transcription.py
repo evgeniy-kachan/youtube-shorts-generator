@@ -59,22 +59,24 @@ class TranscriptionService:
             
             # Convert segments to list of dictionaries
             result = []
-            for idx, segment in enumerate(segments, start=1):
+            for idx, segment in enumerate(segments):
                 segment_dict = {
                     'start': segment.start,
                     'end': segment.end,
                     'text': segment.text.strip(),
                     'words': []
                 }
-                duration = segment.end - segment.start
+
+                duration = (segment.end or 0) - (segment.start or 0)
+                preview = segment_dict['text'][:80]
                 logger.debug(
-                    "Whisper segment %s: start=%.2f end=%.2f duration=%.2f len=%s text_preview=%r",
+                    "Whisper segment %s: start=%.2f end=%.2f duration=%.2f len=%s text=%r",
                     idx,
                     segment.start,
                     segment.end,
                     duration,
                     len(segment_dict['text']),
-                    segment_dict['text'][:80]
+                    preview,
                 )
                 
                 # Add word-level timestamps if available

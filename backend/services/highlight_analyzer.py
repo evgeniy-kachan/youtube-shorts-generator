@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from backend.config import (
     DEEPSEEK_MODEL,
     HIGHLIGHT_CONCURRENT_REQUESTS,
+    HIGHLIGHT_SEGMENTS_PER_CHUNK,
 )
 from backend.services.deepseek_client import DeepSeekClient
 
@@ -46,8 +47,22 @@ class HighlightAnalyzer:
             List of highlighted segments with scores
         """
         try:
-            # Create overlapping windows of fixed sizes
-            potential_segments = self._create_time_windows(segments, min_duration, max_duration)
+            # Merge consecutive Whisper segments into larger candidates to limit LLM calls
+            potential_segments = self._merge_segments(
+                segments,
+                min_duration=min_duration,
+                max_duration=max_duration,
+                segments_per_chunk=HIGHLIGHT_SEGMENTS_PER_CHUNK,
+            )
+            logger.info(
+                "Prepared %d merged candidates from %d raw Whisper segments (chunk=%s)",
+                len(potential_segments),
+                len(segments),
+                HIGHLIGHT_SEGMENTS_PER_CHUNK,
+            )
+            if not potential_segments:
+                logger.warning("No candidate segments available for highlight analysis")
+                return []
             
             max_parallel = max_parallel or HIGHLIGHT_CONCURRENT_REQUESTS
             logger.info(f"Starting parallel LLM analysis with {max_parallel} concurrent requests...")
@@ -161,6 +176,73 @@ class HighlightAnalyzer:
             window_sizes,
         )
         return unique_windows
+
+    def _merge_segments(
+        self,
+        segments: List[Dict],
+        min_duration: int,
+        max_duration: int,
+        segments_per_chunk: int,
+    ) -> List[Dict]:
+        """
+        Merge consecutive Whisper segments so that DeepSeek receives fewer, denser requests.
+        """
+        if not segments:
+            return []
+
+        merged: List[Dict] = []
+        current: List[Dict] = []
+        max_duration = max_duration or 180
+        segments_per_chunk = max(1, segments_per_chunk)
+
+        def build_chunk(chunk_segments: List[Dict]) -> Dict:
+            start = chunk_segments[0]["start"]
+            end = chunk_segments[-1]["end"]
+            text = " ".join(seg.get("text", "").strip() for seg in chunk_segments if seg.get("text"))
+            duration = max(end - start, 0.0)
+            return {
+                "start": start,
+                "end": end,
+                "duration": duration,
+                "text": text.strip(),
+            }
+
+        def merge_with_previous(prev: Dict, extra: Dict) -> Dict:
+            if not prev:
+                return extra
+            return {
+                "start": prev["start"],
+                "end": extra["end"],
+                "duration": max(extra["end"] - prev["start"], 0.0),
+                "text": f"{prev['text']} {extra['text']}".strip(),
+            }
+
+        for seg in segments:
+            current.append(seg)
+            duration = current[-1]["end"] - current[0]["start"]
+            reached_count = len(current) >= segments_per_chunk
+            reached_duration = duration >= max_duration
+            long_enough = duration >= min_duration
+
+            if (reached_count or reached_duration) and long_enough:
+                chunk = build_chunk(current)
+                if chunk["text"]:
+                    merged.append(chunk)
+                current = []
+
+        if current:
+            chunk = build_chunk(current)
+            if chunk["text"]:
+                if merged and chunk["duration"] < min_duration:
+                    merged[-1] = merge_with_previous(merged[-1], chunk)
+                else:
+                    merged.append(chunk)
+
+        # Fallback: if merging collapsed everything into a single tiny chunk, reuse original window logic
+        if not merged and segments:
+            return self._create_time_windows(segments, min_duration, max_duration)
+
+        return merged
 
     def _analyze_segment_with_llm(self, segment: Dict) -> Dict[str, float]:
         """Analyze a single segment using LLM."""
