@@ -116,7 +116,7 @@ class VideoProcessor:
                         ffmpeg.input(video_path)
                         .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT, force_original_aspect_ratio='increase')
                         .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT)
-                        .filter('boxblur', 'luma_radius=20:chroma_radius=20')
+                        .filter('boxblur', luma_radius=20, chroma_radius=20)
                     )
                     
                     # Create scaled video for center

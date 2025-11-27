@@ -2,6 +2,8 @@
 import logging
 from typing import List, Dict
 
+import httpx
+
 from backend.config import (
     DEEPSEEK_MODEL,
     DEEPSEEK_TRANSLATION_CHUNK_SIZE,
@@ -102,8 +104,36 @@ class Translator:
     def _translate_chunk(self, payload: List[Dict[str, str]]) -> Dict[str, Dict[str, str]]:
         """
         Send a chunk of segments to DeepSeek and parse the JSON response.
+        If DeepSeek times out, the payload is split into smaller chunks and retried.
         Returns a mapping {id: {"subtitle_text": str}}.
         """
+        try:
+            return self._request_translations(payload)
+        except httpx.ReadTimeout as timeout_exc:
+            if len(payload) <= 1:
+                logger.error(
+                    "DeepSeek timed out on single segment %s. Giving up.",
+                    payload[0]["id"],
+                )
+                raise timeout_exc
+
+            mid = max(1, len(payload) // 2)
+            logger.warning(
+                "DeepSeek timed out on %d segments. Splitting into %d + %d chunks.",
+                len(payload),
+                mid,
+                len(payload) - mid,
+            )
+
+            left_result = self._translate_chunk(payload[:mid])
+            right_result = self._translate_chunk(payload[mid:])
+
+            merged = {**left_result, **right_result}
+            return merged
+
+    def _request_translations(
+        self, payload: List[Dict[str, str]]
+    ) -> Dict[str, Dict[str, str]]:
         prompt = (
             "You are a professional RU<>EN translator. Translate each segment to natural Russian, "
             "allowing light adaptation for clarity but preserving meaning. Return clean text suitable "
