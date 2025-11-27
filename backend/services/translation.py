@@ -5,10 +5,11 @@ from typing import List, Dict
 import httpx
 
 from backend.config import (
-    DEEPSEEK_MODEL,
     DEEPSEEK_TRANSLATION_CHUNK_SIZE,
     DEEPSEEK_TRANSLATION_MAX_GROUP_CHARS,
+    DEEPSEEK_TRANSLATION_MODEL,
     DEEPSEEK_TRANSLATION_TEMPERATURE,
+    DEEPSEEK_TRANSLATION_TIMEOUT,
 )
 from backend.services.deepseek_client import DeepSeekClient
 
@@ -24,17 +25,20 @@ class Translator:
         chunk_size: int = None,
         temperature: float = None,
         max_group_chars: int = None,
+        timeout: float = None,
     ):
-        self.model_name = model_name or DEEPSEEK_MODEL
+        self.model_name = model_name or DEEPSEEK_TRANSLATION_MODEL
         self.chunk_size = chunk_size or DEEPSEEK_TRANSLATION_CHUNK_SIZE
         self.temperature = temperature or DEEPSEEK_TRANSLATION_TEMPERATURE
         self.max_group_chars = max_group_chars or DEEPSEEK_TRANSLATION_MAX_GROUP_CHARS
-        self.client = DeepSeekClient(model=self.model_name)
+        self.timeout = timeout or DEEPSEEK_TRANSLATION_TIMEOUT
+        self.client = DeepSeekClient(model=self.model_name, timeout=self.timeout)
         logger.info(
-            "Translator initialized with DeepSeek model %s (chunk_size=%s, max_group_chars=%s)",
+            "Translator initialized with DeepSeek model %s (chunk_size=%s, max_group_chars=%s, timeout=%ss)",
             self.model_name,
             self.chunk_size,
             self.max_group_chars,
+            self.timeout,
         )
 
     def translate_batch(self, texts: List[str]) -> List[str]:
