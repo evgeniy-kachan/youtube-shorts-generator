@@ -40,32 +40,44 @@ class TranscriptionService:
         try:
             logger.info(f"Transcribing audio: {audio_path}")
             
-            segments, info = self.model.transcribe(
-                audio_path,
-                language=language,
-                beam_size=5,
-                best_of=1,
-                temperature=0.0,
-                vad_filter=True,  # Voice activity detection
-                vad_parameters=dict(
-                    threshold=0.5,
-                    min_speech_duration_ms=450,
-                    min_silence_duration_ms=1100
-                ),
-                word_timestamps=False,
-            )
+        segments, info = self.model.transcribe(
+            audio_path,
+            language=language,
+            beam_size=5,
+            best_of=1,
+            temperature=0.2,
+            vad_filter=True,  # Voice activity detection
+            vad_parameters=dict(
+                threshold=0.5,
+                min_speech_duration_ms=300,
+                min_silence_duration_ms=900
+            ),
+            word_timestamps=False,
+        )
             
             logger.info(f"Detected language: {info.language} (probability: {info.language_probability:.2f})")
             
             # Convert segments to list of dictionaries
             result = []
-            for segment in segments:
+            for idx, segment in enumerate(segments):
                 segment_dict = {
                     'start': segment.start,
                     'end': segment.end,
                     'text': segment.text.strip(),
                     'words': []
                 }
+
+                duration = (segment.end or 0) - (segment.start or 0)
+                preview = segment_dict['text'][:80]
+                logger.debug(
+                    "Whisper segment %s: start=%.2f end=%.2f duration=%.2f len=%s text=%r",
+                    idx,
+                    segment.start,
+                    segment.end,
+                    duration,
+                    len(segment_dict['text']),
+                    preview,
+                )
                 
                 # Add word-level timestamps if available
                 if hasattr(segment, 'words') and segment.words:
