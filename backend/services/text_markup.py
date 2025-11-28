@@ -2,10 +2,14 @@
 import logging
 import re
 
+import os
+from pathlib import Path
+
 from backend.config import (
     DEEPSEEK_MARKUP_TEMPERATURE,
     TTS_MARKUP_MODEL,
     TTS_MARKUP_MAX_TOKENS,
+    TEMP_DIR,
 )
 from backend.services.deepseek_client import DeepSeekClient
 
@@ -51,7 +55,18 @@ class TextMarkupService:
             )
             processed = DeepSeekClient.extract_text(response_json)
             processed = self._sanitize(processed) if processed else text
-            return processed if processed else text
+            final_text = processed if processed else text
+            if os.getenv("DEBUG_SAVE_MARKUP", "0") == "1":
+                from pathlib import Path
+                debug_dir = Path(TEMP_DIR) / "debug"
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                debug_path = debug_dir / "text_markup.log"
+                with open(debug_path, "a", encoding="utf-8") as debug_file:
+                    debug_file.write("=== INPUT ===\n")
+                    debug_file.write(text.strip() + "\n")
+                    debug_file.write("--- OUTPUT ---\n")
+                    debug_file.write(final_text.strip() + "\n\n")
+            return final_text
         except Exception as exc:
             logger.warning("Text markup failed, returning original text: %s", exc)
             return text
