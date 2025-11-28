@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import uuid
 import logging
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
@@ -215,6 +216,16 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
     
     logger.info("Starting batch translation...")
     translations = translator.translate_batch(texts_to_translate)
+    if os.getenv("DEBUG_SAVE_TRANSLATIONS", "0") == "1":
+        debug_dir = Path(config.TEMP_DIR) / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        debug_path = debug_dir / f"{video_id}_translations.txt"
+        with open(debug_path, "w", encoding="utf-8") as debug_file:
+            for original, translated in zip(texts_to_translate, translations):
+                debug_file.write("=== ORIGINAL ===\n")
+                debug_file.write(original.strip() + "\n")
+                debug_file.write("--- TRANSLATED ---\n")
+                debug_file.write((translated or "").strip() + "\n\n")
     logger.info("Batch translation finished. Assigning results...")
 
     # Assign translations back to segments
