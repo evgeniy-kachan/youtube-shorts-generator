@@ -3,6 +3,7 @@ from faster_whisper import WhisperModel
 from typing import List, Dict
 import logging
 from pathlib import Path
+import os
 import ffmpeg
 
 from backend.config import TEMP_DIR
@@ -121,6 +122,12 @@ class TranscriptionService:
                 .run(quiet=True, capture_stdout=True, capture_stderr=True)
             )
             segments = self.transcribe(str(audio_path), language=language)
+            if os.getenv("DEBUG_SAVE_TRANSCRIPT", "0") == "1":
+                full_text = self.get_full_text(segments)
+                debug_dir = TEMP_DIR / "debug"
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                debug_path = debug_dir / f"{Path(video_path).stem}_raw.txt"
+                debug_path.write_text(full_text, encoding="utf-8")
             return {
                 "segments": segments,
                 "text": self.get_full_text(segments),

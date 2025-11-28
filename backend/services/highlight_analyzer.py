@@ -247,27 +247,58 @@ class HighlightAnalyzer:
     def _analyze_segment_with_llm(self, segment: Dict) -> Dict[str, float]:
         """Analyze a single segment using LLM."""
         
-        prompt = f"""Analyze this video transcript segment for its potential as a viral short video (Reels/Shorts).
-Rate each of the 5 key criteria from 0.0 to 1.0.
+        prompt = f"""Analyze the following video transcript segment for its potential as a viral short video (TikTok / Instagram Reels / YouTube Shorts, 30–120 seconds).
 
-TEXT: "{segment['text']}"
+IMPORTANT RULES:
+- Use ONLY the provided text.
+- Do NOT invent context, meanings, tone, or details.
+- Do NOT assume anything not explicitly present in the text.
+- Focus strictly on how this exact segment performs as a short video clip.
 
-Evaluate these 5 criteria:
+TEXT:
+"{segment['text']}"
 
-1. emotional_intensity: Strength of emotion, surprise, or sentiment.
-2. hook_potential: How well the start grabs attention.
-3. key_value: Presence of actionable advice, insights, or takeaways.
-4. story_moment: Does it tell a compelling story or personal example?
-5. humor: Is there humor, jokes, or clear entertainment value?
+Evaluate the segment using these criteria (score each from 0.0 to 1.0):
 
-Respond ONLY with valid JSON (no markdown or explanations):
+1. emotional_intensity
+   Strength of emotions, surprise, tension, inspiration, or sentiment.
+
+2. hook_potential
+   How strongly the beginning grabs attention (unexpected fact, provocative claim, emotional trigger, intrigue).
+
+3. key_value
+   Presence of useful information, insight, clear takeaway, advice, or lesson.
+
+4. story_moment
+   Presence of a personal example, story beat, conflict, resolution, or narrative progression.
+
+5. humor
+   Entertainment via jokes, irony, comic situations, playful or amusing tone.
+
+6. dynamic_flow
+   Sustained engagement without repetition, drag, or filler.
+
+7. clip_worthiness
+   Suitability for a standalone viral clip (TikTok / Shorts / Reels) that people would watch fully.
+
+SCORING RULES:
+- 0.0 = completely absent
+- 1.0 = extremely strong
+- Use decimal values (e.g., 0.35, 0.72).
+- Be strict and realistic; high scores only when clearly deserved.
+
+OUTPUT FORMAT:
+Respond ONLY with valid JSON (no explanations, no markdown). Correct format example:
 {{
-  "emotional_intensity": 0.0-1.0,
-  "hook_potential": 0.0-1.0,
-  "key_value": 0.0-1.0,
-  "story_moment": 0.0-1.0,
-  "humor": 0.0-1.0
-}}"""
+  "emotional_intensity": 0.0,
+  "hook_potential": 0.0,
+  "key_value": 0.0,
+  "story_moment": 0.0,
+  "humor": 0.0,
+  "dynamic_flow": 0.0,
+  "clip_worthiness": 0.0
+}}
+If the format is violated, the response is invalid."""
 
         try:
             response_json = self.client.chat(
