@@ -40,8 +40,8 @@ class ProcessRequest(BaseModel):
     video_id: str
     segment_ids: List[str] = Field(..., description="List of segment IDs to process")
     vertical_method: str = Field(
-        default="blur_background",
-        description="Method for vertical conversion: blur_background, center_crop, smart_crop"
+        default="letterbox",
+        description="Method for vertical conversion: letterbox, center_crop"
     )
     
 

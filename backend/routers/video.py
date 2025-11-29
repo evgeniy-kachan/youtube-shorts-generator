@@ -35,7 +35,7 @@ class AnalyzeRequest(BaseModel):
 class ProcessRequest(BaseModel):
     video_id: str
     segment_ids: List[str]
-    vertical_method: str = "blur_background"
+    vertical_method: str = "letterbox"
 
 class TaskStatus(BaseModel):
     task_id: str
@@ -264,7 +264,7 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
         "result": response_result
     }
 
-def _process_segments_task(task_id: str, video_id: str, segment_ids: list, vertical_method: str = "blur_background"):
+def _process_segments_task(task_id: str, video_id: str, segment_ids: list, vertical_method: str = "letterbox"):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Preparing to render..."}
         

@@ -1,11 +1,30 @@
 import React, { useState } from 'react';
 
+const CRITERIA_LABELS = {
+  emotional_intensity: 'Эмоциональность',
+  hook_potential: 'Сила начала',
+  key_value: 'Ценность',
+  story_moment: 'Сюжетность',
+  humor: 'Юмор',
+  dynamic_flow: 'Динамика',
+  clip_worthiness: 'Годится для клипа',
+};
+
 const SegmentsList = ({ segments, videoTitle, onProcess, loading }) => {
   const [selectedSegments, setSelectedSegments] = useState([]);
-  const [verticalMethod, setVerticalMethod] = useState('blur_background');
+  const [expandedSegments, setExpandedSegments] = useState([]);
+  const [verticalMethod, setVerticalMethod] = useState('letterbox');
 
   const toggleSegment = (segmentId) => {
     setSelectedSegments((prev) =>
+      prev.includes(segmentId)
+        ? prev.filter((id) => id !== segmentId)
+        : [...prev, segmentId]
+    );
+  };
+
+  const toggleExpand = (segmentId) => {
+    setExpandedSegments((prev) =>
       prev.includes(segmentId)
         ? prev.filter((id) => id !== segmentId)
         : [...prev, segmentId]
@@ -74,22 +93,29 @@ const SegmentsList = ({ segments, videoTitle, onProcess, loading }) => {
         </div>
 
         <div className="space-y-3 max-h-96 overflow-y-auto">
-          {segments.map((segment, index) => (
-            <div
-              key={segment.id}
-              className={`border rounded-lg p-4 cursor-pointer transition-all duration-200 ${
-                selectedSegments.includes(segment.id)
-                  ? 'border-purple-600 bg-purple-50'
-                  : 'border-gray-200 hover:border-gray-300'
-              }`}
-              onClick={() => toggleSegment(segment.id)}
-            >
+          {segments.map((segment, index) => {
+            const isSelected = selectedSegments.includes(segment.id);
+            const isExpanded = expandedSegments.includes(segment.id);
+            return (
+              <div
+                key={segment.id}
+                className={`border rounded-lg p-4 cursor-pointer transition-all duration-200 ${
+                  isSelected
+                    ? 'border-purple-600 bg-purple-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+                onClick={() => toggleExpand(segment.id)}
+              >
               <div className="flex items-start space-x-4">
                 <div className="flex-shrink-0 mt-1">
                   <input
                     type="checkbox"
-                    checked={selectedSegments.includes(segment.id)}
-                    onChange={() => toggleSegment(segment.id)}
+                    checked={isSelected}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      toggleSegment(segment.id);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
                     className="w-5 h-5 text-purple-600 rounded focus:ring-purple-500"
                   />
                 </div>
@@ -112,7 +138,11 @@ const SegmentsList = ({ segments, videoTitle, onProcess, loading }) => {
                     </div>
                   </div>
 
-                  <p className="text-sm text-gray-700 mb-3 line-clamp-2">
+                  <p
+                    className={`text-sm text-gray-700 mb-3 ${
+                      isExpanded ? '' : 'line-clamp-2'
+                    }`}
+                  >
                     {segment.text_ru}
                   </p>
 
@@ -121,18 +151,20 @@ const SegmentsList = ({ segments, videoTitle, onProcess, loading }) => {
                       .filter(([_, score]) => score > 0.6)
                       .slice(0, 5)
                       .map(([criterion, score]) => (
-                        <span
-                          key={criterion}
-                          className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-700"
-                        >
-                          {criterion.replace('_', ' ')}: {(score * 100).toFixed(0)}%
-                        </span>
+                          <span
+                            key={criterion}
+                            className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-700"
+                          >
+                            {(CRITERIA_LABELS[criterion] || criterion.replace('_', ' '))}:{' '}
+                            {(score * 100).toFixed(0)}%
+                          </span>
                       ))}
                   </div>
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="mt-6 pt-6 border-t space-y-4">
@@ -140,11 +172,10 @@ const SegmentsList = ({ segments, videoTitle, onProcess, loading }) => {
             <label className="block text-sm font-medium text-gray-700 mb-2">
               📱 Формат для Reels/Shorts (9:16):
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {[
-                { id: 'blur_background', label: '🌟 Размытый фон', description: 'Видео по центру + blur' },
-                { id: 'center_crop', label: '✂️ Центр-кроп', description: 'Простая обрезка по центру' },
-                { id: 'smart_crop', label: '🤖 Smart', description: 'Кроп с учётом объекта (beta)' },
+                { id: 'letterbox', label: '⚫️ Чёрные поля', description: 'Вписываем ролик без обрезки, добавляем поля сверху/снизу' },
+                { id: 'center_crop', label: '✂️ Центр-кроп', description: 'Обрезаем центр под 9:16' },
               ].map((method) => (
                 <button
                   key={method.id}

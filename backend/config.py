@@ -62,7 +62,7 @@ TTS_MARKUP_MODEL = os.getenv("TTS_MARKUP_MODEL", DEEPSEEK_MODEL)
 TTS_MARKUP_MAX_TOKENS = int(os.getenv("TTS_MARKUP_MAX_TOKENS", 160))
 
 # Video Processing Configuration
-VERTICAL_CONVERSION_METHOD = "blur_background"  # blur_background, center_crop, smart_crop
+VERTICAL_CONVERSION_METHOD = "letterbox"  # letterbox, center_crop
 TARGET_WIDTH = 1080  # Width for vertical video (9:16)
 TARGET_HEIGHT = 1920  # Height for vertical video (9:16)
 

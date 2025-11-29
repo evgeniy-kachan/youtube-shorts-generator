@@ -24,7 +24,7 @@ export const getTaskStatus = async (taskId) => {
 export const processSegments = async (
   videoId,
   segmentIds,
-  verticalMethod = 'blur_background'
+  verticalMethod = 'letterbox'
 ) => {
   const response = await api.post('/api/video/process', {
     video_id: videoId,

@@ -120,7 +120,7 @@ docker compose up -d --force-recreate backend frontend
 ## 8. Future ideas
 
 - UI для настройки субтитров (шрифт/позиция drag&drop).
-- Расширенный `smart_crop` (детекция лица/объекта с OpenCV).
+- (legacy) Расширенный `smart_crop` (детекция лица/объекта с OpenCV).
 - Личный пресет стилей (хранить в backend + UI-переключатель).
 - Поддержка SSML или другого TTS для эмоциональной озвучки.
 - Экспорт метаданных (json) для передачи в соцсети.

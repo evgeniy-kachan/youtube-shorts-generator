@@ -69,7 +69,7 @@ class VideoProcessor:
         self,
         video_path: str,
         output_path: str,
-        method: Literal["blur_background", "center_crop", "smart_crop"] = "blur_background"
+        method: Literal["letterbox", "center_crop"] = "letterbox"
     ) -> str:
         """
         Convert horizontal video to vertical format (9:16) for Reels/Shorts.
@@ -78,9 +78,8 @@ class VideoProcessor:
             video_path: Path to input video
             output_path: Path for output video
             method: Conversion method:
-                - "blur_background": Video centered with blurred background
+                - "letterbox": Video вписан без обрезки с чёрными полями
                 - "center_crop": Simple center crop
-                - "smart_crop": Crop with face detection (if available)
                 
         Returns:
             Path to converted video
@@ -108,35 +107,17 @@ class VideoProcessor:
                 )
                 return output_path
             
-            if method == "blur_background":
-                try:
-                    # Popular method: video in center with blurred background
-                    # Create blurred background
-                    background = (
-                        ffmpeg.input(video_path)
-                        .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT, force_original_aspect_ratio='increase')
-                        .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT)
-                        .filter('boxblur', luma_radius=20, chroma_radius=20)
-                    )
-                    
-                    # Create scaled video for center
-                    video = (
-                        ffmpeg.input(video_path)
-                        .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT, force_original_aspect_ratio='decrease')
-                    )
-                    
-                    # Overlay video on blurred background
-                    (
-                        ffmpeg
-                        .overlay(background, video, x='(W-w)/2', y='(H-h)/2')
-                        .output(output_path, **{'c:v': 'libx264', 'preset': 'medium', 'crf': 23})
-                        .overwrite_output()
-                        .run(quiet=True, capture_stdout=True, capture_stderr=True)
-                    )
-                except ffmpeg.Error as e:
-                    logger.warning("Blur background conversion failed, falling back to center crop")
-                    logger.warning(e.stderr.decode(errors="ignore") if e.stderr else str(e))
-                    return self.convert_to_vertical(video_path, output_path, method="center_crop")
+            if method == "letterbox":
+                # Fit video into frame without cropping, add black bars where needed
+                (
+                    ffmpeg
+                    .input(video_path)
+                    .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT, force_original_aspect_ratio='decrease')
+                    .filter('pad', self.TARGET_WIDTH, self.TARGET_HEIGHT, '(ow-iw)/2', '(oh-ih)/2', color='black')
+                    .output(output_path, **{'c:v': 'libx264', 'preset': 'medium', 'crf': 23})
+                    .overwrite_output()
+                    .run(quiet=True, capture_stdout=True, capture_stderr=True)
+                )
                 
             elif method == "center_crop":
                 # Simple center crop
@@ -149,23 +130,8 @@ class VideoProcessor:
                     .overwrite_output()
                     .run(quiet=True, capture_stdout=True, capture_stderr=True)
                 )
-                
-            elif method == "smart_crop":
-                # Smart crop with face detection (requires ffmpeg with libopencv)
-                # Fallback to center crop if face detection not available
-                try:
-                    (
-                        ffmpeg
-                        .input(video_path)
-                        .filter('scale', -1, self.TARGET_HEIGHT)
-                        .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT, x='(iw-ow)/2', y='(ih-oh)/2')
-                        .output(output_path, **{'c:v': 'libx264', 'preset': 'medium'})
-                        .overwrite_output()
-                        .run(quiet=True, capture_stdout=True, capture_stderr=True)
-                    )
-                except:
-                    logger.warning("Smart crop not available, falling back to center crop")
-                    return self.convert_to_vertical(video_path, output_path, method="center_crop")
+            else:
+                raise ValueError(f"Unsupported vertical conversion method: {method}")
             
             logger.info(f"Converted video to vertical format: {output_path}")
             return output_path
@@ -185,7 +151,7 @@ class VideoProcessor:
         output_path: str,
         style: str = "capcut",
         convert_to_vertical: bool = True,
-        vertical_method: str = "blur_background"
+        vertical_method: str = "letterbox"
     ) -> str:
         """
         Add TTS audio and stylized subtitles to video.
@@ -259,7 +225,7 @@ class VideoProcessor:
         text: str,
         start_time: float,
         end_time: float,
-        method: Literal["blur_background", "center_crop", "smart_crop"] = "blur_background"
+        method: Literal["letterbox", "center_crop"] = "letterbox"
     ) -> str:
         """
         End-to-end helper that cuts the source video, converts it to vertical format,

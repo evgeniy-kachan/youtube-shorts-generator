@@ -2,7 +2,7 @@
 API=http://localhost:8000
 FILENAME=ted2.mp4
 SEGMENT_COUNT=3              # сколько лучших сегментов брать автоматически
-VERTICAL_METHOD=blur_background
+VERTICAL_METHOD=letterbox
 
 die() { echo "$1" >&2; exit 1; }
 
