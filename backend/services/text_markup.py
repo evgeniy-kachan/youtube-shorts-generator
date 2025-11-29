@@ -4,6 +4,7 @@ import re
 
 import os
 from pathlib import Path
+import json
 
 from backend.config import (
     DEEPSEEK_MARKUP_TEMPERATURE,
@@ -33,12 +34,15 @@ class TextMarkupService:
             return text
 
         prompt = (
-            "Сделай текст более естественным для русской речи (легко перефразируй, убери повторы), "
-            "но не добавляй форматирование.\n"
-            "- НИКАКОГО Markdown, кавычек для акцентов, подчёркиваний, `...` и других специальных символов.\n"
-            "- Возвращай только отредактированный текст, без пояснений и без пустых строк.\n\n"
+            "Ты помогаешь сделать русский текст более естественным для озвучки.\n"
+            "Правила:\n"
+            "- Используй только исходный текст, не добавляй новые мысли.\n"
+            "- Легко перефразируй, убери повторы, но сохраняй смысл.\n"
+            "- НИКАКОГО форматирования: никаких Markdown, кавычек для акцентов, подчёркиваний, `...`.\n"
+            "- Ответ строго в формате JSON:\n"
+            '{"text": "<итоговый текст без кавычек и пояснений>"}\n\n'
             f"Текст: {text}\n"
-            "Обновлённый текст:"
+            "Верни JSON с итоговым текстом:"
         )
 
         try:
@@ -54,8 +58,9 @@ class TextMarkupService:
                 max_tokens=TTS_MARKUP_MAX_TOKENS,
             )
             processed = DeepSeekClient.extract_text(response_json)
-            processed = self._sanitize(processed) if processed else text
-            final_text = processed if processed else text
+            cleaned_text = self._extract_text_from_json(processed)
+            cleaned_text = self._sanitize(cleaned_text) if cleaned_text else text
+            final_text = cleaned_text if cleaned_text else text
             if os.getenv("DEBUG_SAVE_MARKUP", "0") == "1":
                 from pathlib import Path
                 debug_dir = Path(TEMP_DIR) / "debug"
@@ -70,6 +75,17 @@ class TextMarkupService:
         except Exception as exc:
             logger.warning("Text markup failed, returning original text: %s", exc)
             return text
+
+    @staticmethod
+    def _extract_text_from_json(raw_text: str) -> str:
+        try:
+            parsed = json.loads(raw_text)
+            text = parsed.get("text")
+            if isinstance(text, str):
+                return text
+        except Exception:
+            pass
+        return None
 
     @staticmethod
     def _sanitize(text: str) -> str:
