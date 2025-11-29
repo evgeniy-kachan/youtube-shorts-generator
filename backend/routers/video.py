@@ -234,8 +234,10 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
         russian_text = translations[i]
         segment['text_ru'] = russian_text
         if markup_service:
+            logger.info("Calling TextMarkup for segment %s", segment['id'])
             segment['text_ru_tts'] = markup_service.mark_text(russian_text)
         else:
+            logger.info("Markup service unavailable, using raw text for segment %s", segment['id'])
             segment['text_ru_tts'] = russian_text
     logger.info("Translation results assigned.")
 
