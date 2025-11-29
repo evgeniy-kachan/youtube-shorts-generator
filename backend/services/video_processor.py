@@ -498,7 +498,7 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{selected_style['fontname']},{selected_style['fontsize']},{selected_style['primarycolor']},&H000000FF,{selected_style['outlinecolor']},&H00000000,-1,0,0,0,100,100,0,0,{selected_style['borderstyle']},{selected_style['outline']},{selected_style['shadow']},{selected_style['alignment']},10,10,{selected_style['marginv']},1
+Style: Default,{selected_style['fontname']},{selected_style['fontsize']},{selected_style['primarycolor']},&H000000FF,{selected_style['outlinecolor']},&H00000000,0,0,0,0,100,100,0,0,{selected_style['borderstyle']},{selected_style['outline']},{selected_style['shadow']},{selected_style['alignment']},10,10,{selected_style['marginv']},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

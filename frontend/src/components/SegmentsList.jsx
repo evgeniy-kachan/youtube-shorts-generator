@@ -44,20 +44,20 @@ const SUBTITLE_POSITIONS = [
 ];
 
 const FONT_OPTIONS = [
-  { id: 'Montserrat Light', label: 'Montserrat Light', css: '"Montserrat", sans-serif' },
-  { id: 'Montserrat Medium', label: 'Montserrat Medium', css: '"Montserrat", sans-serif' },
-  { id: 'Montserrat Regular', label: 'Montserrat Regular', css: '"Montserrat", sans-serif' },
-  { id: 'Inter', label: 'Inter Regular', css: '"Inter", sans-serif' },
-  { id: 'Inter ExtraLight', label: 'Inter ExtraLight', css: '"Inter", sans-serif' },
-  { id: 'Open Sans', label: 'Open Sans Regular', css: '"Open Sans", sans-serif' },
-  { id: 'Open Sans Light', label: 'Open Sans Light', css: '"Open Sans", sans-serif' },
-  { id: 'Nunito', label: 'Nunito Regular', css: '"Nunito", sans-serif' },
-  { id: 'Nunito Light', label: 'Nunito Light', css: '"Nunito", sans-serif' },
-  { id: 'Roboto', label: 'Roboto Regular', css: '"Roboto", sans-serif' },
-  { id: 'Roboto Light', label: 'Roboto Light', css: '"Roboto", sans-serif' },
-  { id: 'Rubik', label: 'Rubik Regular', css: '"Rubik", sans-serif' },
-  { id: 'Source Sans 3', label: 'Source Sans 3 Regular', css: '"Source Sans 3", sans-serif' },
-  { id: 'Source Sans 3 Light', label: 'Source Sans 3 Light', css: '"Source Sans 3", sans-serif' },
+  { id: 'Montserrat Light', label: 'Montserrat Light', css: '"Montserrat", sans-serif', weight: 300 },
+  { id: 'Montserrat Medium', label: 'Montserrat Medium', css: '"Montserrat", sans-serif', weight: 500 },
+  { id: 'Montserrat Regular', label: 'Montserrat Regular', css: '"Montserrat", sans-serif', weight: 400 },
+  { id: 'Inter', label: 'Inter Regular', css: '"Inter", sans-serif', weight: 400 },
+  { id: 'Inter ExtraLight', label: 'Inter ExtraLight', css: '"Inter", sans-serif', weight: 200 },
+  { id: 'Open Sans', label: 'Open Sans Regular', css: '"Open Sans", sans-serif', weight: 400 },
+  { id: 'Open Sans Light', label: 'Open Sans Light', css: '"Open Sans", sans-serif', weight: 300 },
+  { id: 'Nunito', label: 'Nunito Regular', css: '"Nunito", sans-serif', weight: 400 },
+  { id: 'Nunito Light', label: 'Nunito Light', css: '"Nunito", sans-serif', weight: 300 },
+  { id: 'Roboto', label: 'Roboto Regular', css: '"Roboto", sans-serif', weight: 400 },
+  { id: 'Roboto Light', label: 'Roboto Light', css: '"Roboto", sans-serif', weight: 300 },
+  { id: 'Rubik', label: 'Rubik Regular', css: '"Rubik", sans-serif', weight: 400 },
+  { id: 'Source Sans 3', label: 'Source Sans 3 Regular', css: '"Source Sans 3", sans-serif', weight: 400 },
+  { id: 'Source Sans 3 Light', label: 'Source Sans 3 Light', css: '"Source Sans 3", sans-serif', weight: 300 },
 ];
 
 const FONT_SIZE_OPTIONS = [72, 82, 92, 102];
@@ -67,6 +67,7 @@ const SubtitlePreview = ({
   positionId,
   fontFamily,
   fontSize,
+  fontWeight,
   animation,
   thumbnailUrl,
 }) => {
@@ -119,6 +120,7 @@ const SubtitlePreview = ({
             fontFamily: fontFamily,
             fontSize: `${previewFontSize}px`,
             lineHeight: 1.2,
+            fontWeight,
             whiteSpace: 'nowrap',
             ...position,
           }}
@@ -467,6 +469,9 @@ const SegmentsList = ({
               fontFamily={
                 FONT_OPTIONS.find((opt) => opt.id === subtitleFont)?.css ||
                 '"Montserrat", sans-serif'
+              }
+              fontWeight={
+                FONT_OPTIONS.find((opt) => opt.id === subtitleFont)?.weight || 400
               }
               fontSize={subtitleFontSize}
               animation={subtitleAnimation}
