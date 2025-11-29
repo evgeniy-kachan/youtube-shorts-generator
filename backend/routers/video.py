@@ -1,11 +1,13 @@
 import os
-from pathlib import Path
 import uuid
 import logging
+import subprocess
+from pathlib import Path
+from typing import List, Optional
+
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import List, Optional
 
 from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
@@ -153,6 +155,40 @@ def _filter_overlapping_segments(segments: list, iou_threshold: float = 0.7) -> 
     logger.info(f"Filtered {len(segments)} segments down to {len(kept_segments)} non-overlapping segments.")
     return kept_segments
 
+def _generate_thumbnail(video_path: str, video_id: str, timestamp: float = 1.0) -> Optional[str]:
+    """Generate a single thumbnail frame for preview."""
+    thumbnails_dir = Path(config.TEMP_DIR) / "thumbnails"
+    thumbnails_dir.mkdir(parents=True, exist_ok=True)
+    thumbnail_path = thumbnails_dir / f"{video_id}.jpg"
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(max(timestamp, 0.0)),
+        "-i",
+        video_path,
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        str(thumbnail_path),
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, check=False)
+        if result.returncode != 0:
+            logger.warning(
+                "Thumbnail generation failed for %s: %s",
+                video_id,
+                result.stderr.decode(errors="ignore"),
+            )
+            return None
+        return str(thumbnail_path)
+    except Exception as exc:
+        logger.warning("Thumbnail generation error for %s: %s", video_id, exc)
+        return None
+
 def _analyze_video_task(task_id: str, youtube_url: str):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Downloading video..."}
@@ -192,6 +228,9 @@ def _analyze_local_video_task(task_id: str, filename: str):
 def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
     """Core analysis logic, shared by YouTube and local video."""
     
+    thumbnail_path = _generate_thumbnail(video_path, video_id)
+    thumbnail_url = f"/api/video/thumbnail/{video_id}" if thumbnail_path else None
+
     # 2. Transcribe audio
     tasks[task_id] = {"status": "processing", "progress": 0.2, "message": "Transcribing audio..."}
     transcriber = get_service("transcription")
@@ -249,7 +288,8 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
     analysis_result = {
         'video_id': video_id,
         'video_path': video_path,
-        'segments': filtered_highlights
+        'segments': filtered_highlights,
+        'thumbnail_path': thumbnail_path,
     }
     analysis_results_cache[video_id] = analysis_result
     logger.info("Analysis results cached.")
@@ -257,7 +297,8 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
     # Prepare response object
     response_result = {
         'video_id': video_id,
-        'segments': filtered_highlights
+        'segments': filtered_highlights,
+        'thumbnail_url': thumbnail_url,
     }
     
     logger.info("Response object created. Updating task to completed.")
@@ -391,6 +432,18 @@ async def download_segment(video_id: str, segment_id: str):
         path=file_path,
         media_type="video/mp4",
         filename=file_path.name
+    )
+
+@router.get("/thumbnail/{video_id}")
+async def get_thumbnail(video_id: str):
+    """Return saved thumbnail for preview."""
+    thumbnail_path = Path(config.TEMP_DIR) / "thumbnails" / f"{video_id}.jpg"
+    if not thumbnail_path.exists():
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+    return FileResponse(
+        path=thumbnail_path,
+        media_type="image/jpeg",
+        filename=thumbnail_path.name,
     )
 
 @router.get("/task/{task_id}", response_model=TaskStatus)

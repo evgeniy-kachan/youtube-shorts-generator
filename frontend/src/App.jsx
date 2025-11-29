@@ -214,6 +214,7 @@ function App() {
             videoTitle={videoData?.title}
             onProcess={handleProcess}
             loading={stage === 'processing'}
+            videoThumbnail={videoData?.thumbnail_url}
           />
         )}
 

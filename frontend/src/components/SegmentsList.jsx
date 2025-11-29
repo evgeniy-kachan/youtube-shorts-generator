@@ -46,17 +46,63 @@ const SUBTITLE_POSITIONS = [
 const FONT_OPTIONS = [
   { id: 'Montserrat Light', label: 'Montserrat Light' },
   { id: 'Montserrat Medium', label: 'Montserrat Medium' },
-  { id: 'Inter Regular', label: 'Inter Regular' },
-  { id: 'Open Sans Regular', label: 'Open Sans Regular' },
+  { id: 'Montserrat Regular', label: 'Montserrat Regular' },
+  { id: 'Inter', label: 'Inter Regular' },
+  { id: 'Inter ExtraLight', label: 'Inter ExtraLight' },
+  { id: 'Open Sans', label: 'Open Sans Regular' },
+  { id: 'Open Sans Light', label: 'Open Sans Light' },
+  { id: 'Nunito', label: 'Nunito Regular' },
+  { id: 'Nunito Light', label: 'Nunito Light' },
+  { id: 'Roboto', label: 'Roboto Regular' },
+  { id: 'Roboto Light', label: 'Roboto Light' },
+  { id: 'Rubik', label: 'Rubik Regular' },
+  { id: 'Source Sans 3', label: 'Source Sans 3 Regular' },
+  { id: 'Source Sans 3 Light', label: 'Source Sans 3 Light' },
 ];
 
 const FONT_SIZE_OPTIONS = [72, 82, 92, 102];
 
-const SubtitlePreview = ({ text, positionId, font, fontSize, animation }) => {
+const SubtitlePreview = ({
+  text,
+  positionId,
+  font,
+  fontSize,
+  animation,
+  thumbnailUrl,
+}) => {
   const position =
     SUBTITLE_POSITIONS.find((preset) => preset.id === positionId)?.previewStyle ||
     SUBTITLE_POSITIONS[0].previewStyle;
   const previewFontSize = Math.round(fontSize * 0.6);
+  const previewLines = useMemo(() => {
+    const words = text.split(/\s+/).filter(Boolean);
+    if (words.length === 0) return ['Текст субтитров'];
+    const chunks = [];
+    let current = [];
+    words.forEach((word) => {
+      current.push(word);
+      if (current.length >= 5) {
+        chunks.push(current.join(' '));
+        current = [];
+      }
+    });
+    if (current.length) {
+      chunks.push(current.join(' '));
+    }
+    return chunks.slice(0, 2);
+  }, [text]);
+
+  const containerClass = thumbnailUrl
+    ? 'relative mx-auto w-full max-w-[180px] pb-[177%] rounded-xl overflow-hidden bg-black'
+    : 'relative mx-auto w-full max-w-[180px] pb-[177%] rounded-xl overflow-hidden bg-gradient-to-br from-gray-800 via-gray-700 to-gray-900';
+
+  const backgroundStyle = thumbnailUrl
+    ? {
+        backgroundImage: `url(${thumbnailUrl})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      }
+    : undefined;
 
   return (
     <div className="bg-gray-50 border rounded-2xl shadow-inner p-4">
@@ -64,7 +110,7 @@ const SubtitlePreview = ({ text, positionId, font, fontSize, animation }) => {
         <p className="text-sm font-semibold text-gray-800">Превью макета</p>
         <span className="text-xs text-gray-500">9:16</span>
       </div>
-      <div className="relative w-full pb-[177%] rounded-xl overflow-hidden bg-gradient-to-br from-gray-800 via-gray-700 to-gray-900">
+      <div className={containerClass} style={backgroundStyle}>
         <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.35),_transparent_55%)]" />
         <div
           className={`absolute max-w-[80%] bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl text-center text-white font-semibold tracking-wide subtitle-preview-card preview-anim-${animation}`}
@@ -75,7 +121,11 @@ const SubtitlePreview = ({ text, positionId, font, fontSize, animation }) => {
             ...position,
           }}
         >
-          {text}
+          {previewLines.map((line, idx) => (
+            <span key={idx} className="block leading-tight">
+              {line}
+            </span>
+          ))}
         </div>
       </div>
       <p className="text-xs text-gray-500 mt-3">
@@ -85,7 +135,13 @@ const SubtitlePreview = ({ text, positionId, font, fontSize, animation }) => {
   );
 };
 
-const SegmentsList = ({ segments, videoTitle, onProcess, loading }) => {
+const SegmentsList = ({
+  segments,
+  videoTitle,
+  onProcess,
+  loading,
+  videoThumbnail,
+}) => {
   const [selectedSegments, setSelectedSegments] = useState([]);
   const [expandedSegments, setExpandedSegments] = useState([]);
   const [verticalMethod, setVerticalMethod] = useState('letterbox');
@@ -405,6 +461,7 @@ const SegmentsList = ({ segments, videoTitle, onProcess, loading }) => {
               font={subtitleFont}
               fontSize={subtitleFontSize}
               animation={subtitleAnimation}
+              thumbnailUrl={videoThumbnail}
             />
           </div>
 
