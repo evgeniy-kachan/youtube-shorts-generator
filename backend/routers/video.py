@@ -36,6 +36,10 @@ class ProcessRequest(BaseModel):
     video_id: str
     segment_ids: List[str]
     vertical_method: str = "letterbox"
+    subtitle_animation: str = "bounce"
+    subtitle_position: str = "mid_low"
+    subtitle_font: str = "Montserrat Light"
+    subtitle_font_size: int = 86
 
 class TaskStatus(BaseModel):
     task_id: str
@@ -264,7 +268,16 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
         "result": response_result
     }
 
-def _process_segments_task(task_id: str, video_id: str, segment_ids: list, vertical_method: str = "letterbox"):
+def _process_segments_task(
+    task_id: str,
+    video_id: str,
+    segment_ids: list,
+    vertical_method: str = "letterbox",
+    subtitle_animation: str = "bounce",
+    subtitle_position: str = "mid_low",
+    subtitle_font: str = "Montserrat Light",
+    subtitle_font_size: int = 86,
+):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Preparing to render..."}
         
@@ -306,7 +319,11 @@ def _process_segments_task(task_id: str, video_id: str, segment_ids: list, verti
                 text=segment['text_ru'],
                 start_time=segment['start_time'],
                 end_time=segment['end_time'],
-                method=vertical_method
+                method=vertical_method,
+                subtitle_animation=subtitle_animation,
+                subtitle_position=subtitle_position,
+                subtitle_font=subtitle_font,
+                subtitle_font_size=subtitle_font_size,
             )
             renderer.save_video(final_clip, output_path)
             
@@ -397,7 +414,11 @@ async def process_segments(request: ProcessRequest, background_tasks: Background
         task_id,
         request.video_id,
         request.segment_ids,
-        request.vertical_method
+        request.vertical_method,
+        request.subtitle_animation,
+        request.subtitle_position,
+        request.subtitle_font,
+        request.subtitle_font_size,
     )
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Processing task queued")
 

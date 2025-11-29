@@ -73,7 +73,11 @@ curl -X POST http://SERVER_IP:8000/api/video/process \
   -d '{
     "video_id": "my_video",
     "segment_ids": ["segment_0", "segment_1"],
-    "vertical_method": "letterbox"
+    "vertical_method": "letterbox",
+    "subtitle_animation": "bounce",
+    "subtitle_position": "mid_low",
+    "subtitle_font": "Montserrat Light",
+    "subtitle_font_size": 86
   }'
 
 # 4. Снова ждать completion нового task_id
@@ -125,7 +129,11 @@ segment_ids = [s['id'] for s in top_segments]
 response = requests.post(f"{BASE_URL}/api/video/process", json={
     "video_id": video_id,
     "segment_ids": segment_ids,
-    "vertical_method": "letterbox"
+    "vertical_method": "letterbox",
+    "subtitle_animation": "bounce",
+    "subtitle_position": "mid_low",
+    "subtitle_font": "Montserrat Light",
+    "subtitle_font_size": 86
 })
 process_task_id = response.json()["task_id"]
 

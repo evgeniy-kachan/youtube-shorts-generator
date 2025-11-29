@@ -24,12 +24,20 @@ export const getTaskStatus = async (taskId) => {
 export const processSegments = async (
   videoId,
   segmentIds,
-  verticalMethod = 'letterbox'
+  verticalMethod = 'letterbox',
+  subtitleAnimation = 'bounce',
+  subtitlePosition = 'mid_low',
+  subtitleFont = 'Montserrat Light',
+  subtitleFontSize = 86
 ) => {
   const response = await api.post('/api/video/process', {
     video_id: videoId,
     segment_ids: segmentIds,
     vertical_method: verticalMethod,
+    subtitle_animation: subtitleAnimation,
+    subtitle_position: subtitlePosition,
+    subtitle_font: subtitleFont,
+    subtitle_font_size: subtitleFontSize,
   });
   return response.data;
 };

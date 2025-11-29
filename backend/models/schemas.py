@@ -43,6 +43,26 @@ class ProcessRequest(BaseModel):
         default="letterbox",
         description="Method for vertical conversion: letterbox, center_crop"
     )
+    subtitle_animation: str = Field(
+        default="bounce",
+        description="Subtitle animation preset: bounce, slide, spark"
+    )
+    subtitle_position: str = Field(
+        default="mid_low",
+        description="Subtitle position preset identifier"
+    )
+    subtitle_font: str = Field(
+        default="Montserrat Light",
+        description="Font family name for subtitles"
+    )
+    subtitle_font_size: int = Field(
+        default=86,
+        description="Base subtitle font size"
+    )
+    subtitle_animation: str = Field(
+        default="bounce",
+        description="Subtitle animation preset: bounce, slide, spark"
+    )
     
 
 class ProcessedSegment(BaseModel):

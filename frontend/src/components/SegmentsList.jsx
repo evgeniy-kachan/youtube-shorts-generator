@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 const CRITERIA_LABELS = {
   emotional_intensity: 'Эмоциональность',
@@ -10,10 +10,89 @@ const CRITERIA_LABELS = {
   clip_worthiness: 'Годится для клипа',
 };
 
+const SUBTITLE_POSITIONS = [
+  {
+    id: 'mid_low',
+    label: 'Чуть ниже центра',
+    description: 'Сдвигаем текст чуть ниже центральной линии',
+    previewStyle: { top: '48%', left: '50%', transform: 'translate(-50%, -50%)' },
+  },
+  {
+    id: 'lower_center',
+    label: 'Нижняя треть',
+    description: 'Классическая позиция ближе к нижней трети',
+    previewStyle: { top: '58%', left: '50%', transform: 'translate(-50%, -50%)' },
+  },
+  {
+    id: 'lower_left',
+    label: 'Левее центра',
+    description: 'Субтитры смещены влево (герой справа)',
+    previewStyle: { top: '63%', left: '30%' },
+  },
+  {
+    id: 'lower_right',
+    label: 'Правее центра',
+    description: 'Смещаем блок вправо',
+    previewStyle: { top: '63%', left: '70%' },
+  },
+  {
+    id: 'bottom_center',
+    label: 'Самый низ',
+    description: 'Максимально низкое размещение',
+    previewStyle: { top: '75%', left: '50%', transform: 'translate(-50%, -50%)' },
+  },
+];
+
+const FONT_OPTIONS = [
+  { id: 'Montserrat Light', label: 'Montserrat Light' },
+  { id: 'Montserrat Medium', label: 'Montserrat Medium' },
+  { id: 'Inter Regular', label: 'Inter Regular' },
+  { id: 'Open Sans Regular', label: 'Open Sans Regular' },
+];
+
+const FONT_SIZE_OPTIONS = [72, 82, 92, 102];
+
+const SubtitlePreview = ({ text, positionId, font, fontSize, animation }) => {
+  const position =
+    SUBTITLE_POSITIONS.find((preset) => preset.id === positionId)?.previewStyle ||
+    SUBTITLE_POSITIONS[0].previewStyle;
+  const previewFontSize = Math.round(fontSize * 0.6);
+
+  return (
+    <div className="bg-gray-50 border rounded-2xl shadow-inner p-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-sm font-semibold text-gray-800">Превью макета</p>
+        <span className="text-xs text-gray-500">9:16</span>
+      </div>
+      <div className="relative w-full pb-[177%] rounded-xl overflow-hidden bg-gradient-to-br from-gray-800 via-gray-700 to-gray-900">
+        <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.35),_transparent_55%)]" />
+        <div
+          className={`absolute max-w-[80%] bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl text-center text-white font-semibold tracking-wide subtitle-preview-card preview-anim-${animation}`}
+          style={{
+            fontFamily: font,
+            fontSize: `${previewFontSize}px`,
+            lineHeight: 1.2,
+            ...position,
+          }}
+        >
+          {text}
+        </div>
+      </div>
+      <p className="text-xs text-gray-500 mt-3">
+        Макет помогает оценить расположение текста и выбранный стиль до рендера.
+      </p>
+    </div>
+  );
+};
+
 const SegmentsList = ({ segments, videoTitle, onProcess, loading }) => {
   const [selectedSegments, setSelectedSegments] = useState([]);
   const [expandedSegments, setExpandedSegments] = useState([]);
   const [verticalMethod, setVerticalMethod] = useState('letterbox');
+  const [subtitleAnimation, setSubtitleAnimation] = useState('bounce');
+  const [subtitlePosition, setSubtitlePosition] = useState('mid_low');
+  const [subtitleFont, setSubtitleFont] = useState('Montserrat Light');
+  const [subtitleFontSize, setSubtitleFontSize] = useState(86);
 
   const toggleSegment = (segmentId) => {
     setSelectedSegments((prev) =>
@@ -41,9 +120,24 @@ const SegmentsList = ({ segments, videoTitle, onProcess, loading }) => {
 
   const handleProcess = () => {
     if (selectedSegments.length > 0) {
-      onProcess(selectedSegments, verticalMethod);
+      onProcess(
+        selectedSegments,
+        verticalMethod,
+        subtitleAnimation,
+        subtitlePosition,
+        subtitleFont,
+        subtitleFontSize
+      );
     }
   };
+
+  const previewText = useMemo(() => {
+    if (!segments || segments.length === 0) {
+      return 'Так будут выглядеть субтитры';
+    }
+    const words = segments[0].text_ru?.split(' ') ?? [];
+    return words.slice(0, 12).join(' ') || 'Так будут выглядеть субтитры';
+  }, [segments]);
 
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -167,33 +261,151 @@ const SegmentsList = ({ segments, videoTitle, onProcess, loading }) => {
           })}
         </div>
 
-        <div className="mt-6 pt-6 border-t space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              📱 Формат для Reels/Shorts (9:16):
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {[
-                { id: 'letterbox', label: '⚫️ Чёрные поля', description: 'Вписываем ролик без обрезки, добавляем поля сверху/снизу' },
-                { id: 'center_crop', label: '✂️ Центр-кроп', description: 'Обрезаем центр под 9:16' },
-              ].map((method) => (
-                <button
-                  key={method.id}
-                  type="button"
-                  disabled={loading}
-                  onClick={() => setVerticalMethod(method.id)}
-                  className={`p-4 border rounded-xl text-left transition ${
-                    verticalMethod === method.id ? 'border-purple-600 bg-purple-50' : 'hover:border-purple-500'
-                  } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <div className="font-semibold text-gray-900">{method.label}</div>
-                  <div className="text-sm text-gray-600">{method.description}</div>
-                </button>
-              ))}
+        <div className="mt-6 pt-6 border-t space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  📱 Формат для Reels/Shorts (9:16):
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    { id: 'letterbox', label: '⚫️ Чёрные поля', description: 'Вписываем ролик без обрезки, добавляем поля сверху/снизу' },
+                    { id: 'center_crop', label: '✂️ Центр-кроп', description: 'Обрезаем центр под 9:16' },
+                  ].map((method) => (
+                    <button
+                      key={method.id}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => setVerticalMethod(method.id)}
+                      className={`p-4 border rounded-xl text-left transition ${
+                        verticalMethod === method.id ? 'border-purple-600 bg-purple-50' : 'hover:border-purple-500'
+                      } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="font-semibold text-gray-900">{method.label}</div>
+                      <div className="text-sm text-gray-600">{method.description}</div>
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  Видео будет автоматически переведено в вертикальный формат 1080×1920
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  ✨ Анимация субтитров:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    {
+                      id: 'bounce',
+                      label: '🔊 Bounce',
+                      description: 'Пружинящее появление слов, как в CapCut',
+                    },
+                    {
+                      id: 'slide',
+                      label: '⬆️ Slide-up',
+                      description: 'Плавный выезд снизу + мягкое проявление',
+                    },
+                    {
+                      id: 'spark',
+                      label: '✨ Spark',
+                      description: 'Лёгкое свечение каждого слова',
+                    },
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => setSubtitleAnimation(option.id)}
+                      className={`p-4 border rounded-xl text-left transition ${
+                        subtitleAnimation === option.id
+                          ? 'border-purple-600 bg-purple-50'
+                          : 'hover-border-purple-500'
+                      } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="font-semibold text-gray-900">{option.label}</div>
+                      <div className="text-sm text-gray-600">{option.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  📍 Позиция субтитров:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {SUBTITLE_POSITIONS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => setSubtitlePosition(preset.id)}
+                      className={`p-4 border rounded-xl text-left transition ${
+                        subtitlePosition === preset.id
+                          ? 'border-purple-600 bg-purple-50'
+                          : 'hover-border-purple-500'
+                      } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="font-semibold text-gray-900">{preset.label}</div>
+                      <div className="text-sm text-gray-600">{preset.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    🅰️ Шрифт:
+                  </label>
+                  <select
+                    className="input-field"
+                    value={subtitleFont}
+                    disabled={loading}
+                    onChange={(e) => setSubtitleFont(e.target.value)}
+                  >
+                    {FONT_OPTIONS.map((font) => (
+                      <option key={font.id} value={font.id}>
+                        {font.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    🔠 Размер:
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {FONT_SIZE_OPTIONS.map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        disabled={loading}
+                        onClick={() => setSubtitleFontSize(size)}
+                        className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${
+                          subtitleFontSize === size
+                            ? 'border-purple-600 bg-purple-50 text-purple-700'
+                            : 'border-gray-200 hover:border-purple-500 text-gray-700'
+                        } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        {size}px
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
-            <p className="mt-1 text-xs text-gray-500">
-              Видео будет автоматически переведено в вертикальный формат 1080×1920
-            </p>
+
+            <SubtitlePreview
+              text={previewText}
+              positionId={subtitlePosition}
+              font={subtitleFont}
+              fontSize={subtitleFontSize}
+              animation={subtitleAnimation}
+            />
           </div>
 
           <div className="flex items-center justify-between">

@@ -94,7 +94,8 @@ PROJECT_DOC.md       текущий документ
 
 ## 6. Subtitles & TTS
 
-- Субтитры: `VideoProcessor._create_stylized_subtitles` + CapCut стиль (`Montserrat`, fontsize 86, позиция `\pos(540,1250)`, мягкая тень).
+- Субтитры: `VideoProcessor._create_stylized_subtitles` + CapCut стиль (по умолчанию `Montserrat Light`, fontsize 86). Через UI теперь можно выбрать анимацию (bounce/slide/spark), один из 5 пресетов позиционирования (все ниже центра), шрифт и его размер — параметры прокидываются в backend через `subtitle_*` поля.
+- Анимации субтитров (параметр `animation`): `bounce` (пружинящий поп), `slide` (плавный выезд снизу), `spark` (мягкое свечение).
 - Анимация по словам: `\t` + fade, каждое слово появляется независимо, строка не подпрыгивает.
 - TTS text prep:
   - DeepSeek аккуратно перефразирует русский текст для плавной озвучки.

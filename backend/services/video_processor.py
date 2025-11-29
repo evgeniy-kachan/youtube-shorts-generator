@@ -16,6 +16,13 @@ class VideoProcessor:
     # Target dimensions for Reels/Shorts (9:16 aspect ratio)
     TARGET_WIDTH = 1080
     TARGET_HEIGHT = 1920
+    SUBTITLE_POSITIONS = {
+        "mid_low": {"x": 540, "y": 1050, "an": 8, "marginv": 480},
+        "lower_center": {"x": 540, "y": 1250, "an": 8, "marginv": 420},
+        "lower_left": {"x": 360, "y": 1350, "an": 7, "marginv": 380},
+        "lower_right": {"x": 720, "y": 1350, "an": 9, "marginv": 380},
+        "bottom_center": {"x": 540, "y": 1520, "an": 2, "marginv": 260},
+    }
     
     def __init__(self, output_dir: Path):
         self.output_dir = output_dir
@@ -120,12 +127,28 @@ class VideoProcessor:
                 )
                 
             elif method == "center_crop":
-                # Simple center crop
+                target_ratio = self.TARGET_WIDTH / self.TARGET_HEIGHT
+                input_ratio = input_width / input_height if input_height else target_ratio
+
+                if input_ratio >= target_ratio:
+                    # Видео шире 9:16 → вписываем по высоте и обрезаем по бокам
+                    pipeline = (
+                        ffmpeg
+                        .input(video_path)
+                        .filter('scale', -1, self.TARGET_HEIGHT)
+                        .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT)
+                    )
+                else:
+                    # Видео уже/ближе к вертикальному → вписываем по ширине и обрезаем верх/низ
+                    pipeline = (
+                        ffmpeg
+                        .input(video_path)
+                        .filter('scale', self.TARGET_WIDTH, -1)
+                        .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT)
+                    )
+
                 (
-                    ffmpeg
-                    .input(video_path)
-                    .filter('scale', -1, self.TARGET_HEIGHT)
-                    .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT)
+                    pipeline
                     .output(output_path, **{'c:v': 'libx264', 'preset': 'medium'})
                     .overwrite_output()
                     .run(quiet=True, capture_stdout=True, capture_stderr=True)
@@ -150,6 +173,10 @@ class VideoProcessor:
         subtitles: List[Dict],
         output_path: str,
         style: str = "capcut",
+        animation: str = "bounce",
+        font_name: str = "Montserrat Light",
+        font_size: int = 86,
+        subtitle_position: str = "mid_low",
         convert_to_vertical: bool = True,
         vertical_method: str = "letterbox"
     ) -> str:
@@ -161,7 +188,8 @@ class VideoProcessor:
             audio_path: Path to TTS audio file
             subtitles: List of subtitle entries with word-level timing
             output_path: Path for output video
-            style: Subtitle style ("tiktok", "instagram", "youtube")
+            style: Subtitle style ("capcut", "tiktok", "instagram", "youtube")
+            animation: Animation preset for subtitles ("bounce", "slide", "spark")
             convert_to_vertical: Whether to convert to vertical format (9:16)
             vertical_method: Method for vertical conversion
             
@@ -183,7 +211,15 @@ class VideoProcessor:
             
             # Step 2: Create ASS subtitle file with styling
             subtitle_path = Path(output_path).with_suffix('.ass')
-            self._create_stylized_subtitles(subtitles, subtitle_path, style)
+            self._create_stylized_subtitles(
+                subtitles,
+                subtitle_path,
+                style,
+                animation,
+                font_name,
+                font_size,
+                subtitle_position,
+            )
             
             # Step 3: Process video with ffmpeg
             # Replace audio with TTS and burn in stylized subtitles
@@ -225,7 +261,12 @@ class VideoProcessor:
         text: str,
         start_time: float,
         end_time: float,
-        method: Literal["letterbox", "center_crop"] = "letterbox"
+        method: Literal["letterbox", "center_crop"] = "letterbox",
+        subtitle_style: str = "capcut",
+        subtitle_animation: str = "bounce",
+        subtitle_position: str = "mid_low",
+        subtitle_font: str = "Montserrat Light",
+        subtitle_font_size: int = 86,
     ) -> str:
         """
         End-to-end helper that cuts the source video, converts it to vertical format,
@@ -249,11 +290,16 @@ class VideoProcessor:
             subtitles = self._generate_basic_subtitles(text=text, duration=duration)
 
             # Step 3: add audio + subtitles + vertical conversion
-            processed_path = self.add_audio_and_subtitles(
+                    processed_path = self.add_audio_and_subtitles(
                 video_path=cut_path,
                 audio_path=audio_path,
                 subtitles=subtitles,
                 output_path=str(temp_output),
+                style=subtitle_style,
+                animation=subtitle_animation,
+                        font_name=subtitle_font,
+                        font_size=subtitle_font_size,
+                        subtitle_position=subtitle_position,
                 convert_to_vertical=True,
                 vertical_method=method
             )
@@ -359,7 +405,11 @@ class VideoProcessor:
         self,
         subtitles: List[Dict],
         output_path: Path,
-        style: str = "tiktok"
+        style: str = "capcut",
+        animation: str = "bounce",
+        font_name: str = "Montserrat Light",
+        font_size: int = 86,
+        subtitle_position: str = "mid_low",
     ):
         """
         Create ASS subtitle file with TikTok/Instagram style.
@@ -380,52 +430,63 @@ class VideoProcessor:
         # ASS subtitle styles
         styles = {
             'capcut': {
-                'fontname': 'Montserrat',
-                'fontsize': 86,
+                'fontname': font_name,
+                'fontsize': font_size,
                 'primarycolor': '&H00FFFFFF',
-                'outlinecolor': '&H00FFFFFF',
+                'outlinecolor': '&H00000000',
                 'borderstyle': 1,
                 'outline': 0,
-                'shadow': 4,
-                'alignment': 8,  # centered upper area
-                'marginv': 450,  # slightly lower
+                'shadow': 8,
+                'alignment': 8,
+                'marginv': 450,
+                'animation': 'bounce',
             },
             'tiktok': {
-                'fontname': 'Arial',
-                'fontsize': 56,
-                'primarycolor': '&H00FFFFFF',  # White fill
-                'outlinecolor': '&H00FFFFFF',  # Same as fill
+                'fontname': font_name,
+                'fontsize': font_size,
+                'primarycolor': '&H00FFFFFF',
+                'outlinecolor': '&H00000000',
                 'borderstyle': 1,
                 'outline': 0,
-                'shadow': 3,
-                'alignment': 2,  # Bottom center
+                'shadow': 6,
+                'alignment': 2,
                 'marginv': 90,
+                'animation': 'slide',
             },
             'instagram': {
-                'fontname': 'Arial',
-                'fontsize': 48,
+                'fontname': font_name,
+                'fontsize': font_size,
                 'primarycolor': '&H00FFFFFF',
-                'outlinecolor': '&H00FFFFFF',
+                'outlinecolor': '&H00000000',
                 'borderstyle': 1,
                 'outline': 0,
-                'shadow': 3,
+                'shadow': 5,
                 'alignment': 2,
                 'marginv': 80,
+                'animation': 'spark',
             },
             'youtube': {
-                'fontname': 'Arial',
-                'fontsize': 42,
+                'fontname': font_name,
+                'fontsize': font_size,
                 'primarycolor': '&H00FFFFFF',
-                'outlinecolor': '&H00FFFFFF',
+                'outlinecolor': '&H00000000',
                 'borderstyle': 1,
                 'outline': 0,
-                'shadow': 3,
+                'shadow': 5,
                 'alignment': 2,
                 'marginv': 70,
+                'animation': 'bounce',
             }
         }
         
-        selected_style = styles.get(style, styles['tiktok'])
+        selected_style = {**styles.get(style, styles['capcut'])}
+        animation_style = animation or selected_style.get('animation', 'bounce')
+        position_config = self.SUBTITLE_POSITIONS.get(
+            subtitle_position,
+            self.SUBTITLE_POSITIONS['mid_low'],
+        )
+        selected_style['alignment'] = position_config.get('an', selected_style['alignment'])
+        selected_style['marginv'] = position_config.get('marginv', selected_style['marginv'])
         
         # Create ASS file
         ass_content = f"""[Script Info]
@@ -443,19 +504,15 @@ Style: Default,{selected_style['fontname']},{selected_style['fontsize']},{select
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         
-        # Add subtitle events
         for subtitle in subtitles:
             start_time = self._format_timestamp(subtitle['start'])
             end_time = self._format_timestamp(subtitle['end'])
-            text = subtitle['text'].replace('\n', '\\N')
-            
-            # Add word-by-word highlighting if available
-            if 'words' in subtitle and subtitle['words']:
-                if style == 'capcut':
-                    text = self._build_capcut_line(subtitle)
-                else:
-                    text = self._add_word_effects(subtitle['words'])
-            
+
+            if style == 'capcut':
+                text = self._build_capcut_line(subtitle, animation_style, position_config)
+            else:
+                text = self._build_chunk_line(subtitle, animation_style, position_config)
+
             ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}\n"
         
         # Write to file
@@ -469,48 +526,36 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         centiseconds = int((seconds % 1) * 100)
         return f"{hours}:{minutes:02d}:{secs:02d}.{centiseconds:02d}"
     
-    def _add_word_effects(self, words: List[Dict]) -> str:
-        """
-        Add CapCut-like pop animation for each subtitle chunk.
-        Words are grouped per chunk upstream; we animate the whole chunk so it
-        appears slightly below the center with a bounce + fade in.
-        """
+    def _build_chunk_line(self, subtitle: Dict, animation: str, position_conf: Dict) -> str:
+        """Render text chunk with a chosen animation preset."""
+        words = subtitle.get('text', '').split()
+        if not words and subtitle.get('words'):
+            words = [w.get('word', '') for w in subtitle['words']]
+
         if not words:
-            return ""
+            return self._get_base_animation_tag(animation, position_conf)
 
-        tokens = [w['word'] for w in words]
-
-        # break into two lines for readability if chunk is long
-        if len(tokens) >= 4:
-            split_index = len(tokens) // 2
-            text = " ".join(tokens[:split_index]) + r"\N" + " ".join(tokens[split_index:])
+        if len(words) >= 6:
+            split_index = len(words) // 2
+            text = " ".join(words[:split_index]) + r"\N" + " ".join(words[split_index:])
         else:
-            text = " ".join(tokens)
+            text = " ".join(words)
 
-        # CapCut style animation: fade + scale bounce
-        effect_tag = (
-            r"{\an8\pos(540,1250)\fad(80,40)"
-            r"\alpha&HFF"
-            r"\t(0,160,\alpha&H00\fscx120\fscy120)"
-            r"\t(160,320,\fscx100\fscy100)}"
-        )
+        return f"{self._get_base_animation_tag(animation, position_conf)}{text}"
 
-        return f"{effect_tag}{text}"
-
-    def _build_capcut_line(self, subtitle: Dict) -> str:
-        """Animate each word sequentially so it 'pops' in and stays visible."""
+    def _build_capcut_line(self, subtitle: Dict, animation: str, position_conf: Dict) -> str:
+        """Animate each word sequentially according to animation preset."""
         words = subtitle.get('words', [])
         if not words:
-            return ""
+            return self._build_chunk_line(subtitle, animation, position_conf)
 
         chunk_start = subtitle.get('start', 0.0)
         chunk_end = subtitle.get('end', chunk_start)
         chunk_duration = max(0.01, chunk_end - chunk_start)
 
-        base_tag = r"{\an8\pos(540,1250)\fad(80,40)}"
-        rendered = [base_tag]
+        rendered = [self._get_base_animation_tag(animation, position_conf)]
+        tokens: List[str] = []
 
-        tokens = []
         for idx, word in enumerate(words):
             rel_start = max(0.0, (word.get('start', chunk_start) - chunk_start) * 1000)
             rel_end = max(rel_start + 200.0, (word.get('end', chunk_start) - chunk_start) * 1000)
@@ -518,11 +563,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             highlight_mid = int(min(rel_start + 160.0, chunk_duration * 1000))
             highlight_end = int(min(rel_end, chunk_duration * 1000))
 
-            tag = (
-                r"{\alpha&HFF"
-                rf"\t({highlight_start},{highlight_mid},\alpha&H00\fscx118\fscy118)"
-                rf"\t({highlight_mid},{highlight_end},\fscx100\fscy100)}}"
-            )
+            tag = self._get_word_animation_tag(animation, highlight_start, highlight_mid, highlight_end)
 
             word_text = word.get('word', '')
             if idx != len(words) - 1:
@@ -530,13 +571,43 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             tokens.append(f"{tag}{word_text}")
 
-        # Insert line break roughly in the middle for readability
         if len(tokens) >= 6:
             split_index = len(tokens) // 2
             tokens.insert(split_index, r"\N")
 
         rendered.append(" ".join(tokens).replace(" \\N ", r"\N"))
         return "".join(rendered)
+
+    def _get_base_animation_tag(self, animation: str, position_conf: Dict) -> str:
+        x = position_conf.get('x', 540)
+        y = position_conf.get('y', 1250)
+        an = position_conf.get('an', 8)
+        pos_tag = rf"\pos({x},{y})"
+        presets = {
+            'bounce': rf"{{\an{an}{pos_tag}\fad(80,40)}}",
+            'slide': rf"{{\an{an}\move({x},{y + 220},{x},{y},0,260)\fad(60,60)}}",
+            'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2}}",
+        }
+        return presets.get(animation, presets['bounce'])
+
+    def _get_word_animation_tag(self, animation: str, start_ms: int, mid_ms: int, end_ms: int) -> str:
+        if animation == 'slide':
+            return (
+                r"{\alpha&HFF"
+                rf"\t({start_ms},{mid_ms},\alpha&H40)"
+                rf"\t({mid_ms},{end_ms},\alpha&H00)}"
+            )
+        if animation == 'spark':
+            return (
+                r"{\alpha&HFF\1c&H00F7FF\bord4\blur4"
+                rf"\t({start_ms},{mid_ms},\alpha&H00\1c&HFFFFFF\bord0\blur0)"
+                rf"\t({mid_ms},{end_ms},\alpha&H00)}"
+            )
+        return (
+            r"{\alpha&HFF"
+            rf"\t({start_ms},{mid_ms},\alpha&H00\fscx118\fscy118)"
+            rf"\t({mid_ms},{end_ms},\fscx100\fscy100)}"
+        )
     
     def extract_audio(self, video_path: str, output_path: str) -> str:
         """Extract audio from video."""

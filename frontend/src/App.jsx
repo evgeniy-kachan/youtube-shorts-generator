@@ -147,14 +147,29 @@ function App() {
     }
   };
 
-  const handleProcess = async (segmentIds, verticalMethod) => {
+  const handleProcess = async (
+    segmentIds,
+    verticalMethod,
+    subtitleAnimation,
+    subtitlePosition,
+    subtitleFont,
+    subtitleFontSize
+  ) => {
     try {
       setStage('processing');
       setProgress(0);
       setStatusMessage('Начинаем обработку...');
       setTaskStatus('pending');
 
-      const response = await processSegments(videoData.video_id, segmentIds, verticalMethod);
+      const response = await processSegments(
+        videoData.video_id,
+        segmentIds,
+        verticalMethod,
+        subtitleAnimation,
+        subtitlePosition,
+        subtitleFont,
+        subtitleFontSize
+      );
       setProcessingTask(response.task_id);
     } catch (error) {
       console.error('Error starting processing:', error);
@@ -198,7 +213,7 @@ function App() {
             segments={segments}
             videoTitle={videoData?.title}
             onProcess={handleProcess}
-            loading={false}
+            loading={stage === 'processing'}
           />
         )}
 
