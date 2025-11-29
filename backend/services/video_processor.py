@@ -290,16 +290,16 @@ class VideoProcessor:
             subtitles = self._generate_basic_subtitles(text=text, duration=duration)
 
             # Step 3: add audio + subtitles + vertical conversion
-                    processed_path = self.add_audio_and_subtitles(
+            processed_path = self.add_audio_and_subtitles(
                 video_path=cut_path,
                 audio_path=audio_path,
                 subtitles=subtitles,
                 output_path=str(temp_output),
                 style=subtitle_style,
                 animation=subtitle_animation,
-                        font_name=subtitle_font,
-                        font_size=subtitle_font_size,
-                        subtitle_position=subtitle_position,
+                font_name=subtitle_font,
+                font_size=subtitle_font_size,
+                subtitle_position=subtitle_position,
                 convert_to_vertical=True,
                 vertical_method=method
             )
