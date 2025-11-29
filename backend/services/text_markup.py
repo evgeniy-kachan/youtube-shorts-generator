@@ -61,8 +61,9 @@ class TextMarkupService:
             cleaned_text = self._extract_text_from_json(processed)
             cleaned_text = self._sanitize(cleaned_text) if cleaned_text else text
             final_text = cleaned_text if cleaned_text else text
-            if os.getenv("DEBUG_SAVE_MARKUP", "0") == "1":
-                from pathlib import Path
+            debug_flag = os.getenv("DEBUG_SAVE_MARKUP", "0") == "1"
+            logger.debug("TextMarkup debug flag=%s", debug_flag)
+            if debug_flag:
                 debug_dir = Path(TEMP_DIR) / "debug"
                 debug_dir.mkdir(parents=True, exist_ok=True)
                 debug_path = debug_dir / "text_markup.log"
