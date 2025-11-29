@@ -595,18 +595,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return (
                 r"{\alpha&HFF"
                 rf"\t({start_ms},{mid_ms},\alpha&H40)"
-                rf"\t({mid_ms},{end_ms},\alpha&H00)}"
+                rf"\t({mid_ms},{end_ms},\alpha&H00)}}"
             )
         if animation == 'spark':
             return (
                 r"{\alpha&HFF\1c&H00F7FF\bord4\blur4"
                 rf"\t({start_ms},{mid_ms},\alpha&H00\1c&HFFFFFF\bord0\blur0)"
-                rf"\t({mid_ms},{end_ms},\alpha&H00)}"
+                rf"\t({mid_ms},{end_ms},\alpha&H00)}}"
             )
         return (
             r"{\alpha&HFF"
             rf"\t({start_ms},{mid_ms},\alpha&H00\fscx118\fscy118)"
-            rf"\t({mid_ms},{end_ms},\fscx100\fscy100)}"
+            rf"\t({mid_ms},{end_ms},\fscx100\fscy100)}}"
         )
     
     def extract_audio(self, video_path: str, output_path: str) -> str:
