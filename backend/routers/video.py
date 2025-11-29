@@ -155,7 +155,7 @@ def _filter_overlapping_segments(segments: list, iou_threshold: float = 0.7) -> 
     logger.info(f"Filtered {len(segments)} segments down to {len(kept_segments)} non-overlapping segments.")
     return kept_segments
 
-def _generate_thumbnail(video_path: str, video_id: str, timestamp: float = 1.0) -> Optional[str]:
+def _generate_thumbnail(video_path: str, video_id: str, timestamp: float = 5.0) -> Optional[str]:
     """Generate a single thumbnail frame for preview."""
     thumbnails_dir = Path(config.TEMP_DIR) / "thumbnails"
     thumbnails_dir.mkdir(parents=True, exist_ok=True)

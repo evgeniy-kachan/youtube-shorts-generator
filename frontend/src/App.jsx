@@ -4,7 +4,13 @@ import VideoInput from './components/VideoInput';
 import ProgressBar from './components/ProgressBar';
 import SegmentsList from './components/SegmentsList';
 import DownloadList from './components/DownloadList';
-import { analyzeLocalVideo, getTaskStatus, processSegments, uploadVideoFile } from './services/api';
+import {
+  analyzeLocalVideo,
+  getTaskStatus,
+  processSegments,
+  uploadVideoFile,
+  API_BASE_URL,
+} from './services/api';
 
 function App() {
   const [stage, setStage] = useState('input'); // input, analyzing, segments, processing, download
@@ -67,8 +73,14 @@ function App() {
           setTaskStatus(status.status);
 
           if (status.status === 'completed') {
-            setVideoData(status.result);
-            setSegments(status.result.segments);
+            const normalizedResult = {
+              ...status.result,
+              thumbnail_url: status.result?.thumbnail_url
+                ? `${API_BASE_URL}${status.result.thumbnail_url}`
+                : null,
+            };
+            setVideoData(normalizedResult);
+            setSegments(normalizedResult.segments);
             setStage('segments');
             clearInterval(interval);
           } else if (status.status === 'failed') {

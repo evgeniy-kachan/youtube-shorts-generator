@@ -44,20 +44,20 @@ const SUBTITLE_POSITIONS = [
 ];
 
 const FONT_OPTIONS = [
-  { id: 'Montserrat Light', label: 'Montserrat Light' },
-  { id: 'Montserrat Medium', label: 'Montserrat Medium' },
-  { id: 'Montserrat Regular', label: 'Montserrat Regular' },
-  { id: 'Inter', label: 'Inter Regular' },
-  { id: 'Inter ExtraLight', label: 'Inter ExtraLight' },
-  { id: 'Open Sans', label: 'Open Sans Regular' },
-  { id: 'Open Sans Light', label: 'Open Sans Light' },
-  { id: 'Nunito', label: 'Nunito Regular' },
-  { id: 'Nunito Light', label: 'Nunito Light' },
-  { id: 'Roboto', label: 'Roboto Regular' },
-  { id: 'Roboto Light', label: 'Roboto Light' },
-  { id: 'Rubik', label: 'Rubik Regular' },
-  { id: 'Source Sans 3', label: 'Source Sans 3 Regular' },
-  { id: 'Source Sans 3 Light', label: 'Source Sans 3 Light' },
+  { id: 'Montserrat Light', label: 'Montserrat Light', css: '"Montserrat", sans-serif' },
+  { id: 'Montserrat Medium', label: 'Montserrat Medium', css: '"Montserrat", sans-serif' },
+  { id: 'Montserrat Regular', label: 'Montserrat Regular', css: '"Montserrat", sans-serif' },
+  { id: 'Inter', label: 'Inter Regular', css: '"Inter", sans-serif' },
+  { id: 'Inter ExtraLight', label: 'Inter ExtraLight', css: '"Inter", sans-serif' },
+  { id: 'Open Sans', label: 'Open Sans Regular', css: '"Open Sans", sans-serif' },
+  { id: 'Open Sans Light', label: 'Open Sans Light', css: '"Open Sans", sans-serif' },
+  { id: 'Nunito', label: 'Nunito Regular', css: '"Nunito", sans-serif' },
+  { id: 'Nunito Light', label: 'Nunito Light', css: '"Nunito", sans-serif' },
+  { id: 'Roboto', label: 'Roboto Regular', css: '"Roboto", sans-serif' },
+  { id: 'Roboto Light', label: 'Roboto Light', css: '"Roboto", sans-serif' },
+  { id: 'Rubik', label: 'Rubik Regular', css: '"Rubik", sans-serif' },
+  { id: 'Source Sans 3', label: 'Source Sans 3 Regular', css: '"Source Sans 3", sans-serif' },
+  { id: 'Source Sans 3 Light', label: 'Source Sans 3 Light', css: '"Source Sans 3", sans-serif' },
 ];
 
 const FONT_SIZE_OPTIONS = [72, 82, 92, 102];
@@ -65,7 +65,7 @@ const FONT_SIZE_OPTIONS = [72, 82, 92, 102];
 const SubtitlePreview = ({
   text,
   positionId,
-  font,
+  fontFamily,
   fontSize,
   animation,
   thumbnailUrl,
@@ -79,9 +79,10 @@ const SubtitlePreview = ({
     if (words.length === 0) return ['Текст субтитров'];
     const chunks = [];
     let current = [];
+    const maxWordsPerLine = 4;
     words.forEach((word) => {
       current.push(word);
-      if (current.length >= 5) {
+      if (current.length >= maxWordsPerLine) {
         chunks.push(current.join(' '));
         current = [];
       }
@@ -93,8 +94,8 @@ const SubtitlePreview = ({
   }, [text]);
 
   const containerClass = thumbnailUrl
-    ? 'relative mx-auto w-full max-w-[180px] pb-[177%] rounded-xl overflow-hidden bg-black'
-    : 'relative mx-auto w-full max-w-[180px] pb-[177%] rounded-xl overflow-hidden bg-gradient-to-br from-gray-800 via-gray-700 to-gray-900';
+    ? 'relative mx-auto w-full max-w-[140px] pb-[177%] rounded-xl overflow-hidden bg-black'
+    : 'relative mx-auto w-full max-w-[140px] pb-[177%] rounded-xl overflow-hidden bg-gradient-to-br from-gray-800 via-gray-700 to-gray-900';
 
   const backgroundStyle = thumbnailUrl
     ? {
@@ -115,14 +116,19 @@ const SubtitlePreview = ({
         <div
           className={`absolute max-w-[80%] bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl text-center text-white font-semibold tracking-wide subtitle-preview-card preview-anim-${animation}`}
           style={{
-            fontFamily: font,
+            fontFamily: fontFamily,
             fontSize: `${previewFontSize}px`,
             lineHeight: 1.2,
+            whiteSpace: 'nowrap',
             ...position,
           }}
         >
           {previewLines.map((line, idx) => (
-            <span key={idx} className="block leading-tight">
+            <span
+              key={idx}
+              className="block leading-tight"
+              style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            >
               {line}
             </span>
           ))}
@@ -458,7 +464,10 @@ const SegmentsList = ({
             <SubtitlePreview
               text={previewText}
               positionId={subtitlePosition}
-              font={subtitleFont}
+              fontFamily={
+                FONT_OPTIONS.find((opt) => opt.id === subtitleFont)?.css ||
+                '"Montserrat", sans-serif'
+              }
               fontSize={subtitleFontSize}
               animation={subtitleAnimation}
               thumbnailUrl={videoThumbnail}
