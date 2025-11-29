@@ -33,6 +33,7 @@ class TextMarkupService:
         if not text or not text.strip():
             return text
 
+        logger.info("TextMarkup called (len=%s)", len(text))
         prompt = (
             "Ты помогаешь сделать русский текст более естественным для озвучки.\n"
             "Правила:\n"
@@ -62,7 +63,7 @@ class TextMarkupService:
             cleaned_text = self._sanitize(cleaned_text) if cleaned_text else text
             final_text = cleaned_text if cleaned_text else text
             debug_flag = os.getenv("DEBUG_SAVE_MARKUP", "0") == "1"
-            logger.debug("TextMarkup debug flag=%s", debug_flag)
+            logger.info("TextMarkup debug flag=%s", debug_flag)
             if debug_flag:
                 debug_dir = Path(TEMP_DIR) / "debug"
                 debug_dir.mkdir(parents=True, exist_ok=True)
