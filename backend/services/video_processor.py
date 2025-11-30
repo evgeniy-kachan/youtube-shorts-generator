@@ -597,6 +597,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return presets.get(animation, presets['bounce'])
 
     def _get_word_animation_tag(self, animation: str, start_ms: int, mid_ms: int, end_ms: int) -> str:
+        if animation == 'bounce':
+            return (
+                r"{\alpha&HFF"
+                rf"\t({start_ms},{mid_ms},\alpha&H00\fscx120\fscy120\yshad-10)"
+                rf"\t({mid_ms},{end_ms},\fscx100\fscy100\yshad0)}"
+            )
         if animation == 'slide':
             return (
                 r"{\alpha&HFF"

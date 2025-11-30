@@ -179,6 +179,16 @@ const SubtitlePreview = ({
     left: `${(positionCoords.x / TARGET_CANVAS_WIDTH) * 100}%`,
     top: `${(positionCoords.y / TARGET_CANVAS_HEIGHT) * 100}%`,
     transform: 'translate(-50%, -50%)',
+    display: 'flex',
+    justifyContent: 'center',
+  };
+
+  const lineTextStyle = {
+    fontFamily,
+    fontSize: `${previewFontSize}px`,
+    lineHeight: 1.2,
+    fontWeight,
+    color: '#fff',
   };
 
   const blockStyle = (hasBackground) => ({
@@ -189,7 +199,7 @@ const SubtitlePreview = ({
     width: '100%',
     padding: '10px 16px',
     borderRadius: '24px',
-    border: hasBackground ? '2px solid rgba(255,255,255,0.3)' : '2px solid rgba(255,255,255,0.15)',
+    border: hasBackground ? '2px solid rgba(255,255,255,0.3)' : 'none',
     backgroundColor: hasBackground ? 'rgba(0, 0, 0, 0.55)' : 'transparent',
     color: '#fff',
     textAlign: 'center',
@@ -208,22 +218,48 @@ const SubtitlePreview = ({
         <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.35),_transparent_55%)]" />
         <div style={blockWrapperStyle}>
           <div
-            className={`subtitle-preview-card preview-anim-${animation}`}
+            className={`subtitle-preview-card ${
+              animation === 'bounce' ? 'preview-bounce-container' : `preview-anim-${animation}`
+            }`}
             style={blockStyle(showBackground)}
           >
-            {previewLines.slice(0, 2).map((line, idx) => (
-              <span
-                key={idx}
-                className="block leading-tight"
-                style={{
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {line}
-              </span>
-            ))}
+            {previewLines.slice(0, 2).map((line, idx) => {
+              if (animation === 'bounce') {
+                const words = line.split(' ').filter(Boolean);
+                return (
+                  <span key={idx} className="preview-bounce-line">
+                    {words.map((word, wordIdx) => (
+                      <span
+                        key={`${idx}-${wordIdx}`}
+                        className="preview-word-bounce"
+                        style={{
+                          ...lineTextStyle,
+                          animationDelay: `${wordIdx * 0.08}s`,
+                          display: 'inline-block',
+                        }}
+                      >
+                        {word}&nbsp;
+                      </span>
+                    ))}
+                  </span>
+                );
+              }
+
+              return (
+                <span
+                  key={idx}
+                  className="block leading-tight"
+                  style={{
+                    ...lineTextStyle,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {line}
+                </span>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -248,7 +284,6 @@ const SegmentsList = ({
   const [subtitlePosition, setSubtitlePosition] = useState('mid_low');
   const [subtitleFont, setSubtitleFont] = useState('Montserrat Light');
   const [subtitleFontSize, setSubtitleFontSize] = useState(86);
-  const [subtitleBackground, setSubtitleBackground] = useState(false);
   const [subtitleBackground, setSubtitleBackground] = useState(false);
 
   const toggleSegment = (segmentId) => {
@@ -586,29 +621,6 @@ const SegmentsList = ({
                       </button>
                     ))}
                   </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  🌗 Фон под субтитрами:
-                </label>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={() => setSubtitleBackground((prev) => !prev)}
-                    className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${
-                      subtitleBackground
-                        ? 'border-purple-600 bg-purple-50 text-purple-700'
-                        : 'border-gray-200 hover:border-purple-500 text-gray-700'
-                    } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    {subtitleBackground ? 'Фон включён' : 'Фон выключен'}
-                  </button>
-                  <p className="text-xs text-gray-500">
-                    По умолчанию прозрачный — включите, если нужна затемнённая подложка.
-                  </p>
                 </div>
               </div>
 

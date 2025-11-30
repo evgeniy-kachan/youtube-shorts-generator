@@ -99,3 +99,35 @@ code {
   animation: previewSpark 1.8s ease-in-out infinite;
 }
 
+.preview-bounce-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.preview-bounce-line {
+  display: block;
+}
+
+.preview-word-bounce {
+  display: inline-block;
+  opacity: 0;
+  transform-origin: center bottom;
+  animation: previewWordBounce 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes previewWordBounce {
+  0% {
+    transform: translateY(-10px) scale(1.2);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(5px) scale(0.96);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+

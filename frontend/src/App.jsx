@@ -165,7 +165,8 @@ function App() {
     subtitleAnimation,
     subtitlePosition,
     subtitleFont,
-    subtitleFontSize
+    subtitleFontSize,
+    subtitleBackground
   ) => {
     try {
       setStage('processing');
@@ -180,7 +181,8 @@ function App() {
         subtitleAnimation,
         subtitlePosition,
         subtitleFont,
-        subtitleFontSize
+        subtitleFontSize,
+        subtitleBackground
       );
       setProcessingTask(response.task_id);
     } catch (error) {
