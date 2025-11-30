@@ -601,7 +601,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return (
                 r"{\alpha&HFF"
                 rf"\t({start_ms},{mid_ms},\alpha&H00\fscx120\fscy120\yshad-10)"
-                rf"\t({mid_ms},{end_ms},\fscx100\fscy100\yshad0)}"
+                rf"\t({mid_ms},{end_ms},\fscx100\fscy100\yshad0)}}"
             )
         if animation == 'slide':
             return (
