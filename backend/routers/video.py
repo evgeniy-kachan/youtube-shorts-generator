@@ -18,6 +18,7 @@ from backend.services.video_processor import VideoProcessor
 from backend.services.text_markup import TextMarkupService
 from backend.utils.file_utils import get_temp_dir, get_output_dir, clear_temp_dir
 from backend import config
+from backend.models.schemas import ProcessRequest, TaskStatus
 
 router = APIRouter(prefix="/api/video", tags=["video"])
 
@@ -33,22 +34,6 @@ _services = {}
 
 class AnalyzeRequest(BaseModel):
     youtube_url: str
-
-class ProcessRequest(BaseModel):
-    video_id: str
-    segment_ids: List[str]
-    vertical_method: str = "letterbox"
-    subtitle_animation: str = "bounce"
-    subtitle_position: str = "mid_low"
-    subtitle_font: str = "Montserrat Light"
-    subtitle_font_size: int = 86
-
-class TaskStatus(BaseModel):
-    task_id: str
-    status: str
-    progress: float
-    message: str
-    result: Optional[dict] = None
 
 def get_service(name: str):
     """Lazy-load and cache services to save resources."""
