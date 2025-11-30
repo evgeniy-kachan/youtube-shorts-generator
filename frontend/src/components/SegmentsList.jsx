@@ -24,18 +24,6 @@ const SUBTITLE_POSITIONS = [
     coords: { x: 540, y: 1250 },
   },
   {
-    id: 'lower_left',
-    label: 'Левее центра',
-    description: 'Субтитры смещены влево (герой справа)',
-    coords: { x: 360, y: 1350 },
-  },
-  {
-    id: 'lower_right',
-    label: 'Правее центра',
-    description: 'Смещаем блок вправо',
-    coords: { x: 720, y: 1350 },
-  },
-  {
     id: 'bottom_center',
     label: 'Самый низ',
     description: 'Максимально низкое размещение',
@@ -148,6 +136,7 @@ const SubtitlePreview = ({
   fontWeight,
   animation,
   thumbnailUrl,
+  showBackground = false,
 }) => {
   const positionCoords =
     SUBTITLE_POSITIONS.find((preset) => preset.id === positionId)?.coords ||
@@ -158,7 +147,7 @@ const SubtitlePreview = ({
     if (words.length === 0) return ['Текст субтитров'];
     const chunks = [];
     let current = [];
-    const maxWordsPerLine = 4;
+    const maxWordsPerLine = 6;
     words.forEach((word) => {
       current.push(word);
       if (current.length >= maxWordsPerLine) {
@@ -184,17 +173,30 @@ const SubtitlePreview = ({
     backgroundPosition: 'center',
   };
 
-  const blockStyle = {
-    fontFamily: fontFamily,
-    fontSize: `${previewFontSize}px`,
-    lineHeight: 1.2,
-    fontWeight,
+  const blockWrapperStyle = {
+    position: 'absolute',
     width: '80%',
-    whiteSpace: 'normal',
     left: `${(positionCoords.x / TARGET_CANVAS_WIDTH) * 100}%`,
     top: `${(positionCoords.y / TARGET_CANVAS_HEIGHT) * 100}%`,
     transform: 'translate(-50%, -50%)',
   };
+
+  const blockStyle = (hasBackground) => ({
+    fontFamily,
+    fontSize: `${previewFontSize}px`,
+    lineHeight: 1.2,
+    fontWeight,
+    width: '100%',
+    padding: '10px 16px',
+    borderRadius: '24px',
+    border: hasBackground ? '2px solid rgba(255,255,255,0.3)' : '2px solid rgba(255,255,255,0.15)',
+    backgroundColor: hasBackground ? 'rgba(0, 0, 0, 0.55)' : 'transparent',
+    color: '#fff',
+    textAlign: 'center',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  });
 
   return (
     <div className="bg-gray-50 border rounded-2xl shadow-inner p-4">
@@ -204,23 +206,25 @@ const SubtitlePreview = ({
       </div>
       <div className={containerClass} style={containerStyle}>
         <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.35),_transparent_55%)]" />
-        <div
-          className={`absolute bg-black/55 px-3 py-2 rounded-2xl text-center text-white tracking-wide subtitle-preview-card preview-anim-${animation}`}
-          style={blockStyle}
-        >
-          {previewLines.map((line, idx) => (
-            <span
-              key={idx}
-              className="block leading-tight"
-              style={{
-                whiteSpace: 'normal',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {line}
-            </span>
-          ))}
+        <div style={blockWrapperStyle}>
+          <div
+            className={`subtitle-preview-card preview-anim-${animation}`}
+            style={blockStyle(showBackground)}
+          >
+            {previewLines.slice(0, 2).map((line, idx) => (
+              <span
+                key={idx}
+                className="block leading-tight"
+                style={{
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {line}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
       <p className="text-xs text-gray-500 mt-3">
@@ -244,6 +248,7 @@ const SegmentsList = ({
   const [subtitlePosition, setSubtitlePosition] = useState('mid_low');
   const [subtitleFont, setSubtitleFont] = useState('Montserrat Light');
   const [subtitleFontSize, setSubtitleFontSize] = useState(86);
+  const [subtitleBackground, setSubtitleBackground] = useState(false);
 
   const toggleSegment = (segmentId) => {
     setSelectedSegments((prev) =>
@@ -581,6 +586,29 @@ const SegmentsList = ({
                   </div>
                 </div>
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  🌗 Фон под субтитрами:
+                </label>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => setSubtitleBackground((prev) => !prev)}
+                    className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${
+                      subtitleBackground
+                        ? 'border-purple-600 bg-purple-50 text-purple-700'
+                        : 'border-gray-200 hover:border-purple-500 text-gray-700'
+                    } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    {subtitleBackground ? 'Фон включён' : 'Фон выключен'}
+                  </button>
+                  <p className="text-xs text-gray-500">
+                    По умолчанию прозрачный — включите, если нужна затемнённая подложка.
+                  </p>
+                </div>
+              </div>
             </div>
 
             <SubtitlePreview
@@ -596,6 +624,7 @@ const SegmentsList = ({
               }
               fontSize={subtitleFontSize}
               animation={subtitleAnimation}
+              showBackground={subtitleBackground}
               thumbnailUrl={videoThumbnail}
             />
           </div>
