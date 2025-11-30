@@ -249,6 +249,7 @@ const SegmentsList = ({
   const [subtitleFont, setSubtitleFont] = useState('Montserrat Light');
   const [subtitleFontSize, setSubtitleFontSize] = useState(86);
   const [subtitleBackground, setSubtitleBackground] = useState(false);
+  const [subtitleBackground, setSubtitleBackground] = useState(false);
 
   const toggleSegment = (segmentId) => {
     setSelectedSegments((prev) =>
@@ -282,7 +283,8 @@ const SegmentsList = ({
         subtitleAnimation,
         subtitlePosition,
         subtitleFont,
-        subtitleFontSize
+        subtitleFontSize,
+        subtitleBackground
       );
     }
   };
@@ -606,6 +608,29 @@ const SegmentsList = ({
                   </button>
                   <p className="text-xs text-gray-500">
                     По умолчанию прозрачный — включите, если нужна затемнённая подложка.
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  🌗 Фон под субтитрами:
+                </label>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => setSubtitleBackground((prev) => !prev)}
+                    className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${
+                      subtitleBackground
+                        ? 'border-purple-600 bg-purple-50 text-purple-700'
+                        : 'border-gray-200 hover:border-purple-500 text-gray-700'
+                    } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    {subtitleBackground ? 'Фон включён' : 'Фон выключен'}
+                  </button>
+                  <p className="text-xs text-gray-500">
+                    По умолчанию прозрачный. Включите, если нужна затемнённая подложка.
                   </p>
                 </div>
               </div>

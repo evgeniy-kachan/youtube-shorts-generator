@@ -177,6 +177,7 @@ class VideoProcessor:
         font_name: str = "Montserrat Light",
         font_size: int = 86,
         subtitle_position: str = "mid_low",
+        subtitle_background: bool = False,
         convert_to_vertical: bool = True,
         vertical_method: str = "letterbox"
     ) -> str:
@@ -219,6 +220,7 @@ class VideoProcessor:
                 font_name,
                 font_size,
                 subtitle_position,
+                subtitle_background,
             )
             
             # Step 3: Process video with ffmpeg
@@ -267,6 +269,7 @@ class VideoProcessor:
         subtitle_position: str = "mid_low",
         subtitle_font: str = "Montserrat Light",
         subtitle_font_size: int = 86,
+        subtitle_background: bool = False,
     ) -> str:
         """
         End-to-end helper that cuts the source video, converts it to vertical format,
@@ -297,9 +300,10 @@ class VideoProcessor:
                 output_path=str(temp_output),
                 style=subtitle_style,
                 animation=subtitle_animation,
-                font_name=subtitle_font,
-                font_size=subtitle_font_size,
-                subtitle_position=subtitle_position,
+                        font_name=subtitle_font,
+                        font_size=subtitle_font_size,
+                        subtitle_position=subtitle_position,
+                        subtitle_background=subtitle_background,
                 convert_to_vertical=True,
                 vertical_method=method
             )
@@ -489,6 +493,8 @@ class VideoProcessor:
         selected_style['marginv'] = position_config.get('marginv', selected_style['marginv'])
         
         # Create ASS file
+        back_color = "&H55000000" if subtitle_background else "&H00000000"
+
         ass_content = f"""[Script Info]
 Title: Generated Subtitles
 ScriptType: v4.00+
@@ -498,7 +504,7 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{selected_style['fontname']},{selected_style['fontsize']},{selected_style['primarycolor']},&H000000FF,{selected_style['outlinecolor']},&H00000000,0,0,0,0,100,100,0,0,{selected_style['borderstyle']},{selected_style['outline']},{selected_style['shadow']},{selected_style['alignment']},10,10,{selected_style['marginv']},1
+Style: Default,{selected_style['fontname']},{selected_style['fontsize']},{selected_style['primarycolor']},&H000000FF,{selected_style['outlinecolor']},{back_color},0,0,0,0,100,100,0,0,{selected_style['borderstyle']},{selected_style['outline']},{selected_style['shadow']},{selected_style['alignment']},10,10,{selected_style['marginv']},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

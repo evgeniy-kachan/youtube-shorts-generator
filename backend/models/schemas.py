@@ -59,6 +59,10 @@ class ProcessRequest(BaseModel):
         default=86,
         description="Base subtitle font size"
     )
+    subtitle_background: bool = Field(
+        default=False,
+        description="Enable background blur/box behind subtitles"
+    )
     subtitle_animation: str = Field(
         default="bounce",
         description="Subtitle animation preset: bounce, slide, spark"
