@@ -15,43 +15,31 @@ const SUBTITLE_POSITIONS = [
     id: 'mid_low',
     label: 'Чуть ниже центра',
     description: 'Сдвигаем текст чуть ниже центральной линии',
-    previewStyle: {
-      top: '48%',
-      left: '50%',
-      transform: 'translate(-50%, -50%)',
-    },
+    coords: { x: 540, y: 1050 },
   },
   {
     id: 'lower_center',
     label: 'Нижняя треть',
     description: 'Классическая позиция ближе к нижней трети',
-    previewStyle: {
-      top: '58%',
-      left: '50%',
-      transform: 'translate(-50%, -50%)',
-    },
+    coords: { x: 540, y: 1250 },
   },
   {
     id: 'lower_left',
     label: 'Левее центра',
     description: 'Субтитры смещены влево (герой справа)',
-    previewStyle: { top: '63%', left: '30%' },
+    coords: { x: 360, y: 1350 },
   },
   {
     id: 'lower_right',
     label: 'Правее центра',
     description: 'Смещаем блок вправо',
-    previewStyle: { top: '63%', left: '70%' },
+    coords: { x: 720, y: 1350 },
   },
   {
     id: 'bottom_center',
     label: 'Самый низ',
     description: 'Максимально низкое размещение',
-    previewStyle: {
-      top: '75%',
-      left: '50%',
-      transform: 'translate(-50%, -50%)',
-    },
+    coords: { x: 540, y: 1520 },
   },
 ];
 
@@ -144,9 +132,13 @@ const FONT_OPTIONS = [
 
 const FONT_SIZE_OPTIONS = [72, 82, 92, 102];
 
-const PREVIEW_WIDTH_PX = 2556;
-const PREVIEW_HEIGHT_PX = 1179;
-const PREVIEW_RATIO_PERCENT = (PREVIEW_HEIGHT_PX / PREVIEW_WIDTH_PX) * 100;
+const TARGET_CANVAS_WIDTH = 1080;
+const TARGET_CANVAS_HEIGHT = 1920;
+const PHONE_DISPLAY_WIDTH = 220;
+const PHONE_DISPLAY_HEIGHT = Math.round(
+  (TARGET_CANVAS_HEIGHT / TARGET_CANVAS_WIDTH) * PHONE_DISPLAY_WIDTH
+);
+const PHONE_SCALE = PHONE_DISPLAY_WIDTH / TARGET_CANVAS_WIDTH;
 
 const SubtitlePreview = ({
   text,
@@ -157,10 +149,10 @@ const SubtitlePreview = ({
   animation,
   thumbnailUrl,
 }) => {
-  const position =
-    SUBTITLE_POSITIONS.find((preset) => preset.id === positionId)
-      ?.previewStyle || SUBTITLE_POSITIONS[0].previewStyle;
-  const previewFontSize = Math.round(fontSize * 0.6);
+  const positionCoords =
+    SUBTITLE_POSITIONS.find((preset) => preset.id === positionId)?.coords ||
+    SUBTITLE_POSITIONS[0].coords;
+  const previewFontSize = Math.round(fontSize * PHONE_SCALE);
   const previewLines = useMemo(() => {
     const words = text.split(/\s+/).filter(Boolean);
     if (words.length === 0) return ['Текст субтитров'];
@@ -181,15 +173,27 @@ const SubtitlePreview = ({
   }, [text]);
 
   const containerClass = thumbnailUrl
-    ? 'relative mx-auto w-full rounded-xl overflow-hidden bg-black'
-    : 'relative mx-auto w-full rounded-xl overflow-hidden bg-gradient-to-br from-gray-800 via-gray-700 to-gray-900';
+    ? 'relative mx-auto rounded-[32px] overflow-hidden bg-black shadow-lg border border-black/20'
+    : 'relative mx-auto rounded-[32px] overflow-hidden bg-gradient-to-br from-gray-800 via-gray-700 to-gray-900 shadow-lg';
 
   const containerStyle = {
-    maxWidth: `${PREVIEW_WIDTH_PX}px`,
-    paddingBottom: `${PREVIEW_RATIO_PERCENT}%`,
+    width: `${PHONE_DISPLAY_WIDTH}px`,
+    height: `${PHONE_DISPLAY_HEIGHT}px`,
     backgroundImage: thumbnailUrl ? `url(${thumbnailUrl})` : undefined,
     backgroundSize: 'cover',
     backgroundPosition: 'center',
+  };
+
+  const blockStyle = {
+    fontFamily: fontFamily,
+    fontSize: `${previewFontSize}px`,
+    lineHeight: 1.2,
+    fontWeight,
+    width: '80%',
+    whiteSpace: 'normal',
+    left: `${(positionCoords.x / TARGET_CANVAS_WIDTH) * 100}%`,
+    top: `${(positionCoords.y / TARGET_CANVAS_HEIGHT) * 100}%`,
+    transform: 'translate(-50%, -50%)',
   };
 
   return (
@@ -201,22 +205,15 @@ const SubtitlePreview = ({
       <div className={containerClass} style={containerStyle}>
         <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.35),_transparent_55%)]" />
         <div
-          className={`absolute max-w-[80%] bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl text-center text-white font-semibold tracking-wide subtitle-preview-card preview-anim-${animation}`}
-          style={{
-            fontFamily: fontFamily,
-            fontSize: `${previewFontSize}px`,
-            lineHeight: 1.2,
-            fontWeight,
-            whiteSpace: 'nowrap',
-            ...position,
-          }}
+          className={`absolute bg-black/55 px-3 py-2 rounded-2xl text-center text-white tracking-wide subtitle-preview-card preview-anim-${animation}`}
+          style={blockStyle}
         >
           {previewLines.map((line, idx) => (
             <span
               key={idx}
               className="block leading-tight"
               style={{
-                whiteSpace: 'nowrap',
+                whiteSpace: 'normal',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
               }}
