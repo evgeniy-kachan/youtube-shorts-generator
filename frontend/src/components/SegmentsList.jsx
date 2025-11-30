@@ -15,13 +15,21 @@ const SUBTITLE_POSITIONS = [
     id: 'mid_low',
     label: 'Чуть ниже центра',
     description: 'Сдвигаем текст чуть ниже центральной линии',
-    previewStyle: { top: '48%', left: '50%', transform: 'translate(-50%, -50%)' },
+    previewStyle: {
+      top: '48%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+    },
   },
   {
     id: 'lower_center',
     label: 'Нижняя треть',
     description: 'Классическая позиция ближе к нижней трети',
-    previewStyle: { top: '58%', left: '50%', transform: 'translate(-50%, -50%)' },
+    previewStyle: {
+      top: '58%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+    },
   },
   {
     id: 'lower_left',
@@ -39,28 +47,106 @@ const SUBTITLE_POSITIONS = [
     id: 'bottom_center',
     label: 'Самый низ',
     description: 'Максимально низкое размещение',
-    previewStyle: { top: '75%', left: '50%', transform: 'translate(-50%, -50%)' },
+    previewStyle: {
+      top: '75%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+    },
   },
 ];
 
 const FONT_OPTIONS = [
-  { id: 'Montserrat Light', label: 'Montserrat Light', css: '"Montserrat", sans-serif', weight: 300 },
-  { id: 'Montserrat Medium', label: 'Montserrat Medium', css: '"Montserrat", sans-serif', weight: 500 },
-  { id: 'Montserrat Regular', label: 'Montserrat Regular', css: '"Montserrat", sans-serif', weight: 400 },
-  { id: 'Inter', label: 'Inter Regular', css: '"Inter", sans-serif', weight: 400 },
-  { id: 'Inter ExtraLight', label: 'Inter ExtraLight', css: '"Inter", sans-serif', weight: 200 },
-  { id: 'Open Sans', label: 'Open Sans Regular', css: '"Open Sans", sans-serif', weight: 400 },
-  { id: 'Open Sans Light', label: 'Open Sans Light', css: '"Open Sans", sans-serif', weight: 300 },
-  { id: 'Nunito', label: 'Nunito Regular', css: '"Nunito", sans-serif', weight: 400 },
-  { id: 'Nunito Light', label: 'Nunito Light', css: '"Nunito", sans-serif', weight: 300 },
-  { id: 'Roboto', label: 'Roboto Regular', css: '"Roboto", sans-serif', weight: 400 },
-  { id: 'Roboto Light', label: 'Roboto Light', css: '"Roboto", sans-serif', weight: 300 },
-  { id: 'Rubik', label: 'Rubik Regular', css: '"Rubik", sans-serif', weight: 400 },
-  { id: 'Source Sans 3', label: 'Source Sans 3 Regular', css: '"Source Sans 3", sans-serif', weight: 400 },
-  { id: 'Source Sans 3 Light', label: 'Source Sans 3 Light', css: '"Source Sans 3", sans-serif', weight: 300 },
+  {
+    id: 'Montserrat Light',
+    label: 'Montserrat Light',
+    css: '"Montserrat", sans-serif',
+    weight: 300,
+  },
+  {
+    id: 'Montserrat Medium',
+    label: 'Montserrat Medium',
+    css: '"Montserrat", sans-serif',
+    weight: 500,
+  },
+  {
+    id: 'Montserrat Regular',
+    label: 'Montserrat Regular',
+    css: '"Montserrat", sans-serif',
+    weight: 400,
+  },
+  {
+    id: 'Inter',
+    label: 'Inter Regular',
+    css: '"Inter", sans-serif',
+    weight: 400,
+  },
+  {
+    id: 'Inter ExtraLight',
+    label: 'Inter ExtraLight',
+    css: '"Inter", sans-serif',
+    weight: 200,
+  },
+  {
+    id: 'Open Sans',
+    label: 'Open Sans Regular',
+    css: '"Open Sans", sans-serif',
+    weight: 400,
+  },
+  {
+    id: 'Open Sans Light',
+    label: 'Open Sans Light',
+    css: '"Open Sans", sans-serif',
+    weight: 300,
+  },
+  {
+    id: 'Nunito',
+    label: 'Nunito Regular',
+    css: '"Nunito", sans-serif',
+    weight: 400,
+  },
+  {
+    id: 'Nunito Light',
+    label: 'Nunito Light',
+    css: '"Nunito", sans-serif',
+    weight: 300,
+  },
+  {
+    id: 'Roboto',
+    label: 'Roboto Regular',
+    css: '"Roboto", sans-serif',
+    weight: 400,
+  },
+  {
+    id: 'Roboto Light',
+    label: 'Roboto Light',
+    css: '"Roboto", sans-serif',
+    weight: 300,
+  },
+  {
+    id: 'Rubik',
+    label: 'Rubik Regular',
+    css: '"Rubik", sans-serif',
+    weight: 400,
+  },
+  {
+    id: 'Source Sans 3',
+    label: 'Source Sans 3 Regular',
+    css: '"Source Sans 3", sans-serif',
+    weight: 400,
+  },
+  {
+    id: 'Source Sans 3 Light',
+    label: 'Source Sans 3 Light',
+    css: '"Source Sans 3", sans-serif',
+    weight: 300,
+  },
 ];
 
 const FONT_SIZE_OPTIONS = [72, 82, 92, 102];
+
+const PREVIEW_WIDTH_PX = 2556;
+const PREVIEW_HEIGHT_PX = 1179;
+const PREVIEW_RATIO_PERCENT = (PREVIEW_HEIGHT_PX / PREVIEW_WIDTH_PX) * 100;
 
 const SubtitlePreview = ({
   text,
@@ -72,8 +158,8 @@ const SubtitlePreview = ({
   thumbnailUrl,
 }) => {
   const position =
-    SUBTITLE_POSITIONS.find((preset) => preset.id === positionId)?.previewStyle ||
-    SUBTITLE_POSITIONS[0].previewStyle;
+    SUBTITLE_POSITIONS.find((preset) => preset.id === positionId)
+      ?.previewStyle || SUBTITLE_POSITIONS[0].previewStyle;
   const previewFontSize = Math.round(fontSize * 0.6);
   const previewLines = useMemo(() => {
     const words = text.split(/\s+/).filter(Boolean);
@@ -95,16 +181,16 @@ const SubtitlePreview = ({
   }, [text]);
 
   const containerClass = thumbnailUrl
-    ? 'relative mx-auto w-full max-w-[140px] pb-[177%] rounded-xl overflow-hidden bg-black'
-    : 'relative mx-auto w-full max-w-[140px] pb-[177%] rounded-xl overflow-hidden bg-gradient-to-br from-gray-800 via-gray-700 to-gray-900';
+    ? 'relative mx-auto w-full rounded-xl overflow-hidden bg-black'
+    : 'relative mx-auto w-full rounded-xl overflow-hidden bg-gradient-to-br from-gray-800 via-gray-700 to-gray-900';
 
-  const backgroundStyle = thumbnailUrl
-    ? {
-        backgroundImage: `url(${thumbnailUrl})`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-      }
-    : undefined;
+  const containerStyle = {
+    maxWidth: `${PREVIEW_WIDTH_PX}px`,
+    paddingBottom: `${PREVIEW_RATIO_PERCENT}%`,
+    backgroundImage: thumbnailUrl ? `url(${thumbnailUrl})` : undefined,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+  };
 
   return (
     <div className="bg-gray-50 border rounded-2xl shadow-inner p-4">
@@ -112,7 +198,7 @@ const SubtitlePreview = ({
         <p className="text-sm font-semibold text-gray-800">Превью макета</p>
         <span className="text-xs text-gray-500">9:16</span>
       </div>
-      <div className={containerClass} style={backgroundStyle}>
+      <div className={containerClass} style={containerStyle}>
         <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.35),_transparent_55%)]" />
         <div
           className={`absolute max-w-[80%] bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl text-center text-white font-semibold tracking-wide subtitle-preview-card preview-anim-${animation}`}
@@ -129,7 +215,11 @@ const SubtitlePreview = ({
             <span
               key={idx}
               className="block leading-tight"
-              style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+              style={{
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
             >
               {line}
             </span>
@@ -226,7 +316,9 @@ const SegmentsList = ({
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">Найденные моменты</h2>
+            <h2 className="text-2xl font-bold text-gray-900">
+              Найденные моменты
+            </h2>
             <p className="text-sm text-gray-600 mt-1">{videoTitle}</p>
             <p className="text-xs text-gray-500 mt-1">
               Найдено {segments.length} интересных моментов
@@ -264,63 +356,70 @@ const SegmentsList = ({
                 }`}
                 onClick={() => toggleExpand(segment.id)}
               >
-              <div className="flex items-start space-x-4">
-                <div className="flex-shrink-0 mt-1">
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={(e) => {
-                      e.stopPropagation();
-                      toggleSegment(segment.id);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    className="w-5 h-5 text-purple-600 rounded focus:ring-purple-500"
-                  />
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-sm font-semibold text-gray-900">
-                        Сегмент {index + 1}
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        {formatDuration(segment.start_time)} - {formatDuration(segment.end_time)}
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        ({formatDuration(segment.duration)})
-                      </span>
-                    </div>
-                    <div className={`px-3 py-1 rounded-full text-xs font-semibold ${getScoreColor(segment.highlight_score)}`}>
-                      {getScoreLabel(segment.highlight_score)} {(segment.highlight_score * 100).toFixed(0)}%
-                    </div>
+                <div className="flex items-start space-x-4">
+                  <div className="flex-shrink-0 mt-1">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        toggleSegment(segment.id);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-5 h-5 text-purple-600 rounded focus:ring-purple-500"
+                    />
                   </div>
 
-                  <p
-                    className={`text-sm text-gray-700 mb-3 ${
-                      isExpanded ? '' : 'line-clamp-2'
-                    }`}
-                  >
-                    {segment.text_ru}
-                  </p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-sm font-semibold text-gray-900">
+                          Сегмент {index + 1}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {formatDuration(segment.start_time)} -{' '}
+                          {formatDuration(segment.end_time)}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          ({formatDuration(segment.duration)})
+                        </span>
+                      </div>
+                      <div
+                        className={`px-3 py-1 rounded-full text-xs font-semibold ${getScoreColor(
+                          segment.highlight_score
+                        )}`}
+                      >
+                        {getScoreLabel(segment.highlight_score)}{' '}
+                        {(segment.highlight_score * 100).toFixed(0)}%
+                      </div>
+                    </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(segment.criteria_scores)
-                      .filter(([_, score]) => score > 0.6)
-                      .slice(0, 5)
-                      .map(([criterion, score]) => (
+                    <p
+                      className={`text-sm text-gray-700 mb-3 ${
+                        isExpanded ? '' : 'line-clamp-2'
+                      }`}
+                    >
+                      {segment.text_ru}
+                    </p>
+
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(segment.criteria_scores)
+                        .filter(([_, score]) => score > 0.6)
+                        .slice(0, 5)
+                        .map(([criterion, score]) => (
                           <span
                             key={criterion}
                             className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-700"
                           >
-                            {(CRITERIA_LABELS[criterion] || criterion.replace('_', ' '))}:{' '}
-                            {(score * 100).toFixed(0)}%
+                            {CRITERIA_LABELS[criterion] ||
+                              criterion.replace('_', ' ')}
+                            : {(score * 100).toFixed(0)}%
                           </span>
-                      ))}
+                        ))}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
             );
           })}
         </div>
@@ -334,8 +433,17 @@ const SegmentsList = ({
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {[
-                    { id: 'letterbox', label: '⚫️ Чёрные поля', description: 'Вписываем ролик без обрезки, добавляем поля сверху/снизу' },
-                    { id: 'center_crop', label: '✂️ Центр-кроп', description: 'Обрезаем центр под 9:16' },
+                    {
+                      id: 'letterbox',
+                      label: '⚫️ Чёрные поля',
+                      description:
+                        'Вписываем ролик без обрезки, добавляем поля сверху/снизу',
+                    },
+                    {
+                      id: 'center_crop',
+                      label: '✂️ Центр-кроп',
+                      description: 'Обрезаем центр под 9:16',
+                    },
                   ].map((method) => (
                     <button
                       key={method.id}
@@ -343,16 +451,23 @@ const SegmentsList = ({
                       disabled={loading}
                       onClick={() => setVerticalMethod(method.id)}
                       className={`p-4 border rounded-xl text-left transition ${
-                        verticalMethod === method.id ? 'border-purple-600 bg-purple-50' : 'hover:border-purple-500'
+                        verticalMethod === method.id
+                          ? 'border-purple-600 bg-purple-50'
+                          : 'hover:border-purple-500'
                       } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
-                      <div className="font-semibold text-gray-900">{method.label}</div>
-                      <div className="text-sm text-gray-600">{method.description}</div>
+                      <div className="font-semibold text-gray-900">
+                        {method.label}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        {method.description}
+                      </div>
                     </button>
                   ))}
                 </div>
                 <p className="mt-1 text-xs text-gray-500">
-                  Видео будет автоматически переведено в вертикальный формат 1080×1920
+                  Видео будет автоматически переведено в вертикальный формат
+                  1080×1920
                 </p>
               </div>
 
@@ -389,8 +504,12 @@ const SegmentsList = ({
                           : 'hover-border-purple-500'
                       } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
-                      <div className="font-semibold text-gray-900">{option.label}</div>
-                      <div className="text-sm text-gray-600">{option.description}</div>
+                      <div className="font-semibold text-gray-900">
+                        {option.label}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        {option.description}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -413,8 +532,12 @@ const SegmentsList = ({
                           : 'hover-border-purple-500'
                       } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
-                      <div className="font-semibold text-gray-900">{preset.label}</div>
-                      <div className="text-sm text-gray-600">{preset.description}</div>
+                      <div className="font-semibold text-gray-900">
+                        {preset.label}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        {preset.description}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -471,7 +594,8 @@ const SegmentsList = ({
                 '"Montserrat", sans-serif'
               }
               fontWeight={
-                FONT_OPTIONS.find((opt) => opt.id === subtitleFont)?.weight || 400
+                FONT_OPTIONS.find((opt) => opt.id === subtitleFont)?.weight ||
+                400
               }
               fontSize={subtitleFontSize}
               animation={subtitleAnimation}
@@ -481,7 +605,8 @@ const SegmentsList = ({
 
           <div className="flex items-center justify-between">
             <p className="text-sm text-gray-600">
-              Выбрано сегментов: <span className="font-semibold">{selectedSegments.length}</span>
+              Выбрано сегментов:{' '}
+              <span className="font-semibold">{selectedSegments.length}</span>
             </p>
             <button
               onClick={handleProcess}
@@ -528,4 +653,3 @@ const SegmentsList = ({
 };
 
 export default SegmentsList;
-
