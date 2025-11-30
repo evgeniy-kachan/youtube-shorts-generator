@@ -414,6 +414,7 @@ class VideoProcessor:
         font_name: str = "Montserrat Light",
         font_size: int = 86,
         subtitle_position: str = "mid_low",
+        subtitle_background: bool = False,
     ):
         """
         Create ASS subtitle file with TikTok/Instagram style.
@@ -515,9 +516,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             end_time = self._format_timestamp(subtitle['end'])
 
             if style == 'capcut':
-                text = self._build_capcut_line(subtitle, animation_style, position_config)
+                text = self._build_capcut_line(
+                    subtitle,
+                    animation_style,
+                    position_config,
+                    subtitle_background,
+                )
             else:
-                text = self._build_chunk_line(subtitle, animation_style, position_config)
+                text = self._build_chunk_line(
+                    subtitle,
+                    animation_style,
+                    position_config,
+                    subtitle_background,
+                )
 
             ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}\n"
         
@@ -532,7 +543,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         centiseconds = int((seconds % 1) * 100)
         return f"{hours}:{minutes:02d}:{secs:02d}.{centiseconds:02d}"
     
-    def _build_chunk_line(self, subtitle: Dict, animation: str, position_conf: Dict) -> str:
+    def _build_chunk_line(
+        self,
+        subtitle: Dict,
+        animation: str,
+        position_conf: Dict,
+        subtitle_background: bool,
+    ) -> str:
         """Render text chunk with a chosen animation preset."""
         words = subtitle.get('text', '').split()
         if not words and subtitle.get('words'):
@@ -547,9 +564,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         else:
             text = " ".join(words)
 
-        return f"{self._get_base_animation_tag(animation, position_conf)}{text}"
+        return f"{self._get_base_animation_tag(animation, position_conf, subtitle_background)}{text}"
 
-    def _build_capcut_line(self, subtitle: Dict, animation: str, position_conf: Dict) -> str:
+    def _build_capcut_line(
+        self,
+        subtitle: Dict,
+        animation: str,
+        position_conf: Dict,
+        subtitle_background: bool,
+    ) -> str:
         """Animate each word sequentially according to animation preset."""
         words = subtitle.get('words', [])
         if not words:
@@ -559,7 +582,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         chunk_end = subtitle.get('end', chunk_start)
         chunk_duration = max(0.01, chunk_end - chunk_start)
 
-        rendered = [self._get_base_animation_tag(animation, position_conf)]
+        rendered = [self._get_base_animation_tag(animation, position_conf, subtitle_background)]
         tokens: List[str] = []
 
         for idx, word in enumerate(words):
@@ -569,7 +592,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             highlight_mid = int(min(rel_start + 160.0, chunk_duration * 1000))
             highlight_end = int(min(rel_end, chunk_duration * 1000))
 
-            tag = self._get_word_animation_tag(animation, highlight_start, highlight_mid, highlight_end)
+            tag = self._get_word_animation_tag(
+                animation,
+                highlight_start,
+                highlight_mid,
+                highlight_end,
+                subtitle_background,
+            )
 
             word_text = word.get('word', '')
             if idx != len(words) - 1:
@@ -584,41 +613,59 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         rendered.append(" ".join(tokens).replace(" \\N ", r"\N"))
         return "".join(rendered)
 
-    def _get_base_animation_tag(self, animation: str, position_conf: Dict) -> str:
+    def _get_base_animation_tag(
+        self,
+        animation: str,
+        position_conf: Dict,
+        subtitle_background: bool,
+    ) -> str:
         x = position_conf.get('x', 540)
         y = position_conf.get('y', 1250)
         an = position_conf.get('an', 8)
         pos_tag = rf"\pos({x},{y})"
+        background_tags = r"{\blur14\bord2\shad0\1c&H000000&}" if subtitle_background else ""
         presets = {
-            'bounce': rf"{{\an{an}{pos_tag}\fad(80,40)}}",
-            'slide': rf"{{\an{an}\move({x},{y + 220},{x},{y},0,260)\fad(60,60)}}",
-            'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2}}",
+            'bounce': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}}}",
+            'slide': rf"{{\an{an}\move({x},{y + 220},{x},{y},0,260)\fad(60,60){background_tags}}}",
+            'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{background_tags}}}",
         }
         return presets.get(animation, presets['bounce'])
 
-    def _get_word_animation_tag(self, animation: str, start_ms: int, mid_ms: int, end_ms: int) -> str:
+    def _get_word_animation_tag(
+        self,
+        animation: str,
+        start_ms: int,
+        mid_ms: int,
+        end_ms: int,
+        subtitle_background: bool,
+    ) -> str:
+        background_tags = (
+            r"\bord0\shad0"
+            if subtitle_background
+            else ""
+        )
         if animation == 'bounce':
             return (
                 r"{\alpha&HFF"
                 rf"\t({start_ms},{mid_ms},\alpha&H00\fscx120\fscy120\yshad-10)"
-                rf"\t({mid_ms},{end_ms},\fscx100\fscy100\yshad0)}}"
+                rf"\t({mid_ms},{end_ms},\fscx100\fscy100\yshad0{background_tags})}}"
             )
         if animation == 'slide':
             return (
                 r"{\alpha&HFF"
                 rf"\t({start_ms},{mid_ms},\alpha&H40)"
-                rf"\t({mid_ms},{end_ms},\alpha&H00)}}"
+                rf"\t({mid_ms},{end_ms},\alpha&H00{background_tags})}}"
             )
         if animation == 'spark':
             return (
                 r"{\alpha&HFF\1c&H00F7FF\bord4\blur4"
                 rf"\t({start_ms},{mid_ms},\alpha&H00\1c&HFFFFFF\bord0\blur0)"
-                rf"\t({mid_ms},{end_ms},\alpha&H00)}}"
+                rf"\t({mid_ms},{end_ms},\alpha&H00{background_tags})}}"
             )
         return (
             r"{\alpha&HFF"
             rf"\t({start_ms},{mid_ms},\alpha&H00\fscx118\fscy118)"
-            rf"\t({mid_ms},{end_ms},\fscx100\fscy100)}}"
+            rf"\t({mid_ms},{end_ms},\fscx100\fscy100{background_tags})}}"
         )
     
     def extract_audio(self, video_path: str, output_path: str) -> str:
