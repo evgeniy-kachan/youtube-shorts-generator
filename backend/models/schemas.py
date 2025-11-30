@@ -63,10 +63,6 @@ class ProcessRequest(BaseModel):
         default=False,
         description="Enable background blur/box behind subtitles"
     )
-    subtitle_animation: str = Field(
-        default="bounce",
-        description="Subtitle animation preset: bounce, slide, spark"
-    )
     
 
 class ProcessedSegment(BaseModel):
