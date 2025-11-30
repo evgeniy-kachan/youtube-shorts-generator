@@ -24,9 +24,18 @@ class VideoProcessor:
         "bottom_center": {"x": 540, "y": 1520, "an": 2, "marginv": 260},
     }
     
-    def __init__(self, output_dir: Path):
+    def __init__(self, output_dir: Path, fonts_dir: Path | None = None):
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        default_fonts_dir = Path(__file__).resolve().parents[2] / "fonts"
+        self.fonts_dir = fonts_dir or default_fonts_dir
+        if self.fonts_dir.exists():
+            logger.info("VideoProcessor fonts directory set to %s", self.fonts_dir)
+        else:
+            logger.warning(
+                "Fonts directory %s was not found. FFmpeg may fall back to system fonts.",
+                self.fonts_dir,
+            )
         
     def cut_segment(
         self,
@@ -228,13 +237,15 @@ class VideoProcessor:
             video_input = ffmpeg.input(working_video)
             audio_input = ffmpeg.input(audio_path)
             
+            ass_filter = self._build_ass_filter(subtitle_path)
+
             output = (
                 ffmpeg
                 .output(
                     video_input.video,
                     audio_input.audio,
                     output_path,
-                    vf=f"ass={subtitle_path}",
+                    vf=ass_filter,
                     shortest=None,  # Use shortest stream
                     **{'c:v': 'libx264', 'c:a': 'aac', 'b:a': '192k', 'preset': 'medium', 'crf': 23}
                 )
@@ -324,6 +335,29 @@ class VideoProcessor:
         Path(processed_path).replace(output_path)
         logger.info(f"Final video saved to: {output_path}")
         return str(output_path)
+
+    def _build_ass_filter(self, subtitle_path: Path) -> str:
+        """Build ffmpeg ass filter string with optional fonts directory."""
+        ass_path = self._escape_filter_path(subtitle_path)
+        filter_str = f"ass={ass_path}"
+        if self.fonts_dir and self.fonts_dir.exists():
+            fonts_path = self._escape_filter_path(self.fonts_dir)
+            filter_str += f":fontsdir={fonts_path}"
+        else:
+            logger.debug("Fonts directory unavailable for ASS filter; using default FFmpeg fonts")
+        return filter_str
+
+    @staticmethod
+    def _escape_filter_path(path: Path) -> str:
+        """
+        Escape special characters for ffmpeg filter args.
+        Handles spaces, colons, and backslashes.
+        """
+        escaped = str(path)
+        escaped = escaped.replace('\\', r'\\')
+        escaped = escaped.replace(':', r'\:')
+        escaped = escaped.replace(' ', r'\ ')
+        return escaped
 
     def _generate_basic_subtitles(
         self,
@@ -441,7 +475,7 @@ class VideoProcessor:
                 'outlinecolor': '&H00000000',
                 'borderstyle': 1,
                 'outline': 0,
-                'shadow': 8,
+                'shadow': 0,
                 'alignment': 8,
                 'marginv': 450,
                 'animation': 'bounce',
@@ -453,7 +487,7 @@ class VideoProcessor:
                 'outlinecolor': '&H00000000',
                 'borderstyle': 1,
                 'outline': 0,
-                'shadow': 6,
+                'shadow': 0,
                 'alignment': 2,
                 'marginv': 90,
                 'animation': 'slide',
@@ -465,7 +499,7 @@ class VideoProcessor:
                 'outlinecolor': '&H00000000',
                 'borderstyle': 1,
                 'outline': 0,
-                'shadow': 5,
+                'shadow': 0,
                 'alignment': 2,
                 'marginv': 80,
                 'animation': 'spark',
@@ -477,7 +511,7 @@ class VideoProcessor:
                 'outlinecolor': '&H00000000',
                 'borderstyle': 1,
                 'outline': 0,
-                'shadow': 5,
+                'shadow': 0,
                 'alignment': 2,
                 'marginv': 70,
                 'animation': 'bounce',
