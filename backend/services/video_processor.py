@@ -450,6 +450,7 @@ class VideoProcessor:
         subtitle_position: str = "mid_low",
         subtitle_background: bool = False,
     ):
+        logger.info(f"Generating subtitles with animation='{animation}', font='{font_name}', bg={subtitle_background}")
         """
         Create ASS subtitle file with TikTok/Instagram style.
         
