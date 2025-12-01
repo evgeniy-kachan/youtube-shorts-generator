@@ -662,6 +662,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             'bounce': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}}}",
             'slide': rf"{{\an{an}\move({x},{y + 220},{x},{y},0,260)\fad(60,60){background_tags}}}",
             'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{background_tags}}}",
+            'fade': rf"{{\an{an}{pos_tag}\fad(100,100){background_tags}}}",
+            'scale': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}}}",
+            'karaoke': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}}}",
+            'typewriter': rf"{{\an{an}{pos_tag}{background_tags}}}",
+            'mask': rf"{{\an{an}\move({x},{y + 100},{x},{y},0,300){background_tags}}}",
+            'simple_fade': rf"{{\an{an}{pos_tag}\fad(150,150){background_tags}}}",
+            'word_pop': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}}}",
         }
         return presets.get(animation, presets['bounce'])
 
@@ -681,8 +688,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if animation == 'bounce':
             return (
                 r"{\alpha&HFF"
-                rf"\t({start_ms},{mid_ms},\alpha&H00\fscx120\fscy120\yshad-10)"
-                rf"\t({mid_ms},{end_ms},\fscx100\fscy100\yshad0{background_tags})}}"
+                rf"\t({start_ms},{mid_ms},\alpha&H00\fscy120)"
+                rf"\t({mid_ms},{end_ms},\fscy100{background_tags})}}"
             )
         if animation == 'slide':
             return (
@@ -695,6 +702,49 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 r"{\alpha&HFF\1c&H00F7FF\bord4\blur4"
                 rf"\t({start_ms},{mid_ms},\alpha&H00\1c&HFFFFFF\bord0\blur0)"
                 rf"\t({mid_ms},{end_ms},\alpha&H00{background_tags})}}"
+            )
+        if animation == 'fade':
+            return (
+                r"{\alpha&HFF"
+                rf"\t({start_ms},{mid_ms},\alpha&H00)"
+                rf"\t({mid_ms},{end_ms},{background_tags})}}"
+            )
+        if animation == 'scale':
+            return (
+                r"{\alpha&HFF\fscx90\fscy90"
+                rf"\t({start_ms},{mid_ms},\alpha&H00\fscx105\fscy105)"
+                rf"\t({mid_ms},{end_ms},\fscx100\fscy100{background_tags})}}"
+            )
+        if animation == 'word_pop':
+            return (
+                r"{\alpha&HFF\fscx0\fscy0"
+                rf"\t({start_ms},{mid_ms},\alpha&H00\fscx115\fscy115)"
+                rf"\t({mid_ms},{end_ms},\fscx100\fscy100{background_tags})}}"
+            )
+        if animation == 'karaoke':
+            # Word appears in Cyan/Gold, then fades to White
+            return (
+                r"{\alpha&HFF\1c&H00E1FF"
+                rf"\t({start_ms},{mid_ms},\alpha&H00)"
+                rf"\t({mid_ms},{end_ms},\1c&HFFFFFF{background_tags})}}"
+            )
+        if animation == 'typewriter':
+            # Sharp appearance
+            return (
+                r"{\alpha&HFF"
+                rf"\t({start_ms},{start_ms + 1},\alpha&H00{background_tags})}}"
+            )
+        if animation == 'mask':
+            # Clip reveal simulation: move slightly up and appear
+            return (
+                r"{\alpha&HFF"
+                rf"\t({start_ms},{mid_ms},\alpha&H00{background_tags})}}"
+            )
+        if animation == 'simple_fade':
+            # Smooth appearance opacity 0->1
+            return (
+                r"{\alpha&HFF"
+                rf"\t({start_ms},{mid_ms},\alpha&H00{background_tags})}}"
             )
         return (
             r"{\alpha&HFF"

@@ -116,6 +116,30 @@ const FONT_OPTIONS = [
     css: '"Source Sans 3", sans-serif',
     weight: 300,
   },
+  {
+    id: 'IBMPlexSans Light',
+    label: 'IBM Plex Sans Light',
+    css: '"IBM Plex Sans", sans-serif',
+    weight: 300,
+  },
+  {
+    id: 'IBMPlexSans Condensed',
+    label: 'IBM Plex Sans Condensed',
+    css: '"IBM Plex Sans Condensed", sans-serif',
+    weight: 400,
+  },
+  {
+    id: 'Open Sans Condensed Light',
+    label: 'Open Sans Condensed Light',
+    css: '"Open Sans Condensed", sans-serif',
+    weight: 300,
+  },
+  {
+    id: 'Roboto Regular',
+    label: 'Roboto Regular',
+    css: '"Roboto", sans-serif',
+    weight: 400,
+  },
 ];
 
 const FONT_SIZE_OPTIONS = [72, 82, 92, 102];
@@ -209,7 +233,7 @@ const SubtitlePreview = ({
   });
 
   return (
-    <div className="bg-gray-50 border rounded-2xl shadow-inner p-4">
+    <div className="bg-gray-50 border rounded-2xl shadow-inner p-4 sticky top-6 self-start">
       <div className="flex items-center justify-between mb-2">
         <p className="text-sm font-semibold text-gray-800">Превью макета</p>
         <span className="text-xs text-gray-500">9:16</span>
@@ -218,53 +242,34 @@ const SubtitlePreview = ({
         <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.35),_transparent_55%)]" />
         <div style={blockWrapperStyle}>
           <div
-            className={`subtitle-preview-card ${
-              animation === 'bounce' ? 'preview-bounce-container' : `preview-anim-${animation}`
-            }`}
+            className="subtitle-preview-card flex flex-col items-center"
             style={blockStyle(showBackground)}
           >
             {previewLines.slice(0, 2).map((line, idx) => {
-              if (animation === 'bounce') {
-                const words = line.split(' ').filter(Boolean);
-                return (
-                  <span key={idx} className="preview-bounce-line">
-                    {words.map((word, wordIdx) => (
-                      <span
-                        key={`${idx}-${wordIdx}`}
-                        className="preview-word-bounce"
-                        style={{
-                          ...lineTextStyle,
-                          animationDelay: `${wordIdx * 0.08}s`,
-                          display: 'inline-block',
-                        }}
-                      >
-                        {word}&nbsp;
-                      </span>
-                    ))}
-                  </span>
-                );
-              }
-
+              const words = line.split(' ').filter(Boolean);
               return (
-                <span
-                  key={idx}
-                  className="block leading-tight"
-                  style={{
-                    ...lineTextStyle,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {line}
+                <span key={idx} className="preview-line block">
+                  {words.map((word, wordIdx) => (
+                    <span
+                      key={`${idx}-${wordIdx}`}
+                      className={`preview-word anim-${animation}`}
+                      style={{
+                        ...lineTextStyle,
+                        animationDelay: `${wordIdx * 0.2}s`,
+                        marginRight: '0.25em',
+                      }}
+                    >
+                      {word}
+                    </span>
+                  ))}
                 </span>
               );
             })}
           </div>
         </div>
       </div>
-      <p className="text-xs text-gray-500 mt-3">
-        Макет помогает оценить расположение текста и выбранный стиль до рендера.
+      <p className="text-xs text-gray-500 mt-3 text-center">
+        Прокрутите вниз для настроек
       </p>
     </div>
   );
@@ -280,11 +285,16 @@ const SegmentsList = ({
   const [selectedSegments, setSelectedSegments] = useState([]);
   const [expandedSegments, setExpandedSegments] = useState([]);
   const [verticalMethod, setVerticalMethod] = useState('letterbox');
+  
+  // Style settings
   const [subtitleAnimation, setSubtitleAnimation] = useState('bounce');
   const [subtitlePosition, setSubtitlePosition] = useState('mid_low');
   const [subtitleFont, setSubtitleFont] = useState('Montserrat Light');
   const [subtitleFontSize, setSubtitleFontSize] = useState(86);
   const [subtitleBackground, setSubtitleBackground] = useState(false);
+
+  // Tabs: 'style', 'text', 'position'
+  const [activeTab, setActiveTab] = useState('style');
 
   const toggleSegment = (segmentId) => {
     setSelectedSegments((prev) =>
@@ -351,7 +361,7 @@ const SegmentsList = ({
   };
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className="space-y-6 max-w-6xl mx-auto pb-20">
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -381,7 +391,7 @@ const SegmentsList = ({
           </div>
         </div>
 
-        <div className="space-y-3 max-h-96 overflow-y-auto">
+        <div className="space-y-3 max-h-96 overflow-y-auto mb-8">
           {segments.map((segment, index) => {
             const isSelected = selectedSegments.includes(segment.id);
             const isExpanded = expandedSegments.includes(segment.id);
@@ -463,251 +473,322 @@ const SegmentsList = ({
           })}
         </div>
 
-        <div className="mt-6 pt-6 border-t space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-5">
+        <div className="pt-6 border-t">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Настройки видео</h3>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            
+            {/* Left Column: Controls (Tabs) */}
+            <div className="lg:col-span-7 space-y-6">
+              
+              {/* Format Selection (Always visible) */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  📱 Формат для Reels/Shorts (9:16):
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                  Формат (9:16)
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex space-x-3">
                   {[
-                    {
-                      id: 'letterbox',
-                      label: '⚫️ Чёрные поля',
-                      description:
-                        'Вписываем ролик без обрезки, добавляем поля сверху/снизу',
-                    },
-                    {
-                      id: 'center_crop',
-                      label: '✂️ Центр-кроп',
-                      description: 'Обрезаем центр под 9:16',
-                    },
+                    { id: 'letterbox', label: '⚫️ Вписать (поля)' },
+                    { id: 'center_crop', label: '✂️ Кроп (центр)' },
                   ].map((method) => (
                     <button
                       key={method.id}
                       type="button"
                       disabled={loading}
                       onClick={() => setVerticalMethod(method.id)}
-                      className={`p-4 border rounded-xl text-left transition ${
+                      className={`flex-1 py-2 px-3 border rounded-lg text-sm font-medium transition ${
                         verticalMethod === method.id
-                          ? 'border-purple-600 bg-purple-50'
-                          : 'hover:border-purple-500'
-                      } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          ? 'border-purple-600 bg-purple-50 text-purple-700'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
                     >
-                      <div className="font-semibold text-gray-900">
-                        {method.label}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {method.description}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-                <p className="mt-1 text-xs text-gray-500">
-                  Видео будет автоматически переведено в вертикальный формат
-                  1080×1920
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  ✨ Анимация субтитров:
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    {
-                      id: 'bounce',
-                      label: '🔊 Bounce',
-                      description: 'Пружинящее появление слов, как в CapCut',
-                    },
-                    {
-                      id: 'slide',
-                      label: '⬆️ Slide-up',
-                      description: 'Плавный выезд снизу + мягкое проявление',
-                    },
-                    {
-                      id: 'spark',
-                      label: '✨ Spark',
-                      description: 'Лёгкое свечение каждого слова',
-                    },
-                  ].map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      disabled={loading}
-                      onClick={() => setSubtitleAnimation(option.id)}
-                      className={`p-4 border rounded-xl text-left transition ${
-                        subtitleAnimation === option.id
-                          ? 'border-purple-600 bg-purple-50'
-                          : 'hover-border-purple-500'
-                      } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      <div className="font-semibold text-gray-900">
-                        {option.label}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {option.description}
-                      </div>
+                      {method.label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  📍 Позиция субтитров:
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {SUBTITLE_POSITIONS.map((preset) => (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      disabled={loading}
-                      onClick={() => setSubtitlePosition(preset.id)}
-                      className={`p-4 border rounded-xl text-left transition ${
-                        subtitlePosition === preset.id
-                          ? 'border-purple-600 bg-purple-50'
-                          : 'hover-border-purple-500'
-                      } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      <div className="font-semibold text-gray-900">
-                        {preset.label}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {preset.description}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    🅰️ Шрифт:
-                  </label>
-                  <select
-                    className="input-field"
-                    value={subtitleFont}
-                    disabled={loading}
-                    onChange={(e) => setSubtitleFont(e.target.value)}
+              {/* Tabs Navigation */}
+              <div className="flex border-b border-gray-200">
+                {[
+                  { id: 'style', label: '✨ Анимация' },
+                  { id: 'text', label: '🅰️ Текст и Фон' },
+                  { id: 'position', label: '📍 Позиция' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`py-2 px-4 text-sm font-medium border-b-2 transition-colors ${
+                      activeTab === tab.id
+                        ? 'border-purple-600 text-purple-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
                   >
-                    {FONT_OPTIONS.map((font) => (
-                      <option key={font.id} value={font.id}>
-                        {font.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    🔠 Размер:
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {FONT_SIZE_OPTIONS.map((size) => (
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Tab Content */}
+              <div className="min-h-[300px]">
+                
+                {/* TAB: STYLE (Animations) */}
+                {activeTab === 'style' && (
+                  <div className="animate-fadeIn">
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        {
+                          id: 'bounce',
+                          label: 'Bounce',
+                          description: 'Пружинящее',
+                        },
+                        {
+                          id: 'word_pop',
+                          label: 'Word Pop',
+                          description: 'Вылет из центра',
+                        },
+                        {
+                          id: 'slide',
+                          label: 'Slide Up',
+                          description: 'Выезд снизу',
+                        },
+                        {
+                          id: 'fade',
+                          label: 'Fade',
+                          description: 'Прозрачность',
+                        },
+                        {
+                          id: 'scale',
+                          label: 'Scale',
+                          description: 'Увеличение',
+                        },
+                        {
+                          id: 'typewriter',
+                          label: 'Typewriter',
+                          description: 'Печатная машинка',
+                        },
+                        {
+                          id: 'mask',
+                          label: 'Mask Reveal',
+                          description: 'Маска снизу',
+                        },
+                        {
+                          id: 'simple_fade',
+                          label: 'Simple Fade',
+                          description: 'Мягкое',
+                        },
+                        {
+                          id: 'spark',
+                          label: 'Spark',
+                          description: 'Свечение',
+                        },
+                        {
+                          id: 'karaoke',
+                          label: 'Karaoke',
+                          description: 'Цвет',
+                        },
+                      ].map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          disabled={loading}
+                          onClick={() => setSubtitleAnimation(option.id)}
+                          className={`btn-anim-hover p-3 border rounded-xl text-left transition group relative overflow-hidden ${
+                            subtitleAnimation === option.id
+                              ? 'border-purple-600 bg-purple-50 ring-1 ring-purple-600'
+                              : 'border-gray-200 hover:border-purple-400 hover:bg-gray-50'
+                          }`}
+                        >
+                          <div className="font-semibold text-gray-900 flex items-center">
+                            {/* This span will animate on hover */}
+                            <span className={`anim-target anim-${option.id} inline-block`}>
+                              {option.label}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {option.description}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB: TEXT (Font, Size, Bg) */}
+                {activeTab === 'text' && (
+                  <div className="space-y-6 animate-fadeIn">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Шрифт
+                      </label>
+                      <select
+                        className="input-field"
+                        value={subtitleFont}
+                        disabled={loading}
+                        onChange={(e) => setSubtitleFont(e.target.value)}
+                        style={{
+                          fontFamily: FONT_OPTIONS.find(f => f.id === subtitleFont)?.css
+                        }}
+                      >
+                        {FONT_OPTIONS.map((font) => (
+                          <option 
+                            key={font.id} 
+                            value={font.id}
+                            style={{ fontFamily: font.css }}
+                          >
+                            {font.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Размер текста
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {FONT_SIZE_OPTIONS.map((size) => (
+                          <button
+                            key={size}
+                            type="button"
+                            disabled={loading}
+                            onClick={() => setSubtitleFontSize(size)}
+                            className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${
+                              subtitleFontSize === size
+                                ? 'border-purple-600 bg-purple-50 text-purple-700'
+                                : 'border-gray-200 hover:border-purple-500 text-gray-700'
+                            }`}
+                          >
+                            {size}px
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Подложка
+                      </label>
                       <button
-                        key={size}
                         type="button"
                         disabled={loading}
-                        onClick={() => setSubtitleFontSize(size)}
-                        className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${
-                          subtitleFontSize === size
+                        onClick={() => setSubtitleBackground((prev) => !prev)}
+                        className={`w-full sm:w-auto px-4 py-2 rounded-lg border text-sm font-semibold transition flex items-center justify-center gap-2 ${
+                          subtitleBackground
                             ? 'border-purple-600 bg-purple-50 text-purple-700'
                             : 'border-gray-200 hover:border-purple-500 text-gray-700'
-                        } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        }`}
                       >
-                        {size}px
+                        <span>{subtitleBackground ? '✅ Фон включён' : '⬜️ Фон выключен'}</span>
                       </button>
-                    ))}
+                      <p className="text-xs text-gray-500 mt-2">
+                        Полупрозрачный черный блок для лучшей читаемости.
+                      </p>
+                    </div>
                   </div>
-                </div>
-              </div>
+                )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  🌗 Фон под субтитрами:
-                </label>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={() => setSubtitleBackground((prev) => !prev)}
-                    className={`px-4 py-2 rounded-lg border text-sm font-semibold transition ${
-                      subtitleBackground
-                        ? 'border-purple-600 bg-purple-50 text-purple-700'
-                        : 'border-gray-200 hover:border-purple-500 text-gray-700'
-                    } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    {subtitleBackground ? 'Фон включён' : 'Фон выключен'}
-                  </button>
-                  <p className="text-xs text-gray-500">
-                    По умолчанию прозрачный. Включите, если нужна затемнённая подложка.
-                  </p>
-                </div>
+                {/* TAB: POSITION */}
+                {activeTab === 'position' && (
+                  <div className="animate-fadeIn">
+                    <div className="grid grid-cols-1 gap-3">
+                      {SUBTITLE_POSITIONS.map((preset) => (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          disabled={loading}
+                          onClick={() => setSubtitlePosition(preset.id)}
+                          className={`p-4 border rounded-xl text-left transition flex items-center justify-between ${
+                            subtitlePosition === preset.id
+                              ? 'border-purple-600 bg-purple-50'
+                              : 'border-gray-200 hover:border-purple-500'
+                          }`}
+                        >
+                          <div>
+                            <div className="font-semibold text-gray-900">
+                              {preset.label}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              {preset.description}
+                            </div>
+                          </div>
+                          {subtitlePosition === preset.id && (
+                            <span className="text-purple-600 text-xl">📍</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
               </div>
             </div>
 
-            <SubtitlePreview
-              text={previewText}
-              positionId={subtitlePosition}
-              fontFamily={
-                FONT_OPTIONS.find((opt) => opt.id === subtitleFont)?.css ||
-                '"Montserrat", sans-serif'
-              }
-              fontWeight={
-                FONT_OPTIONS.find((opt) => opt.id === subtitleFont)?.weight ||
-                400
-              }
-              fontSize={subtitleFontSize}
-              animation={subtitleAnimation}
-              showBackground={subtitleBackground}
-              thumbnailUrl={videoThumbnail}
-            />
+            {/* Right Column: Sticky Preview */}
+            <div className="lg:col-span-5">
+              <SubtitlePreview
+                text={previewText}
+                positionId={subtitlePosition}
+                fontFamily={
+                  FONT_OPTIONS.find((opt) => opt.id === subtitleFont)?.css ||
+                  '"Montserrat", sans-serif'
+                }
+                fontWeight={
+                  FONT_OPTIONS.find((opt) => opt.id === subtitleFont)?.weight ||
+                  400
+                }
+                fontSize={subtitleFontSize}
+                animation={subtitleAnimation}
+                showBackground={subtitleBackground}
+                thumbnailUrl={videoThumbnail}
+              />
+            </div>
           </div>
 
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-600">
-              Выбрано сегментов:{' '}
-              <span className="font-semibold">{selectedSegments.length}</span>
-            </p>
-            <button
-              onClick={handleProcess}
-              disabled={selectedSegments.length === 0 || loading}
-              className={`btn-primary ${
-                selectedSegments.length === 0 || loading
-                  ? 'opacity-50 cursor-not-allowed'
-                  : ''
-              }`}
-            >
-              {loading ? (
-                <span className="flex items-center">
-                  <svg
-                    className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    ></circle>
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                  Обрабатываем...
-                </span>
-              ) : (
-                `Создать ${selectedSegments.length} клипов`
-              )}
-            </button>
+          {/* Process Button */}
+          <div className="mt-8 flex justify-end border-t pt-6">
+            <div className="flex items-center gap-4">
+              <p className="text-sm text-gray-600">
+                Выбрано сегментов: <span className="font-bold text-gray-900">{selectedSegments.length}</span>
+              </p>
+              <button
+                onClick={handleProcess}
+                disabled={selectedSegments.length === 0 || loading}
+                className={`btn-primary px-8 py-3 text-lg shadow-xl ${
+                  selectedSegments.length === 0 || loading
+                    ? 'opacity-50 cursor-not-allowed'
+                    : ''
+                }`}
+              >
+                {loading ? (
+                  <span className="flex items-center">
+                    <svg
+                      className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      ></circle>
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      ></path>
+                    </svg>
+                    Обработка...
+                  </span>
+                ) : (
+                  `Создать клипы 🚀`
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
