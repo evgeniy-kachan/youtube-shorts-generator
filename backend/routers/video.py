@@ -2,6 +2,7 @@ import os
 import uuid
 import logging
 import subprocess
+from itertools import cycle
 from pathlib import Path
 from typing import List, Optional
 
@@ -13,7 +14,7 @@ from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
 from backend.services.highlight_analyzer import HighlightAnalyzer
 from backend.services.translation import Translator
-from backend.services.tts import TTSService
+from backend.services.tts import TTSService, ElevenLabsTTSService
 from backend.services.video_processor import VideoProcessor
 from backend.services.text_markup import TextMarkupService
 from backend.utils.file_utils import get_temp_dir, get_output_dir, clear_temp_dir
@@ -64,6 +65,78 @@ def get_service(name: str):
         else:
             raise ValueError(f"Unknown service: {name}")
     return _services[name]
+
+
+def get_tts_service(provider: str):
+    """Return configured TTS service instance (local Silero or ElevenLabs)."""
+    normalized = (provider or "local").lower()
+    if normalized == "elevenlabs":
+        cache_key = "tts_elevenlabs"
+        if cache_key not in _services:
+            if not config.ELEVENLABS_API_KEY:
+                raise ValueError("ElevenLabs API key is not configured on the server.")
+            _services[cache_key] = ElevenLabsTTSService(
+                api_key=config.ELEVENLABS_API_KEY,
+                voice_id=config.ELEVENLABS_VOICE_ID,
+                model_id=config.ELEVENLABS_MODEL_ID,
+                language=config.SILERO_LANGUAGE,
+                max_chunk_chars=config.ELEVENLABS_MAX_CHARS,
+                base_url=config.ELEVENLABS_BASE_URL,
+                request_timeout=config.ELEVENLABS_REQUEST_TIMEOUT,
+                stability=config.ELEVENLABS_STABILITY,
+                similarity_boost=config.ELEVENLABS_SIMILARITY,
+                style=config.ELEVENLABS_STYLE,
+                speaker_boost=config.ELEVENLABS_SPEAKER_BOOST,
+            )
+        return _services[cache_key]
+
+    cache_key = "tts_local"
+    if cache_key not in _services:
+        _services[cache_key] = TTSService(
+            language=config.SILERO_LANGUAGE,
+            speaker=config.SILERO_SPEAKER,
+            model_version=config.SILERO_MODEL_VERSION,
+        )
+    return _services[cache_key]
+
+
+VOICE_MIX_PRESETS = {
+    "male_duo": ["male", "male", "male"],
+    "mixed_duo": ["male", "female", "male"],
+    "female_duo": ["female", "female", "female"],
+}
+
+
+def _extract_unique_speakers(segments: list[dict]) -> list[str]:
+    order: list[str] = []
+    for segment in segments:
+        for speaker_id in segment.get("speakers") or []:
+            if speaker_id and speaker_id not in order:
+                order.append(speaker_id)
+    if not order:
+        order = ["speaker_0"]
+    return order
+
+
+def _build_voice_plan(segments: list[dict], mix: str) -> dict[str, str]:
+    pattern = VOICE_MIX_PRESETS.get(mix, VOICE_MIX_PRESETS["male_duo"])
+    male_pool = config.ELEVENLABS_VOICE_IDS_MALE or [config.ELEVENLABS_VOICE_ID]
+    female_pool = config.ELEVENLABS_VOICE_IDS_FEMALE or [config.ELEVENLABS_VOICE_ID]
+    male_iter = cycle(male_pool)
+    female_iter = cycle(female_pool)
+
+    plan: dict[str, str] = {}
+    speakers = _extract_unique_speakers(segments)
+
+    for idx, speaker_id in enumerate(speakers):
+        desired_gender = pattern[min(idx, len(pattern) - 1)]
+        if desired_gender == "female":
+            plan[speaker_id] = next(female_iter)
+        else:
+            plan[speaker_id] = next(male_iter)
+
+    plan["__default__"] = plan.get(speakers[0], config.ELEVENLABS_VOICE_ID)
+    return plan
 
 def _calculate_iou(segment1: dict, segment2: dict) -> float:
     """Calculate Intersection over Union for two time segments."""
@@ -299,6 +372,8 @@ def _process_segments_task(
     task_id: str,
     video_id: str,
     segment_ids: list,
+    tts_provider: str = "local",
+    voice_mix: str = "male_duo",
     vertical_method: str = "letterbox",
     subtitle_animation: str = "bounce",
     subtitle_position: str = "mid_low",
@@ -325,13 +400,21 @@ def _process_segments_task(
             
         # 2. Generate audio for each segment
         tasks[task_id] = {"status": "processing", "progress": 0.3, "message": "Generating audio..."}
-        tts_service = get_service("tts")
+        tts_service = get_tts_service(tts_provider)
+        voice_plan = None
+        if (tts_provider or "").lower() == "elevenlabs":
+            voice_plan = _build_voice_plan(segments_to_process, voice_mix)
         output_dir = get_output_dir(video_id)
         
         for segment in segments_to_process:
             audio_path = os.path.join(output_dir, f"{segment['id']}.wav")
             tts_text = segment.get('text_ru_tts') or segment.get('text_ru')
-            tts_service.synthesize_and_save(tts_text, audio_path)
+            voice_override = None
+            if voice_plan:
+                speaker_chain = segment.get('speakers') or []
+                primary_speaker = speaker_chain[0] if speaker_chain else None
+                voice_override = voice_plan.get(primary_speaker) or voice_plan.get("__default__")
+            tts_service.synthesize_and_save(tts_text, audio_path, speaker=voice_override)
             segment['audio_path'] = audio_path
             
         # 3. Render videos
@@ -455,6 +538,8 @@ async def process_segments(request: ProcessRequest, background_tasks: Background
         task_id,
         request.video_id,
         request.segment_ids,
+        request.tts_provider,
+        request.voice_mix,
         request.vertical_method,
         request.subtitle_animation,
         request.subtitle_position,

@@ -24,6 +24,8 @@ export const getTaskStatus = async (taskId) => {
 export const processSegments = async (
   videoId,
   segmentIds,
+  ttsProvider = 'local',
+  voiceMix = 'male_duo',
   verticalMethod = 'letterbox',
   subtitleAnimation = 'bounce',
   subtitlePosition = 'mid_low',
@@ -34,6 +36,8 @@ export const processSegments = async (
   const response = await api.post('/api/video/process', {
     video_id: videoId,
     segment_ids: segmentIds,
+    tts_provider: ttsProvider,
+    voice_mix: voiceMix,
     vertical_method: verticalMethod,
     subtitle_animation: subtitleAnimation,
     subtitle_position: subtitlePosition,

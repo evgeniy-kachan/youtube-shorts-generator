@@ -292,6 +292,8 @@ const SegmentsList = ({
   const [subtitleFont, setSubtitleFont] = useState('Montserrat Light');
   const [subtitleFontSize, setSubtitleFontSize] = useState(86);
   const [subtitleBackground, setSubtitleBackground] = useState(false);
+  const [ttsProvider, setTtsProvider] = useState('local');
+  const [voiceMix, setVoiceMix] = useState('male_duo');
 
   // Tabs: 'style', 'text', 'position'
   const [activeTab, setActiveTab] = useState('style');
@@ -329,7 +331,9 @@ const SegmentsList = ({
         subtitlePosition,
         subtitleFont,
         subtitleFontSize,
-        subtitleBackground
+        subtitleBackground,
+        ttsProvider,
+        voiceMix
       );
     }
   };
@@ -506,6 +510,75 @@ const SegmentsList = ({
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                  Озвучка
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    {
+                      id: 'local',
+                      title: 'Локальная',
+                      description: 'Silero на сервере, без доп. затрат',
+                    },
+                    {
+                      id: 'elevenlabs',
+                      title: 'ElevenLabs',
+                      description: 'Облачный голос ElevenLabs',
+                    },
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => setTtsProvider(option.id)}
+                      className={`p-4 border rounded-xl text-left transition ${
+                        ttsProvider === option.id
+                          ? 'border-purple-600 bg-purple-50 ring-1 ring-purple-300'
+                          : 'border-gray-200 hover:border-purple-400'
+                      }`}
+                    >
+                      <div className="font-semibold text-gray-900">{option.title}</div>
+                      <div className="text-xs text-gray-500 mt-1">{option.description}</div>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  ElevenLabs требует активный интернет и API ключ, но даёт более живой голос.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                  Состав голосов (для ElevenLabs)
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    { id: 'male_duo', label: '2 мужских', description: 'Интервью с мужчинами' },
+                    { id: 'mixed_duo', label: 'Муж + Жен', description: 'Смешанная пара' },
+                    { id: 'female_duo', label: '2 женских', description: 'Интервью с женщинами' },
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      disabled={loading || ttsProvider !== 'elevenlabs'}
+                      onClick={() => setVoiceMix(option.id)}
+                      className={`p-4 border rounded-xl text-left transition ${
+                        voiceMix === option.id
+                          ? 'border-purple-600 bg-purple-50 ring-1 ring-purple-300'
+                          : 'border-gray-200 hover:border-purple-400'
+                      } ${ttsProvider !== 'elevenlabs' ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="font-semibold text-gray-900">{option.label}</div>
+                      <div className="text-xs text-gray-500 mt-1">{option.description}</div>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  По умолчанию назначаются мужские голоса. Выберите другой вариант, если есть спикер-женщина.
+                </p>
               </div>
 
               {/* Tabs Navigation */}

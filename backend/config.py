@@ -6,6 +6,12 @@ import torch
 
 load_dotenv()
 
+
+def _split_env_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
 # Server Configuration
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", 8000))
@@ -56,13 +62,27 @@ TRANSLATION_MODEL_NAME = "facebook/nllb-200-distilled-600M"
 TRANSLATION_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 TRANSLATION_MAX_LENGTH = 1024
 
-# TTS Configuration
+# TTS Configuration (local Silero defaults)
 SILERO_LANGUAGE = "ru"
 SILERO_SPEAKER = "eugene"  # Russian voice (aidar, baya, kseniya, xenia, eugene, random)
 SILERO_MODEL_VERSION = "v3_1_ru"  # Model version for torch.hub.load
 TTS_ENABLE_MARKUP = os.getenv("TTS_ENABLE_MARKUP", "true").lower() in ("1", "true", "yes")
 TTS_MARKUP_MODEL = os.getenv("TTS_MARKUP_MODEL", DEEPSEEK_MODEL)
 TTS_MARKUP_MAX_TOKENS = int(os.getenv("TTS_MARKUP_MAX_TOKENS", 160))
+
+# ElevenLabs Configuration
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
+ELEVENLABS_BASE_URL = os.getenv("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io/v1")
+ELEVENLABS_STABILITY = float(os.getenv("ELEVENLABS_STABILITY", 0.35))
+ELEVENLABS_SIMILARITY = float(os.getenv("ELEVENLABS_SIMILARITY", 0.75))
+ELEVENLABS_STYLE = float(os.getenv("ELEVENLABS_STYLE", 0.0))
+ELEVENLABS_SPEAKER_BOOST = os.getenv("ELEVENLABS_SPEAKER_BOOST", "true").lower() in ("1", "true", "yes")
+ELEVENLABS_MAX_CHARS = int(os.getenv("ELEVENLABS_MAX_CHARS", 500))
+ELEVENLABS_REQUEST_TIMEOUT = float(os.getenv("ELEVENLABS_REQUEST_TIMEOUT", 45))
+ELEVENLABS_VOICE_IDS_MALE = _split_env_list(os.getenv("ELEVENLABS_VOICE_IDS_MALE"))
+ELEVENLABS_VOICE_IDS_FEMALE = _split_env_list(os.getenv("ELEVENLABS_VOICE_IDS_FEMALE"))
 
 # Video Processing Configuration
 VERTICAL_CONVERSION_METHOD = "letterbox"  # letterbox, center_crop

@@ -166,7 +166,9 @@ function App() {
     subtitlePosition,
     subtitleFont,
     subtitleFontSize,
-    subtitleBackground
+    subtitleBackground,
+    ttsProvider = 'local',
+    voiceMix = 'male_duo'
   ) => {
     try {
       setStage('processing');
@@ -177,6 +179,8 @@ function App() {
       const response = await processSegments(
         videoData.video_id,
         segmentIds,
+        ttsProvider,
+        voiceMix,
         verticalMethod,
         subtitleAnimation,
         subtitlePosition,

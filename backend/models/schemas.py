@@ -39,6 +39,14 @@ class ProcessRequest(BaseModel):
     """Request to process selected segments."""
     video_id: str
     segment_ids: List[str] = Field(..., description="List of segment IDs to process")
+    tts_provider: str = Field(
+        default="local",
+        description="TTS backend to use: local, elevenlabs"
+    )
+    voice_mix: str = Field(
+        default="male_duo",
+        description="Voice combination preset (male_duo, mixed_duo, female_duo)"
+    )
     vertical_method: str = Field(
         default="letterbox",
         description="Method for vertical conversion: letterbox, center_crop"
