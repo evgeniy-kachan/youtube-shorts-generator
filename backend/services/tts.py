@@ -401,8 +401,14 @@ class ElevenLabsTTSService(BaseTTSService):
 
         try:
             client_kwargs = {"timeout": self.request_timeout}
+            transport = None
             if self.proxy_url:
-                client_kwargs["proxies"] = self.proxy_url
+                try:
+                    transport = httpx.HTTPTransport(proxy=self.proxy_url)
+                except TypeError:
+                    transport = None
+            if transport:
+                client_kwargs["transport"] = transport
             with httpx.Client(**client_kwargs) as client:
                 response = client.post(
                     url,
