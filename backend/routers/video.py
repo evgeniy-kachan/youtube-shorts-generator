@@ -87,6 +87,7 @@ def get_tts_service(provider: str):
                 similarity_boost=config.ELEVENLABS_SIMILARITY,
                 style=config.ELEVENLABS_STYLE,
                 speaker_boost=config.ELEVENLABS_SPEAKER_BOOST,
+                proxy_url=config.ELEVENLABS_PROXY,
             )
         return _services[cache_key]
 

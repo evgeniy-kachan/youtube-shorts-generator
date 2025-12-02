@@ -362,6 +362,7 @@ class ElevenLabsTTSService(BaseTTSService):
         similarity_boost: float = 0.75,
         style: float = 0.0,
         speaker_boost: bool = True,
+        proxy_url: str | None = None,
     ):
         super().__init__(language=language, max_chunk_chars=max_chunk_chars)
         if not api_key:
@@ -375,6 +376,7 @@ class ElevenLabsTTSService(BaseTTSService):
         self.sample_rate = sample_rate
         self.base_url = base_url.rstrip("/")
         self.request_timeout = request_timeout
+        self.proxy_url = proxy_url
         self.voice_settings = {
             "stability": stability,
             "similarity_boost": similarity_boost,
@@ -398,7 +400,13 @@ class ElevenLabsTTSService(BaseTTSService):
         }
 
         try:
-            response = httpx.post(url, headers=headers, json=payload, timeout=self.request_timeout)
+            response = httpx.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=self.request_timeout,
+                proxies=self.proxy_url if self.proxy_url else None,
+            )
             response.raise_for_status()
             return response.content
         except httpx.HTTPStatusError as http_exc:
