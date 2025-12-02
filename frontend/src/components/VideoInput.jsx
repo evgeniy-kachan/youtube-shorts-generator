@@ -13,12 +13,15 @@ const VideoInput = ({ onSubmit, loading }) => {
       return;
     }
 
-    const isMp4 =
+    const normalizedName = file.name?.toLowerCase() || '';
+    const isSupported =
       file.type === 'video/mp4' ||
-      file.name?.toLowerCase().endsWith('.mp4');
+      file.type === 'video/quicktime' ||
+      normalizedName.endsWith('.mp4') ||
+      normalizedName.endsWith('.mov');
 
-    if (!isMp4) {
-      setError('Поддерживаются только файлы MP4');
+    if (!isSupported) {
+      setError('Поддерживаются только файлы MP4 или MOV');
       setSelectedFile(null);
       return;
     }
@@ -31,7 +34,7 @@ const VideoInput = ({ onSubmit, loading }) => {
     setError('');
 
     if (!selectedFile) {
-      setError('Пожалуйста, выберите видеофайл MP4');
+      setError('Пожалуйста, выберите видеофайл MP4 или MOV');
       return;
     }
 
@@ -52,18 +55,18 @@ const VideoInput = ({ onSubmit, loading }) => {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label htmlFor="video-upload" className="block text-sm font-medium text-gray-700 mb-2">
-            Видеофайл (MP4)
+            Видеофайл (MP4 / MOV)
           </label>
           <input
             id="video-upload"
             type="file"
-            accept="video/mp4"
+            accept="video/mp4,video/quicktime,.mov"
             onChange={handleFileChange}
             className="input-field"
             disabled={loading}
           />
           <p className="mt-2 text-sm text-gray-500">
-            Поддерживаются файлы MP4 до 2 ГБ.
+            Поддерживаются файлы MP4 или MOV до 2 ГБ.
           </p>
           {selectedFile && !error && (
             <div className="mt-3 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3">
