@@ -274,6 +274,7 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
         'video_id': video_id,
         'video_path': video_path,
         'segments': filtered_highlights,
+        'transcript_segments': transcription_result['segments'],
         'thumbnail_path': thumbnail_path,
     }
     analysis_results_cache[video_id] = analysis_result

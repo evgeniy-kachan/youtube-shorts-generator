@@ -82,6 +82,7 @@ class HighlightAnalyzer:
                         'end_time': segment['end'],
                         'duration': segment['duration'],
                         'text': segment['text'],
+                        'speakers': segment.get('speakers', []),
                         'highlight_score': highlight_score,
                         'criteria_scores': scores
                     })
@@ -200,21 +201,25 @@ class HighlightAnalyzer:
             end = chunk_segments[-1]["end"]
             text = " ".join(seg.get("text", "").strip() for seg in chunk_segments if seg.get("text"))
             duration = max(end - start, 0.0)
+            speakers = [seg.get("speaker") for seg in chunk_segments if seg.get("speaker")]
             return {
                 "start": start,
                 "end": end,
                 "duration": duration,
                 "text": text.strip(),
+                "speakers": speakers,
             }
 
         def merge_with_previous(prev: Dict, extra: Dict) -> Dict:
             if not prev:
                 return extra
+            merged_speakers = (prev.get("speakers") or []) + (extra.get("speakers") or [])
             return {
                 "start": prev["start"],
                 "end": extra["end"],
                 "duration": max(extra["end"] - prev["start"], 0.0),
                 "text": f"{prev['text']} {extra['text']}".strip(),
+                "speakers": merged_speakers,
             }
 
         for seg in segments:

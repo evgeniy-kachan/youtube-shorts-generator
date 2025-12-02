@@ -12,9 +12,13 @@ watchfiles
 # YouTube Download
 yt-dlp>=2024.1.0
 
-# Transcription (Whisper)
-# NOTE: torch >=2.6 required due to security vulnerability
+# Transcription (Whisper / WhisperX)
+# NOTE: torch >=2.1 required due to security vulnerability
+torch>=2.1.0
+torchaudio>=2.1.0
 faster-whisper>=1.2.1
+whisperx>=3.1.1
+pyannote.audio>=3.1.1
 
 # LLM Integration (DeepSeek API client)
 httpx>=0.25.2
