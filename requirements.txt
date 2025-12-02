@@ -16,7 +16,6 @@ yt-dlp>=2024.1.0
 # NOTE: torch >=2.1 required due to security vulnerability
 torch>=2.1.0
 torchaudio>=2.1.0
-faster-whisper>=1.2.1
 whisperx>=3.1.1
 pyannote.audio>=3.1.1
 
@@ -36,6 +35,6 @@ soundfile>=0.12.1
 # Utilities
 pydantic>=2.5.0
 python-dotenv>=1.0.0
-numpy>=1.23.0,<2.0.0
+numpy>=2.0.0
 sentence-splitter
 omegaconf
