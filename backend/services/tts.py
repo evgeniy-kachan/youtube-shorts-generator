@@ -400,13 +400,15 @@ class ElevenLabsTTSService(BaseTTSService):
         }
 
         try:
-            response = httpx.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=self.request_timeout,
-                proxies=self.proxy_url if self.proxy_url else None,
-            )
+            client_kwargs = {"timeout": self.request_timeout}
+            if self.proxy_url:
+                client_kwargs["proxies"] = self.proxy_url
+            with httpx.Client(**client_kwargs) as client:
+                response = client.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                )
             response.raise_for_status()
             return response.content
         except httpx.HTTPStatusError as http_exc:
