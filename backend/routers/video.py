@@ -314,10 +314,22 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
     markup_service = get_service("text_markup") if config.TTS_ENABLE_MARKUP else None
     
     # Prepare texts for translation
-    texts_to_translate = [seg['text'] for seg in filtered_highlights]
+    # We collect ALL dialogue turns from ALL segments to batch translate them
+    all_turns = []
+    for seg in filtered_highlights:
+        # If dialogue structure is present, use it. Otherwise fallback to main text.
+        if seg.get('dialogue'):
+            for turn in seg['dialogue']:
+                all_turns.append(turn)
+        else:
+            # Fake turn for segments without dialogue structure
+            all_turns.append({'text': seg['text'], 'parent_seg': seg})
+
+    texts_to_translate = [turn['text'] for turn in all_turns]
     
-    logger.info("Starting batch translation...")
+    logger.info(f"Starting batch translation for {len(texts_to_translate)} items...")
     translations = translator.translate_batch(texts_to_translate)
+    
     if os.getenv("DEBUG_SAVE_TRANSLATIONS", "0") == "1":
         debug_dir = Path(config.TEMP_DIR) / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
@@ -328,19 +340,61 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
                 debug_file.write(original.strip() + "\n")
                 debug_file.write("--- TRANSLATED ---\n")
                 debug_file.write((translated or "").strip() + "\n\n")
+    
     logger.info("Batch translation finished. Assigning results...")
 
-    # Assign translations back to segments
-    for i, segment in enumerate(filtered_highlights):
+    # Assign translations back to dialogue turns
+    for i, turn in enumerate(all_turns):
+        turn['text_ru'] = translations[i]
+        
+        # Markup (only if needed, though for dialogue we might want to do it later or now)
+        # For now, let's just store raw translated text in the turn
+    
+    # Reconstruct full Russian text for each segment
+    for segment in filtered_highlights:
         segment['text_en'] = segment.pop('text')  # Rename original text
-        russian_text = translations[i]
-        segment['text_ru'] = russian_text
-        if markup_service:
-            logger.info("Calling TextMarkup for segment %s", segment['id'])
-            segment['text_ru_tts'] = markup_service.mark_text(russian_text)
+        
+        if segment.get('dialogue'):
+            # Join translated turns to form the full segment text
+            ru_parts = [turn['text_ru'] for turn in segment['dialogue']]
+            full_ru = " ".join(ru_parts)
+            segment['text_ru'] = full_ru
         else:
-            logger.info("Markup service unavailable, using raw text for segment %s", segment['id'])
-            segment['text_ru_tts'] = russian_text
+            # Should correspond to the logic above where we appended a fake turn
+            # But wait, 'all_turns' has references. The loop above updated 'turn' dicts.
+            # If we used 'parent_seg', we need to retrieve it.
+            # Actually, simpler: if no dialogue, we just used the text directly.
+            # Let's handle the 'fake turn' case properly.
+            # Since 'all_turns' contains mutable dicts from 'dialogue', they are updated in place.
+            # For the fallback case, we need to manually update the segment.
+            pass # Handled by reconstruction below if dialogue exists.
+                 # If NO dialogue, we need to find which turn belonged to this segment.
+    
+    # Fix for segments without dialogue (fallback)
+    # Since we flattened everything into 'all_turns', we need to know which turns belong to which segment
+    # Re-iterating is safer
+    
+    current_turn_idx = 0
+    for segment in filtered_highlights:
+        if segment.get('dialogue'):
+            num_turns = len(segment['dialogue'])
+            # These turns were updated in place in 'all_turns' list
+            ru_parts = [t.get('text_ru', '') for t in segment['dialogue']]
+            segment['text_ru'] = " ".join(ru_parts)
+            current_turn_idx += num_turns
+        else:
+            # Single text item
+            segment['text_ru'] = translations[current_turn_idx]
+            current_turn_idx += 1
+
+        # Markup for the FULL text (for subtitles)
+        if markup_service:
+            # logger.info("Calling TextMarkup for segment %s", segment['id'])
+            segment['text_ru_tts'] = markup_service.mark_text(segment['text_ru'])
+        else:
+            # logger.info("Markup service unavailable, using raw text for segment %s", segment['id'])
+            segment['text_ru_tts'] = segment['text_ru']
+
     logger.info("Translation results assigned.")
 
     # Cache the result
@@ -409,13 +463,28 @@ def _process_segments_task(
         
         for segment in segments_to_process:
             audio_path = os.path.join(output_dir, f"{segment['id']}.wav")
-            tts_text = segment.get('text_ru_tts') or segment.get('text_ru')
-            voice_override = None
-            if voice_plan:
-                speaker_chain = segment.get('speakers') or []
-                primary_speaker = speaker_chain[0] if speaker_chain else None
-                voice_override = voice_plan.get(primary_speaker) or voice_plan.get("__default__")
-            tts_service.synthesize_and_save(tts_text, audio_path, speaker=voice_override)
+            
+            # Check if we have a dialogue structure for multi-speaker synthesis
+            has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
+            
+            if has_dialogue and voice_plan:
+                logger.info(f"Synthesizing multi-speaker dialogue for {segment['id']}")
+                tts_service.synthesize_dialogue(
+                    dialogue_turns=segment['dialogue'],
+                    output_path=audio_path,
+                    voice_map=voice_plan
+                )
+            else:
+                # Single speaker fallback (or no dialogue structure)
+                tts_text = segment.get('text_ru_tts') or segment.get('text_ru')
+                voice_override = None
+                if voice_plan:
+                    speaker_chain = segment.get('speakers') or []
+                    primary_speaker = speaker_chain[0] if speaker_chain else None
+                    voice_override = voice_plan.get(primary_speaker) or voice_plan.get("__default__")
+                
+                tts_service.synthesize_and_save(tts_text, audio_path, speaker=voice_override)
+            
             segment['audio_path'] = audio_path
             
         # 3. Render videos

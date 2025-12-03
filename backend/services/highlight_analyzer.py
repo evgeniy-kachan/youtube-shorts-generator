@@ -83,6 +83,8 @@ class HighlightAnalyzer:
                         'duration': segment['duration'],
                         'text': segment['text'],
                         'speakers': segment.get('speakers', []),
+                        'dialogue': segment.get('dialogue', []),
+                        'words': segment.get('words', []),
                         'highlight_score': highlight_score,
                         'criteria_scores': scores
                     })
@@ -187,6 +189,7 @@ class HighlightAnalyzer:
     ) -> List[Dict]:
         """
         Merge consecutive Whisper segments so that DeepSeek receives fewer, denser requests.
+        Also preserves dialogue structure (speaker turns) for multi-speaker TTS.
         """
         if not segments:
             return []
@@ -199,27 +202,93 @@ class HighlightAnalyzer:
         def build_chunk(chunk_segments: List[Dict]) -> Dict:
             start = chunk_segments[0]["start"]
             end = chunk_segments[-1]["end"]
+            
+            # Build full text for LLM
             text = " ".join(seg.get("text", "").strip() for seg in chunk_segments if seg.get("text"))
             duration = max(end - start, 0.0)
-            speakers = [seg.get("speaker") for seg in chunk_segments if seg.get("speaker")]
+            
+            # Extract unique speakers for metadata
+            speakers = []
+            seen_speakers = set()
+            for seg in chunk_segments:
+                spk = seg.get("speaker")
+                if spk and spk not in seen_speakers:
+                    speakers.append(spk)
+                    seen_speakers.add(spk)
+            
+            # Build dialogue turns (group consecutive segments by same speaker)
+            dialogue = []
+            if chunk_segments:
+                current_turn = {
+                    "speaker": chunk_segments[0].get("speaker"),
+                    "text": chunk_segments[0].get("text", "").strip(),
+                    "start": chunk_segments[0]["start"],
+                    "end": chunk_segments[0]["end"]
+                }
+                
+                for seg in chunk_segments[1:]:
+                    speaker = seg.get("speaker")
+                    text_part = seg.get("text", "").strip()
+                    
+                    if speaker == current_turn["speaker"]:
+                        # Same speaker, append text
+                        current_turn["text"] += " " + text_part
+                        current_turn["end"] = seg["end"]
+                    else:
+                        # New speaker, save current turn and start new
+                        if current_turn["text"]:
+                            dialogue.append(current_turn)
+                        current_turn = {
+                            "speaker": speaker,
+                            "text": text_part,
+                            "start": seg["start"],
+                            "end": seg["end"]
+                        }
+                
+                if current_turn["text"]:
+                    dialogue.append(current_turn)
+
             return {
                 "start": start,
                 "end": end,
                 "duration": duration,
                 "text": text.strip(),
                 "speakers": speakers,
+                "dialogue": dialogue,
+                "words": [w for seg in chunk_segments for w in (seg.get("words") or [])]
             }
 
         def merge_with_previous(prev: Dict, extra: Dict) -> Dict:
             if not prev:
                 return extra
-            merged_speakers = (prev.get("speakers") or []) + (extra.get("speakers") or [])
+            merged_speakers = list(set((prev.get("speakers") or []) + (extra.get("speakers") or [])))
+            
+            # Merge dialogues
+            # If the last turn of prev and first turn of extra are same speaker, merge them
+            new_dialogue = list(prev.get("dialogue", []))
+            extra_dialogue = list(extra.get("dialogue", []))
+            
+            if new_dialogue and extra_dialogue and new_dialogue[-1]["speaker"] == extra_dialogue[0]["speaker"]:
+                last = new_dialogue.pop()
+                first = extra_dialogue.pop(0)
+                merged_turn = {
+                    "speaker": last["speaker"],
+                    "text": (last["text"] + " " + first["text"]).strip(),
+                    "start": last["start"],
+                    "end": first["end"]
+                }
+                new_dialogue.append(merged_turn)
+            
+            new_dialogue.extend(extra_dialogue)
+
             return {
                 "start": prev["start"],
                 "end": extra["end"],
                 "duration": max(extra["end"] - prev["start"], 0.0),
                 "text": f"{prev['text']} {extra['text']}".strip(),
                 "speakers": merged_speakers,
+                "dialogue": new_dialogue,
+                "words": (prev.get("words") or []) + (extra.get("words") or [])
             }
 
         for seg in segments:
