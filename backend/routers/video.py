@@ -9,6 +9,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from pydub import AudioSegment
 
 from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
@@ -486,6 +487,31 @@ def _process_segments_task(
                 tts_service.synthesize_and_save(tts_text, audio_path, speaker=voice_override)
             
             segment['audio_path'] = audio_path
+            try:
+                audio_segment = AudioSegment.from_file(audio_path)
+                audio_duration = audio_segment.duration_seconds or 0.0
+            except Exception as audio_exc:
+                logger.warning("Failed to read synthesized audio for %s: %s", segment['id'], audio_exc)
+                audio_duration = 0.0
+                audio_segment = None
+
+            original_duration = max(0.1, float(segment.get('end_time', 0)) - float(segment.get('start_time', 0)))
+            target_duration = max(audio_duration, original_duration)
+
+            if audio_segment and audio_duration + 0.01 < target_duration:
+                pad_ms = int(round((target_duration - audio_duration) * 1000))
+                audio_segment = audio_segment + AudioSegment.silent(duration=pad_ms)
+                audio_segment.export(audio_path, format="wav")
+                audio_duration = target_duration
+                logger.info(
+                    "Padded audio for %s with %.2fs silence to reach target duration %.2fs",
+                    segment['id'],
+                    pad_ms / 1000,
+                    target_duration,
+                )
+
+            segment['tts_duration'] = audio_duration
+            segment['target_duration'] = target_duration
             
         # 3. Render videos
         tasks[task_id] = {"status": "processing", "progress": 0.6, "message": "Rendering videos..."}
@@ -500,6 +526,7 @@ def _process_segments_task(
                 text=segment['text_ru'],
                 start_time=segment['start_time'],
                 end_time=segment['end_time'],
+                target_duration=segment.get('target_duration'),
                 method=vertical_method,
                 subtitle_animation=subtitle_animation,
                 subtitle_position=subtitle_position,

@@ -175,6 +175,19 @@ class VideoProcessor:
             logger.error(f"Error converting to vertical: {e}", exc_info=True)
             raise
     
+    @staticmethod
+    def _probe_duration(media_path: str) -> float | None:
+        """Return media duration in seconds using ffmpeg probe."""
+        try:
+            probe = ffmpeg.probe(media_path)
+            if probe and "format" in probe:
+                duration = probe["format"].get("duration")
+                if duration is not None:
+                    return float(duration)
+        except Exception as exc:
+            logger.debug("Failed to probe duration for %s: %s", media_path, exc)
+        return None
+
     def add_audio_and_subtitles(
         self,
         video_path: str,
@@ -188,7 +201,8 @@ class VideoProcessor:
         subtitle_position: str = "mid_low",
         subtitle_background: bool = False,
         convert_to_vertical: bool = True,
-        vertical_method: str = "letterbox"
+        vertical_method: str = "letterbox",
+        target_duration: float | None = None,
     ) -> str:
         """
         Add TTS audio and stylized subtitles to video.
@@ -236,13 +250,29 @@ class VideoProcessor:
             # Replace audio with TTS and burn in stylized subtitles
             video_input = ffmpeg.input(working_video)
             audio_input = ffmpeg.input(audio_path)
+            video_stream = video_input.video
+
+            video_duration = self._probe_duration(working_video)
+            if target_duration and video_duration:
+                extra = target_duration - video_duration
+                if extra > 0.05:
+                    video_stream = video_stream.filter(
+                        "tpad",
+                        stop_mode="clone",
+                        stop_duration=max(0.0, extra),
+                    )
+                    logger.info(
+                        "Extended video by %.2fs to match audio duration %.2fs",
+                        extra,
+                        target_duration,
+                    )
             
             ass_filter = self._build_ass_filter(subtitle_path)
 
             output = (
                 ffmpeg
                 .output(
-                    video_input.video,
+                    video_stream,
                     audio_input.audio,
                     output_path,
                     vf=ass_filter,
@@ -274,6 +304,7 @@ class VideoProcessor:
         text: str,
         start_time: float,
         end_time: float,
+        target_duration: float | None = None,
         method: Literal["letterbox", "center_crop"] = "letterbox",
         subtitle_style: str = "capcut",
         subtitle_animation: str = "bounce",
@@ -288,7 +319,8 @@ class VideoProcessor:
         Returns path to the processed temporary file.
         """
         try:
-            duration = max(0.1, end_time - start_time)
+            original_duration = max(0.1, end_time - start_time)
+            duration = max(original_duration, target_duration or 0.0)
             temp_segment = self.output_dir / f"segment_cut_{uuid.uuid4().hex}.mp4"
             temp_output = self.output_dir / f"segment_processed_{uuid.uuid4().hex}.mp4"
 
@@ -316,7 +348,8 @@ class VideoProcessor:
                         subtitle_position=subtitle_position,
                         subtitle_background=subtitle_background,
                 convert_to_vertical=True,
-                vertical_method=method
+                vertical_method=method,
+                target_duration=duration,
             )
 
             return processed_path
