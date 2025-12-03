@@ -83,10 +83,21 @@ class TranscriptionService:
             return
 
         try:
-            self.diarize_model = whisperx.load_diarize_model(
-                device=self.device,
-                use_auth_token=self.hf_token,
-            )
+            diarization_pipeline = None
+            if hasattr(whisperx, "DiarizationPipeline"):
+                diarization_pipeline = whisperx.DiarizationPipeline(
+                    use_auth_token=self.hf_token,
+                    device=self.device,
+                )
+            elif hasattr(whisperx, "load_diarize_model"):
+                diarization_pipeline = whisperx.load_diarize_model(
+                    device=self.device,
+                    use_auth_token=self.hf_token,
+                )
+            else:
+                raise AttributeError("Current whisperx version does not expose a diarization loader")
+
+            self.diarize_model = diarization_pipeline
             logger.info("WhisperX diarization model loaded successfully")
         except Exception as exc:
             self.diarize_model = None
