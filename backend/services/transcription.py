@@ -84,17 +84,31 @@ class TranscriptionService:
 
         try:
             diarization_pipeline = None
+
             if hasattr(whisperx, "DiarizationPipeline"):
                 diarization_pipeline = whisperx.DiarizationPipeline(
                     use_auth_token=self.hf_token,
                     device=self.device,
                 )
-            elif hasattr(whisperx, "load_diarize_model"):
+
+            if diarization_pipeline is None:
+                try:
+                    from whisperx.diarize import DiarizationPipeline as WXDP
+                except Exception:
+                    WXDP = None
+                if WXDP is not None:
+                    diarization_pipeline = WXDP(
+                        use_auth_token=self.hf_token,
+                        device=self.device,
+                    )
+
+            if diarization_pipeline is None and hasattr(whisperx, "load_diarize_model"):
                 diarization_pipeline = whisperx.load_diarize_model(
                     device=self.device,
                     use_auth_token=self.hf_token,
                 )
-            else:
+
+            if diarization_pipeline is None:
                 raise AttributeError("Current whisperx version does not expose a diarization loader")
 
             self.diarize_model = diarization_pipeline
