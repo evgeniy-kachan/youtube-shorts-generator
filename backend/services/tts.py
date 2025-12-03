@@ -130,6 +130,65 @@ class BaseTTSService:
         except Exception as log_exc:
             logger.warning("Unable to write TTS failed chunk log: %s", log_exc)
 
+    def synthesize_dialogue(
+        self,
+        dialogue_turns: list[dict],
+        output_path: str,
+        voice_map: dict[str, str],
+        pause_ms: int = 300,
+    ) -> str:
+        """Synthesize a dialogue with multiple speakers and concatenate into one file."""
+        audio_segments: list[AudioSegment] = []
+
+        for idx, turn in enumerate(dialogue_turns):
+            text = turn.get("text_ru") or turn.get("text")
+            if not text:
+                continue
+
+            speaker_id = turn.get("speaker")
+            default_voice = getattr(self, "voice_id", None) or getattr(self, "speaker", None)
+            voice = voice_map.get(speaker_id) or voice_map.get("__default__") or default_voice
+
+            logger.info(
+                "Synthesizing dialogue turn %s/%s: speaker=%s -> voice=%s, len=%s",
+                idx + 1,
+                len(dialogue_turns),
+                speaker_id,
+                voice,
+                len(text),
+            )
+
+            temp_turn_path = Path(output_path).parent / f"dialogue_turn_{idx}_{Path(output_path).name}"
+
+            try:
+                self.synthesize(text, str(temp_turn_path), speaker=voice)
+                if temp_turn_path.exists():
+                    seg_audio = AudioSegment.from_file(str(temp_turn_path))
+
+                    if audio_segments:
+                        audio_segments.append(AudioSegment.silent(duration=pause_ms))
+
+                    audio_segments.append(seg_audio)
+
+                    try:
+                        temp_turn_path.unlink()
+                    except Exception:
+                        pass
+            except Exception as exc:
+                logger.error("Failed to synthesize dialogue turn %s: %s", idx, exc)
+                continue
+
+        if not audio_segments:
+            raise RuntimeError("No audio generated for dialogue")
+
+        final_audio = audio_segments[0]
+        for seg_audio in audio_segments[1:]:
+            final_audio += seg_audio
+
+        final_audio.export(output_path, format="wav")
+        logger.info("Dialogue audio saved to %s", output_path)
+        return output_path
+
 
 class TTSService(BaseTTSService):
     """Text-to-Speech using Silero models."""
@@ -335,79 +394,6 @@ class TTSService(BaseTTSService):
     def synthesize_and_save(self, text: str, output_path: str, speaker: str | None = None) -> str:
         """Compatibility wrapper used elsewhere in the codebase."""
         return self.synthesize(text, output_path, speaker=speaker)
-
-    def synthesize_dialogue(self, dialogue_turns: list[dict], output_path: str, voice_map: dict[str, str]) -> str:
-        """
-        Synthesize a dialogue with multiple speakers.
-
-        Args:
-            dialogue_turns: List of dicts with 'text', 'speaker' (original speaker ID).
-            output_path: Path to save final merged audio.
-            voice_map: Mapping from 'speaker' ID to TTS voice/speaker name.
-
-        Returns:
-            Path to the final audio file.
-        """
-
-        audio_segments: list[AudioSegment] = []
-
-        for idx, turn in enumerate(dialogue_turns):
-            text = turn.get("text_ru") or turn.get("text")
-            if not text:
-                continue
-
-            speaker_id = turn.get("speaker")
-            # Prefer explicit mapping, fall back to default voice.
-            if hasattr(self, "voice_id"):
-                default_voice = getattr(self, "voice_id", None)
-            else:
-                default_voice = getattr(self, "speaker", None)
-
-            voice = (
-                voice_map.get(speaker_id)
-                or voice_map.get("__default__")
-                or default_voice
-            )
-
-            logger.info(
-                "Synthesizing dialogue turn %s/%s: speaker=%s -> voice=%s, len=%s",
-                idx + 1,
-                len(dialogue_turns),
-                speaker_id,
-                voice,
-                len(text),
-            )
-
-            temp_turn_path = Path(output_path).parent / f"temp_turn_{idx}_{Path(output_path).name}"
-
-            try:
-                self.synthesize(text, str(temp_turn_path), speaker=voice)
-
-                if temp_turn_path.exists():
-                    seg_audio = AudioSegment.from_file(str(temp_turn_path))
-
-                    if audio_segments:
-                        audio_segments.append(AudioSegment.silent(duration=300))
-
-                    audio_segments.append(seg_audio)
-
-                    try:
-                        temp_turn_path.unlink()
-                    except Exception:
-                        pass
-            except Exception as exc:
-                logger.error("Failed to synthesize dialogue turn %s: %s", idx, exc)
-                continue
-
-        if not audio_segments:
-            raise RuntimeError("No audio generated for dialogue")
-
-        final_audio = audio_segments[0]
-        for seg_audio in audio_segments[1:]:
-            final_audio += seg_audio
-
-        final_audio.export(output_path, format="wav")
-        return output_path
     
     def get_available_speakers(self) -> list:
         """Get list of available speakers for current language."""
