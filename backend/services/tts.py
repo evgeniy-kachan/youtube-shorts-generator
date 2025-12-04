@@ -190,6 +190,7 @@ class BaseTTSService:
         """Previous behavior: concatenate turns sequentially with short pauses."""
         audio_segments: list[AudioSegment] = []
         voice_map = voice_map or {}
+        timeline_ms = 0
 
         for idx, turn in enumerate(dialogue_turns):
             text = turn.get("text_ru") or turn.get("text")
@@ -218,8 +219,16 @@ class BaseTTSService:
 
                     if audio_segments:
                         audio_segments.append(AudioSegment.silent(duration=pause_ms))
+                        timeline_ms += pause_ms
 
+                    start_seconds = timeline_ms / 1000.0
                     audio_segments.append(seg_audio)
+                    duration_ms = len(seg_audio)
+                    timeline_ms += duration_ms
+
+                    turn["tts_start_offset"] = start_seconds
+                    turn["tts_duration"] = duration_ms / 1000.0
+                    turn["tts_end_offset"] = start_seconds + turn["tts_duration"]
 
                     try:
                         temp_turn_path.unlink()
@@ -288,6 +297,12 @@ class BaseTTSService:
                     continue
 
                 seg_audio = AudioSegment.from_file(str(temp_turn_path))
+                duration_seconds = len(seg_audio) / 1000.0
+                relative_start = offset_ms / 1000.0
+                turn["tts_start_offset"] = relative_start
+                turn["tts_duration"] = duration_seconds
+                turn["tts_end_offset"] = relative_start + duration_seconds
+
                 end_ms = offset_ms + len(seg_audio)
                 max_duration_ms = max(max_duration_ms, end_ms)
                 layers.append((seg_audio, offset_ms))

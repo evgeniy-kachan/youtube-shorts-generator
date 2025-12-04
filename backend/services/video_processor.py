@@ -315,6 +315,7 @@ class VideoProcessor:
         subtitle_font: str = "Montserrat Light",
         subtitle_font_size: int = 86,
         subtitle_background: bool = False,
+        dialogue: list[dict] | None = None,
     ) -> str:
         """
         End-to-end helper that cuts the source video, converts it to vertical format,
@@ -336,7 +337,15 @@ class VideoProcessor:
             )
 
             # Step 2: prepare basic subtitles
-            subtitles = self._generate_basic_subtitles(text=text, duration=duration)
+            dialogue_turns = dialogue or []
+            speaker_palette = self._assign_speaker_colors(dialogue_turns)
+            subtitles = self._generate_basic_subtitles(
+                text=text,
+                duration=duration,
+                dialogue=dialogue_turns,
+                segment_start=start_time,
+                speaker_palette=speaker_palette,
+            )
 
             # Step 3: add audio + subtitles + vertical conversion
             processed_path = self.add_audio_and_subtitles(
@@ -384,17 +393,55 @@ class VideoProcessor:
             return video_stream.filter("ass", subtitle_arg, original_size, fonts_dir)
         return video_stream.filter("ass", subtitle_arg)
 
+    @staticmethod
+    def _assign_speaker_colors(dialogue: list[dict] | None) -> dict[str, str]:
+        """
+        Return a deterministic color palette for every speaker in the segment.
+        Colors are stored in ASS format (AABBGGRR without the leading &H).
+        """
+        palette = [
+            "0066E0FF",  # Warm yellow
+            "00B6C42E",  # Turquoise
+            "006B6BFF",  # Coral
+            "00E55D9B",  # Purple
+            "00B3C170",  # Mint
+            "0059A2F4",  # Orange
+        ]
+        assignment: dict[str, str] = {}
+        if not dialogue:
+            return assignment
+
+        for turn in dialogue:
+            speaker = turn.get("speaker")
+            if not speaker or speaker in assignment:
+                continue
+            color_idx = len(assignment) % len(palette)
+            assignment[speaker] = palette[color_idx]
+        return assignment
+
     def _generate_basic_subtitles(
         self,
         text: str,
         duration: float,
-        max_words_per_line: int = 6
+        max_words_per_line: int = 6,
+        dialogue: list[dict] | None = None,
+        segment_start: float = 0.0,
+        speaker_palette: dict[str, str] | None = None,
     ) -> List[Dict]:
         """
         Create a multi-line subtitle track with approximate word-level timings.
         Each subtitle line contains up to `max_words_per_line` words so the viewer
         sees a few words at a time, synchronized with the TTS audio.
         """
+        if dialogue:
+            return self._generate_dialogue_subtitles(
+                dialogue=dialogue,
+                duration=duration,
+                max_words_per_line=max_words_per_line,
+                segment_start=segment_start,
+                speaker_palette=speaker_palette or {},
+            )
+
         cleaned_text = " ".join(text.strip().split())
         if not cleaned_text:
             cleaned_text = "..."
@@ -461,6 +508,105 @@ class VideoProcessor:
             subtitles[-1]['end'] = duration
             if subtitles[-1]['words']:
                 subtitles[-1]['words'][-1]['end'] = duration
+
+        return subtitles
+
+    def _generate_dialogue_subtitles(
+        self,
+        dialogue: list[dict],
+        duration: float,
+        max_words_per_line: int,
+        segment_start: float,
+        speaker_palette: dict[str, str],
+    ) -> List[Dict]:
+        """
+        Build subtitles directly from dialogue turns, preserving per-speaker timing
+        and enabling color coding.
+        """
+        subtitles: List[Dict] = []
+
+        for turn in dialogue:
+            raw_text = (turn.get("text_ru") or turn.get("text") or "").strip()
+            if not raw_text:
+                continue
+
+            speaker_id = turn.get("speaker")
+            words = raw_text.split()
+            if not words:
+                continue
+
+            relative_start = turn.get("tts_start_offset")
+            if relative_start is None:
+                start_abs = float(turn.get("start", segment_start))
+                relative_start = max(0.0, start_abs - segment_start)
+
+            duration_override = turn.get("tts_duration")
+            if duration_override is None:
+                start_abs = float(turn.get("start", segment_start))
+                end_abs = float(turn.get("end", start_abs))
+                duration_override = max(0.1, end_abs - start_abs)
+
+            relative_end = turn.get("tts_end_offset")
+            if relative_end is None:
+                relative_end = relative_start + duration_override
+
+            relative_end = min(duration, max(relative_end, relative_start + 0.1))
+
+            word_chunks: List[List[str]] = []
+            chunk: List[str] = []
+            for word in words:
+                chunk.append(word)
+                if len(chunk) >= max_words_per_line:
+                    word_chunks.append(chunk)
+                    chunk = []
+            if chunk:
+                word_chunks.append(chunk)
+
+            total_words = len(words)
+            total_window = max(relative_end - relative_start, 0.1)
+            elapsed = relative_start
+
+            for idx, chunk_words in enumerate(word_chunks):
+                chunk_word_count = len(chunk_words)
+                if total_words <= 0:
+                    chunk_duration = total_window / max(len(word_chunks), 1)
+                else:
+                    chunk_duration = total_window * (chunk_word_count / total_words)
+
+                if idx == len(word_chunks) - 1:
+                    chunk_duration = max(0.05, relative_end - elapsed)
+
+                start_time = elapsed
+                end_time = min(relative_end, start_time + chunk_duration)
+                elapsed = end_time
+
+                per_word = chunk_duration / chunk_word_count if chunk_word_count else 0.0
+                word_entries = []
+                for word_idx, word in enumerate(chunk_words):
+                    word_start = start_time + word_idx * per_word
+                    word_entries.append(
+                        {
+                            "word": word,
+                            "start": word_start,
+                            "end": min(end_time, word_start + per_word),
+                        }
+                    )
+
+                subtitles.append(
+                    {
+                        "start": start_time,
+                        "end": end_time,
+                        "text": " ".join(chunk_words),
+                        "words": word_entries,
+                        "speaker": speaker_id,
+                        "color": speaker_palette.get(speaker_id),
+                    }
+                )
+
+            if subtitles and subtitles[-1]["end"] < relative_end:
+                subtitles[-1]["end"] = relative_end
+                if subtitles[-1]["words"]:
+                    subtitles[-1]["words"][-1]["end"] = relative_end
 
         return subtitles
     
@@ -574,6 +720,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         for subtitle in subtitles:
             start_time = self._format_timestamp(subtitle['start'])
             end_time = self._format_timestamp(subtitle['end'])
+            color_value = subtitle.get('color')
+            color_tag = rf"\1c&H{color_value}&" if color_value else ""
 
             if style == 'capcut':
                 text = self._build_capcut_line(
@@ -581,6 +729,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     animation_style,
                     position_config,
                     subtitle_background,
+                    color_tag,
                 )
             else:
                 text = self._build_chunk_line(
@@ -588,6 +737,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     animation_style,
                     position_config,
                     subtitle_background,
+                    color_tag,
                 )
 
             ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}\n"
@@ -609,6 +759,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         animation: str,
         position_conf: Dict,
         subtitle_background: bool,
+        color_tag: str = "",
     ) -> str:
         """Render text chunk with a chosen animation preset."""
         words = subtitle.get('text', '').split()
@@ -624,7 +775,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         else:
             text = " ".join(words)
 
-        return f"{self._get_base_animation_tag(animation, position_conf, subtitle_background)}{text}"
+        return f"{self._get_base_animation_tag(animation, position_conf, subtitle_background, color_tag)}{text}"
 
     def _build_capcut_line(
         self,
@@ -632,17 +783,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         animation: str,
         position_conf: Dict,
         subtitle_background: bool,
+        color_tag: str = "",
     ) -> str:
         """Animate each word sequentially according to animation preset."""
         words = subtitle.get('words', [])
         if not words:
-            return self._build_chunk_line(subtitle, animation, position_conf)
+            return self._build_chunk_line(subtitle, animation, position_conf, subtitle_background, color_tag)
 
         chunk_start = subtitle.get('start', 0.0)
         chunk_end = subtitle.get('end', chunk_start)
         chunk_duration = max(0.01, chunk_end - chunk_start)
 
-        rendered = [self._get_base_animation_tag(animation, position_conf, subtitle_background)]
+        rendered = [self._get_base_animation_tag(animation, position_conf, subtitle_background, color_tag)]
         tokens: List[str] = []
 
         for idx, word in enumerate(words):
@@ -658,6 +810,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 highlight_mid,
                 highlight_end,
                 subtitle_background,
+                preserve_color=bool(color_tag),
             )
 
             word_text = word.get('word', '')
@@ -678,23 +831,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         animation: str,
         position_conf: Dict,
         subtitle_background: bool,
+        color_tag: str = "",
     ) -> str:
         x = position_conf.get('x', 540)
         y = position_conf.get('y', 1250)
         an = position_conf.get('an', 8)
         pos_tag = rf"\pos({x},{y})"
         background_tags = r"{\blur14\bord2\shad0\1c&H000000&}" if subtitle_background else ""
+        color_cmd = color_tag or ""
         presets = {
-            'bounce': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}}}",
-            'slide': rf"{{\an{an}\move({x},{y + 220},{x},{y},0,260)\fad(60,60){background_tags}}}",
-            'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{background_tags}}}",
-            'fade': rf"{{\an{an}{pos_tag}\fad(100,100){background_tags}}}",
-            'scale': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}}}",
-            'karaoke': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}}}",
-            'typewriter': rf"{{\an{an}{pos_tag}{background_tags}}}",
-            'mask': rf"{{\an{an}\move({x},{y + 100},{x},{y},0,300){background_tags}}}",
-            'simple_fade': rf"{{\an{an}{pos_tag}\fad(150,150){background_tags}}}",
-            'word_pop': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}}}",
+            'bounce': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
+            'slide': rf"{{\an{an}\move({x},{y + 220},{x},{y},0,260)\fad(60,60){background_tags}{color_cmd}}}",
+            'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{background_tags}{color_cmd}}}",
+            'fade': rf"{{\an{an}{pos_tag}\fad(100,100){background_tags}{color_cmd}}}",
+            'scale': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
+            'karaoke': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
+            'typewriter': rf"{{\an{an}{pos_tag}{background_tags}{color_cmd}}}",
+            'mask': rf"{{\an{an}\move({x},{y + 100},{x},{y},0,300){background_tags}{color_cmd}}}",
+            'simple_fade': rf"{{\an{an}{pos_tag}\fad(150,150){background_tags}{color_cmd}}}",
+            'word_pop': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
         }
         return presets.get(animation, presets['bounce'])
 
@@ -705,6 +860,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         mid_ms: int,
         end_ms: int,
         subtitle_background: bool,
+        preserve_color: bool = False,
     ) -> str:
         background_tags = (
             r"\bord0\shad0"
@@ -724,6 +880,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 rf"\t({mid_ms},{end_ms},\alpha&H00{background_tags})}}"
             )
         if animation == 'spark':
+            if preserve_color:
+                return (
+                    r"{\alpha&HFF\bord4\blur4"
+                    rf"\t({start_ms},{mid_ms},\alpha&H00\bord0\blur0)"
+                    rf"\t({mid_ms},{end_ms},\alpha&H00{background_tags})}}"
+                )
             return (
                 r"{\alpha&HFF\1c&H00F7FF\bord4\blur4"
                 rf"\t({start_ms},{mid_ms},\alpha&H00\1c&HFFFFFF\bord0\blur0)"
@@ -749,6 +911,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
         if animation == 'karaoke':
             # Word appears in Cyan/Gold, then fades to White
+            if preserve_color:
+                return (
+                    r"{\alpha&HFF"
+                    rf"\t({start_ms},{mid_ms},\alpha&H00)"
+                    rf"\t({mid_ms},{end_ms},{background_tags})}}"
+                )
             return (
                 r"{\alpha&HFF\1c&H00E1FF"
                 rf"\t({start_ms},{mid_ms},\alpha&H00)"

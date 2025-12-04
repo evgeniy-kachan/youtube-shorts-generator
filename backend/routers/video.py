@@ -534,6 +534,7 @@ def _process_segments_task(
                 subtitle_font=subtitle_font,
                 subtitle_font_size=subtitle_font_size,
                 subtitle_background=subtitle_background,
+                dialogue=segment.get('dialogue'),
             )
             renderer.save_video(final_clip, output_path)
             
