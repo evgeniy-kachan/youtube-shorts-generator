@@ -13,6 +13,10 @@ from backend.services.deepseek_client import DeepSeekClient
 logger = logging.getLogger(__name__)
 
 
+HIGHLIGHT_SCORE_THRESHOLD = 0.30
+MIN_HIGHLIGHTS = 3
+
+
 class HighlightAnalyzer:
     """Analyze video segments to find interesting moments."""
     
@@ -72,22 +76,37 @@ class HighlightAnalyzer:
             
             # Filter segments with good scores
             highlights = []
+            scored_segments: list[tuple[int, dict, dict, float]] = []
             for i, (segment, scores) in enumerate(analyzed_segments):
                 highlight_score = self._calculate_highlight_score(scores)
-                
-                if highlight_score > 0.4:  # Threshold for interesting content
-                    highlights.append({
-                        'id': f"segment_{i}",
-                        'start_time': segment['start'],
-                        'end_time': segment['end'],
-                        'duration': segment['duration'],
-                        'text': segment['text'],
-                        'speakers': segment.get('speakers', []),
-                        'dialogue': segment.get('dialogue', []),
-                        'words': segment.get('words', []),
-                        'highlight_score': highlight_score,
-                        'criteria_scores': scores
-                    })
+                scored_segments.append((i, segment, scores, highlight_score))
+
+                if highlight_score >= HIGHLIGHT_SCORE_THRESHOLD:
+                    highlights.append(self._build_highlight_payload(i, segment, scores, highlight_score))
+
+            if len(highlights) < MIN_HIGHLIGHTS and scored_segments:
+                needed = MIN_HIGHLIGHTS - len(highlights)
+                existing_ids = {item['id'] for item in highlights}
+                fallback_candidates = sorted(
+                    scored_segments,
+                    key=lambda tpl: tpl[3],
+                    reverse=True,
+                )
+                for idx, segment, scores, highlight_score in fallback_candidates:
+                    if len(highlights) >= MIN_HIGHLIGHTS:
+                        break
+                    if f"segment_{idx}" in existing_ids:
+                        continue
+                    highlights.append(
+                        self._build_highlight_payload(
+                            idx,
+                            segment,
+                            scores,
+                            highlight_score,
+                            is_fallback=True,
+                        )
+                    )
+                    existing_ids.add(f"segment_{idx}")
             
             # Sort by highlight score
             highlights.sort(key=lambda x: x['highlight_score'], reverse=True)
@@ -318,15 +337,35 @@ class HighlightAnalyzer:
 
         return merged
 
+    @staticmethod
+    def _build_highlight_payload(idx: int, segment: dict, scores: dict, highlight_score: float, is_fallback: bool = False) -> dict:
+        payload = {
+            'id': f"segment_{idx}",
+            'start_time': segment['start'],
+            'end_time': segment['end'],
+            'duration': segment['duration'],
+            'text': segment['text'],
+            'speakers': segment.get('speakers', []),
+            'dialogue': segment.get('dialogue', []),
+            'words': segment.get('words', []),
+            'highlight_score': highlight_score,
+            'criteria_scores': scores,
+        }
+        if is_fallback:
+            payload['is_fallback'] = True
+        return payload
+
     def _analyze_segment_with_llm(self, segment: Dict) -> Dict[str, float]:
         """Analyze a single segment using LLM."""
         
-        prompt = f"""You are an editor who curates punchy clips from long-form business podcasts and interviews (Joe Rogan, founders, investors, motivational speakers). Judge this fragment as a potential 30–120 second short for viewers who crave:
+        prompt = f"""You are an editor who curates punchy clips from long-form business podcasts and interviews (Joe Rogan, founders, investors, motivational speakers). Judge this fragment as a potential 20–90 second short for viewers who crave:
 - actionable business insights, growth tactics, metrics, frameworks, contrarian strategies;
 - strong POV from the guest: bold opinions, mindset, philosophy, worldview;
 - honest failure/recovery stories with clear lessons;
 - tips about lifestyle, discipline, routines, productivity systems;
 - inspirational moments backed by concrete experience, not vague hype.
+
+Assume natural speech (~140 words per minute). Focus on fragments roughly 45–210 words long (≈20–90 s).
 
 IMPORTANT:
 - Use ONLY the provided text. Do not invent context.
