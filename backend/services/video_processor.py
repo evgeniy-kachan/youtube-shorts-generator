@@ -1,6 +1,5 @@
 """Video processing service for cutting, adding audio and subtitles."""
 import ffmpeg
-import json
 import logging
 from pathlib import Path
 from typing import List, Dict, Tuple, Literal
@@ -267,7 +266,7 @@ class VideoProcessor:
                         target_duration,
                     )
             
-            ass_filter = self._build_ass_filter(subtitle_path)
+            video_stream = self._apply_ass_filter(video_stream, subtitle_path)
 
             output = (
                 ffmpeg
@@ -275,7 +274,6 @@ class VideoProcessor:
                     video_stream,
                     audio_input.audio,
                     output_path,
-                    vf=ass_filter,
                     shortest=None,  # Use shortest stream
                     **{'c:v': 'libx264', 'c:a': 'aac', 'b:a': '192k', 'preset': 'medium', 'crf': 23}
                 )
@@ -369,28 +367,16 @@ class VideoProcessor:
         logger.info(f"Final video saved to: {output_path}")
         return str(output_path)
 
-    def _build_ass_filter(self, subtitle_path: Path) -> str:
-        """Build ffmpeg ass filter string with optional fonts directory."""
-        ass_path = self._escape_filter_path(subtitle_path)
-        filter_str = f"ass={ass_path}"
+    def _apply_ass_filter(self, video_stream, subtitle_path: Path):
+        """
+        Apply ASS subtitles via ffmpeg filter, optionally wiring in custom fonts dir.
+        """
+        subtitle_arg = str(subtitle_path)
         if self.fonts_dir and self.fonts_dir.exists():
-            fonts_path = self._escape_filter_path(self.fonts_dir)
-            filter_str += f":fontsdir={fonts_path}"
-        else:
-            logger.debug("Fonts directory unavailable for ASS filter; using default FFmpeg fonts")
-        return filter_str
-
-    @staticmethod
-    def _escape_filter_path(path: Path) -> str:
-        """
-        Escape special characters for ffmpeg filter args.
-        Handles spaces, colons, and backslashes.
-        """
-        escaped = str(path)
-        escaped = escaped.replace('\\', r'\\')
-        escaped = escaped.replace(':', r'\:')
-        escaped = escaped.replace(' ', r'\ ')
-        return escaped
+            fonts_dir = str(self.fonts_dir)
+            # ass filter signature: ass=filename[:original_size[:fontsdir]]
+            return video_stream.filter("ass", subtitle_arg, "", fonts_dir)
+        return video_stream.filter("ass", subtitle_arg)
 
     def _generate_basic_subtitles(
         self,
