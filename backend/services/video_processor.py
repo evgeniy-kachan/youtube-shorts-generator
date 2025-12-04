@@ -400,12 +400,14 @@ class VideoProcessor:
         Colors are stored in ASS format (AABBGGRR without the leading &H).
         """
         palette = [
-            "0066E0FF",  # Warm yellow
-            "00B6C42E",  # Turquoise
-            "006B6BFF",  # Coral
-            "00E55D9B",  # Purple
-            "00B3C170",  # Mint
-            "0059A2F4",  # Orange
+            None,         # Speaker 1 stays white (default style color)
+            "004DC0FF",   # Speaker 2: warm yellow/orange (#FFC04D)
+            "0066E0FF",   # Speaker 3: soft blue
+            "00B6C42E",   # Speaker 4: turquoise
+            "006B6BFF",   # Speaker 5: coral
+            "00E55D9B",   # Speaker 6: purple
+            "00B3C170",   # Speaker 7: mint
+            "0059A2F4",   # Speaker 8: orange
         ]
         assignment: dict[str, str] = {}
         if not dialogue:

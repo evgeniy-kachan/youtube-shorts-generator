@@ -6,6 +6,8 @@ from itertools import cycle
 from pathlib import Path
 from typing import List, Optional
 
+import ffmpeg
+
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -215,6 +217,75 @@ def _filter_overlapping_segments(segments: list, iou_threshold: float = 0.7) -> 
     logger.info(f"Filtered {len(segments)} segments down to {len(kept_segments)} non-overlapping segments.")
     return kept_segments
 
+
+def _scale_dialogue_offsets(dialogue: list[dict] | None, scale: float) -> None:
+    """Scale cached TTS offsets/durations when we retime synthesized dialogue audio."""
+    if not dialogue or not scale or abs(scale - 1.0) < 1e-3:
+        return
+    for turn in dialogue:
+        for key in ("tts_start_offset", "tts_end_offset", "tts_duration"):
+            value = turn.get(key)
+            if isinstance(value, (int, float)):
+                turn[key] = value * scale
+
+
+def _speed_match_audio_duration(audio_path: str, current_duration: float, target_duration: float) -> bool:
+    """
+    Use ffmpeg atempo filters to speed up (shorten) an audio track so it fits within
+    the visual segment duration, keeping pitch natural.
+    """
+    if not audio_path or current_duration <= 0 or target_duration <= 0:
+        return False
+
+    tempo = current_duration / target_duration
+    if tempo <= 1.02:
+        return False  # difference is negligible
+    if tempo > 4.0:
+        logger.warning(
+            "Skipping tempo adjustment for %s (tempo=%.2f exceeds limit).",
+            audio_path,
+            tempo,
+        )
+        return False
+
+    temp_path = Path(audio_path).with_suffix(".tempo.wav")
+    try:
+        audio_stream = ffmpeg.input(audio_path).audio
+        filters: list[float] = []
+        remaining = tempo
+        while remaining > 2.0:
+            filters.append(2.0)
+            remaining /= 2.0
+        filters.append(remaining)
+
+        for factor in filters:
+            audio_stream = audio_stream.filter("atempo", factor)
+
+        (
+            ffmpeg
+            .output(
+                audio_stream,
+                str(temp_path),
+                acodec="pcm_s16le",
+                ac=1,
+                ar="44100",
+            )
+            .overwrite_output()
+            .run(quiet=True, capture_stdout=True, capture_stderr=True)
+        )
+        os.replace(temp_path, audio_path)
+        logger.info(
+            "Compressed audio %s by tempo %.2f to match target duration %.2fs",
+            audio_path,
+            tempo,
+            target_duration,
+        )
+        return True
+    except ffmpeg.Error as exc:
+        stderr = (exc.stderr or b"").decode(errors="ignore")
+        logger.warning("Tempo adjustment failed for %s: %s", audio_path, stderr.strip())
+        temp_path.unlink(missing_ok=True)
+        return False
 def _generate_thumbnail(video_path: str, video_id: str, timestamp: float = 5.0) -> Optional[str]:
     """Generate a single thumbnail frame for preview."""
     thumbnails_dir = Path(config.TEMP_DIR) / "thumbnails"
@@ -497,6 +568,29 @@ def _process_segments_task(
                 audio_segment = None
 
             original_duration = max(0.1, float(segment.get('end_time', 0)) - float(segment.get('start_time', 0)))
+
+            if audio_duration > original_duration + 0.4:
+                before_duration = audio_duration
+                if _speed_match_audio_duration(audio_path, audio_duration, original_duration):
+                    try:
+                        audio_segment = AudioSegment.from_file(audio_path)
+                        audio_duration = audio_segment.duration_seconds or original_duration
+                    except Exception as reload_exc:
+                        logger.warning("Failed to reload sped-up audio for %s: %s", segment['id'], reload_exc)
+                        audio_segment = None
+                        audio_duration = original_duration
+
+                    scale = audio_duration / before_duration if before_duration else 1.0
+                    if scale and segment.get('dialogue'):
+                        _scale_dialogue_offsets(segment['dialogue'], scale)
+                else:
+                    logger.info(
+                        "Keeping extended duration for %s (audio %.2fs vs original %.2fs).",
+                        segment['id'],
+                        audio_duration,
+                        original_duration,
+                    )
+
             target_duration = max(audio_duration, original_duration)
 
             if audio_segment and audio_duration + 0.01 < target_duration:
