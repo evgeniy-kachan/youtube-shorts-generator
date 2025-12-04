@@ -202,6 +202,8 @@ class VideoProcessor:
         convert_to_vertical: bool = True,
         vertical_method: str = "letterbox",
         target_duration: float | None = None,
+        background_audio_path: str | None = None,
+        background_volume_db: float = -35.0,
     ) -> str:
         """
         Add TTS audio and stylized subtitles to video.
@@ -248,8 +250,37 @@ class VideoProcessor:
             # Step 3: Process video with ffmpeg
             # Replace audio with TTS and burn in stylized subtitles
             video_input = ffmpeg.input(working_video)
-            audio_input = ffmpeg.input(audio_path)
+            tts_audio_input = ffmpeg.input(audio_path)
             video_stream = video_input.video
+            audio_stream = tts_audio_input.audio
+
+            if background_audio_path:
+                try:
+                    bg_audio_input = ffmpeg.input(background_audio_path)
+                    bg_audio_stream = bg_audio_input.audio.filter(
+                        "volume",
+                        f"{background_volume_db}dB",
+                    )
+                    audio_stream = ffmpeg.filter(
+                        [audio_stream, bg_audio_stream],
+                        "amix",
+                        inputs=2,
+                        duration="longest",
+                        dropout_transition=0,
+                    )
+                except ffmpeg.Error as mix_err:
+                    stderr = (mix_err.stderr or b"").decode(errors="ignore")
+                    logger.warning(
+                        "Failed to mix background audio %s: %s",
+                        background_audio_path,
+                        stderr.strip(),
+                    )
+                except Exception as generic_mix_err:
+                    logger.warning(
+                        "Background audio mix error for %s: %s",
+                        background_audio_path,
+                        generic_mix_err,
+                    )
 
             video_duration = self._probe_duration(working_video)
             if target_duration and video_duration:
@@ -272,7 +303,7 @@ class VideoProcessor:
                 ffmpeg
                 .output(
                     video_stream,
-                    audio_input.audio,
+                    audio_stream,
                     output_path,
                     shortest=None,  # Use shortest stream
                     **{'c:v': 'libx264', 'c:a': 'aac', 'b:a': '192k', 'preset': 'medium', 'crf': 23}
@@ -316,12 +347,14 @@ class VideoProcessor:
         subtitle_font_size: int = 86,
         subtitle_background: bool = False,
         dialogue: list[dict] | None = None,
+        preserve_background_audio: bool = False,
     ) -> str:
         """
         End-to-end helper that cuts the source video, converts it to vertical format,
         overlays subtitles and replaces audio with synthesized TTS.
         Returns path to the processed temporary file.
         """
+        background_audio_path: Path | None = None
         try:
             original_duration = max(0.1, end_time - start_time)
             duration = max(original_duration, target_duration or 0.0)
@@ -335,6 +368,38 @@ class VideoProcessor:
                 end_time=end_time,
                 output_path=str(temp_segment)
             )
+
+            # Optional: extract quiet background audio
+            if preserve_background_audio:
+                background_audio_path = self.output_dir / f"{Path(temp_segment).stem}_bg.wav"
+                try:
+                    (
+                        ffmpeg
+                        .input(str(cut_path))
+                        .output(
+                            str(background_audio_path),
+                            acodec="pcm_s16le",
+                            ac=1,
+                            ar="44100",
+                            t=duration,
+                        )
+                        .overwrite_output()
+                        .run(quiet=True, capture_stdout=True, capture_stderr=True)
+                    )
+                except ffmpeg.Error as bg_err:
+                    stderr = (bg_err.stderr or b"").decode(errors="ignore")
+                    logger.warning(
+                        "Failed to extract background audio for %s: %s",
+                        cut_path,
+                        stderr.strip(),
+                    )
+                    background_audio_path = None
+                except Exception as unexpected_bg_err:
+                    logger.warning(
+                        "Unexpected error extracting background audio: %s",
+                        unexpected_bg_err,
+                    )
+                    background_audio_path = None
 
             # Step 2: prepare basic subtitles
             dialogue_turns = dialogue or []
@@ -362,6 +427,8 @@ class VideoProcessor:
                 convert_to_vertical=True,
                 vertical_method=method,
                 target_duration=duration,
+                background_audio_path=str(background_audio_path) if background_audio_path else None,
+                background_volume_db=-35.0,
             )
 
             return processed_path
@@ -370,6 +437,8 @@ class VideoProcessor:
             # Clean up intermediate cut segment
             if 'temp_segment' in locals():
                 Path(temp_segment).unlink(missing_ok=True)
+            if background_audio_path:
+                background_audio_path.unlink(missing_ok=True)
 
     def save_video(self, processed_path: str, output_path: str) -> str:
         """
@@ -400,14 +469,8 @@ class VideoProcessor:
         Colors are stored in ASS format (AABBGGRR without the leading &H).
         """
         palette = [
-            None,         # Speaker 1 stays white (default style color)
-            "004DC0FF",   # Speaker 2: warm yellow/orange (#FFC04D)
-            "0066E0FF",   # Speaker 3: soft blue
-            "00B6C42E",   # Speaker 4: turquoise
-            "006B6BFF",   # Speaker 5: coral
-            "00E55D9B",   # Speaker 6: purple
-            "00B3C170",   # Speaker 7: mint
-            "0059A2F4",   # Speaker 8: orange
+            None,         # Primary speaker → белый
+            "004DC0FF",   # Второй спикер → насыщенный жёлто-оранжевый (#FFC04D)
         ]
         assignment: dict[str, str] = {}
         if not dialogue:
@@ -526,6 +589,7 @@ class VideoProcessor:
         and enabling color coding.
         """
         subtitles: List[Dict] = []
+        lane_available_until = [0.0, 0.0]  # support two stacked rows
 
         for turn in dialogue:
             raw_text = (turn.get("text_ru") or turn.get("text") or "").strip()
@@ -594,6 +658,20 @@ class VideoProcessor:
                         }
                     )
 
+                # assign lane (0 – базовый, 1 – поднятый)
+                lane_idx = 0
+                tolerance = 0.03
+                assigned = False
+                for candidate in range(len(lane_available_until)):
+                    if start_time >= lane_available_until[candidate] - tolerance:
+                        lane_idx = candidate
+                        assigned = True
+                        break
+                if not assigned:
+                    lane_idx = lane_available_until.index(min(lane_available_until))
+
+                lane_available_until[lane_idx] = end_time
+
                 subtitles.append(
                     {
                         "start": start_time,
@@ -602,10 +680,13 @@ class VideoProcessor:
                         "words": word_entries,
                         "speaker": speaker_id,
                         "color": speaker_palette.get(speaker_id),
+                        "lane": lane_idx,
                     }
                 )
 
             if subtitles and subtitles[-1]["end"] < relative_end:
+                lane_idx = subtitles[-1].get("lane", 0)
+                lane_available_until[lane_idx] = relative_end
                 subtitles[-1]["end"] = relative_end
                 if subtitles[-1]["words"]:
                     subtitles[-1]["words"][-1]["end"] = relative_end
@@ -725,6 +806,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             color_value = subtitle.get('color')
             color_tag = rf"\1c&H{color_value}&" if color_value else ""
 
+            lane = subtitle.get('lane', 0)
             if style == 'capcut':
                 text = self._build_capcut_line(
                     subtitle,
@@ -732,6 +814,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     position_config,
                     subtitle_background,
                     color_tag,
+                    lane,
                 )
             else:
                 text = self._build_chunk_line(
@@ -740,6 +823,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     position_config,
                     subtitle_background,
                     color_tag,
+                    lane,
                 )
 
             ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}\n"
@@ -762,6 +846,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         position_conf: Dict,
         subtitle_background: bool,
         color_tag: str = "",
+        lane: int = 0,
     ) -> str:
         """Render text chunk with a chosen animation preset."""
         words = subtitle.get('text', '').split()
@@ -777,7 +862,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         else:
             text = " ".join(words)
 
-        return f"{self._get_base_animation_tag(animation, position_conf, subtitle_background, color_tag)}{text}"
+        return f"{self._get_base_animation_tag(animation, position_conf, subtitle_background, color_tag, lane)}{text}"
 
     def _build_capcut_line(
         self,
@@ -786,17 +871,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         position_conf: Dict,
         subtitle_background: bool,
         color_tag: str = "",
+        lane: int = 0,
     ) -> str:
         """Animate each word sequentially according to animation preset."""
         words = subtitle.get('words', [])
         if not words:
-            return self._build_chunk_line(subtitle, animation, position_conf, subtitle_background, color_tag)
+            return self._build_chunk_line(subtitle, animation, position_conf, subtitle_background, color_tag, lane)
 
         chunk_start = subtitle.get('start', 0.0)
         chunk_end = subtitle.get('end', chunk_start)
         chunk_duration = max(0.01, chunk_end - chunk_start)
 
-        rendered = [self._get_base_animation_tag(animation, position_conf, subtitle_background, color_tag)]
+        rendered = [self._get_base_animation_tag(animation, position_conf, subtitle_background, color_tag, lane)]
         tokens: List[str] = []
 
         for idx, word in enumerate(words):
@@ -834,22 +920,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         position_conf: Dict,
         subtitle_background: bool,
         color_tag: str = "",
+        lane: int = 0,
     ) -> str:
+        lane_gap = 140
         x = position_conf.get('x', 540)
-        y = position_conf.get('y', 1250)
+        base_y = position_conf.get('y', 1250)
+        y = base_y - lane * lane_gap
         an = position_conf.get('an', 8)
         pos_tag = rf"\pos({x},{y})"
         background_tags = r"{\blur14\bord2\shad0\1c&H000000&}" if subtitle_background else ""
         color_cmd = color_tag or ""
+        # For slide/mask animations we need both start/end Y positions
+        slide_start_y = y + 220
+        move_down_y = y + 100
         presets = {
             'bounce': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
-            'slide': rf"{{\an{an}\move({x},{y + 220},{x},{y},0,260)\fad(60,60){background_tags}{color_cmd}}}",
+            'slide': rf"{{\an{an}\move({x},{slide_start_y},{x},{y},0,260)\fad(60,60){background_tags}{color_cmd}}}",
             'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{background_tags}{color_cmd}}}",
             'fade': rf"{{\an{an}{pos_tag}\fad(100,100){background_tags}{color_cmd}}}",
             'scale': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
             'karaoke': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
             'typewriter': rf"{{\an{an}{pos_tag}{background_tags}{color_cmd}}}",
-            'mask': rf"{{\an{an}\move({x},{y + 100},{x},{y},0,300){background_tags}{color_cmd}}}",
+            'mask': rf"{{\an{an}\move({x},{move_down_y},{x},{y},0,300){background_tags}{color_cmd}}}",
             'simple_fade': rf"{{\an{an}{pos_tag}\fad(150,150){background_tags}{color_cmd}}}",
             'word_pop': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
         }

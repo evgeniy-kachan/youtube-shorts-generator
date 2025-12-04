@@ -294,6 +294,7 @@ const SegmentsList = ({
   const [subtitleBackground, setSubtitleBackground] = useState(false);
   const [ttsProvider, setTtsProvider] = useState('local');
   const [voiceMix, setVoiceMix] = useState('male_duo');
+  const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(false);
 
   // Tabs: 'style', 'text', 'position'
   const [activeTab, setActiveTab] = useState('style');
@@ -333,7 +334,8 @@ const SegmentsList = ({
         subtitleFontSize,
         subtitleBackground,
         ttsProvider,
-        voiceMix
+        voiceMix,
+        preserveBackgroundAudio
       );
     }
   };
@@ -579,6 +581,31 @@ const SegmentsList = ({
                 <p className="text-xs text-gray-500 mt-2">
                   По умолчанию назначаются мужские голоса. Выберите другой вариант, если есть спикер-женщина.
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                  Фоновый звук
+                </label>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setPreserveBackgroundAudio((prev) => !prev)}
+                  className={`w-full text-left p-4 border rounded-xl transition ${
+                    preserveBackgroundAudio
+                      ? 'border-purple-600 bg-purple-50 ring-1 ring-purple-300'
+                      : 'border-gray-200 hover:border-purple-400'
+                  }`}
+                >
+                  <div className="font-semibold text-gray-900">
+                    {preserveBackgroundAudio
+                      ? '✅ Сохранять оригинальный фон (-35 dB)'
+                      : '⬜️ Только новая озвучка'}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Если включить — подмешаем тихий оригинальный звук (‑35 dB), чтобы оставить атмосферу площадки.
+                  </div>
+                </button>
               </div>
 
               {/* Tabs Navigation */}

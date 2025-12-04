@@ -168,7 +168,8 @@ function App() {
     subtitleFontSize,
     subtitleBackground,
     ttsProvider = 'local',
-    voiceMix = 'male_duo'
+    voiceMix = 'male_duo',
+    preserveBackgroundAudio = false
   ) => {
     try {
       setStage('processing');
@@ -186,7 +187,8 @@ function App() {
         subtitlePosition,
         subtitleFont,
         subtitleFontSize,
-        subtitleBackground
+        subtitleBackground,
+        preserveBackgroundAudio
       );
       setProcessingTask(response.task_id);
     } catch (error) {

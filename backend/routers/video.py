@@ -507,6 +507,7 @@ def _process_segments_task(
     subtitle_font: str = "Montserrat Light",
     subtitle_font_size: int = 86,
     subtitle_background: bool = False,
+    preserve_background_audio: bool = False,
 ):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Preparing to render..."}
@@ -629,6 +630,7 @@ def _process_segments_task(
                 subtitle_font_size=subtitle_font_size,
                 subtitle_background=subtitle_background,
                 dialogue=segment.get('dialogue'),
+                preserve_background_audio=preserve_background_audio,
             )
             renderer.save_video(final_clip, output_path)
             
@@ -739,6 +741,7 @@ async def process_segments(request: ProcessRequest, background_tasks: Background
         request.subtitle_font,
         request.subtitle_font_size,
         request.subtitle_background,
+        request.preserve_background_audio,
     )
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Processing task queued")
 
