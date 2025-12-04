@@ -291,6 +291,11 @@ class VideoProcessor:
             
             return output_path
             
+        except ffmpeg.Error as ff_err:
+            stderr = (ff_err.stderr or b"").decode(errors="ignore")
+            stdout = (ff_err.stdout or b"").decode(errors="ignore")
+            logger.error("FFmpeg processing failed.\nSTDOUT:\n%s\nSTDERR:\n%s", stdout.strip(), stderr.strip())
+            raise
         except Exception as e:
             logger.error(f"Error processing video: {e}")
             raise
