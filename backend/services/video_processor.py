@@ -380,7 +380,8 @@ class VideoProcessor:
         if self.fonts_dir and self.fonts_dir.exists():
             fonts_dir = str(self.fonts_dir)
             # ass filter signature: ass=filename[:original_size[:fontsdir]]
-            return video_stream.filter("ass", subtitle_arg, "", fonts_dir)
+            original_size = f"{self.TARGET_WIDTH}x{self.TARGET_HEIGHT}"
+            return video_stream.filter("ass", subtitle_arg, original_size, fonts_dir)
         return video_stream.filter("ass", subtitle_arg)
 
     def _generate_basic_subtitles(
