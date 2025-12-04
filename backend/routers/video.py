@@ -473,7 +473,8 @@ def _process_segments_task(
                 tts_service.synthesize_dialogue(
                     dialogue_turns=segment['dialogue'],
                     output_path=audio_path,
-                    voice_map=voice_plan
+                    voice_map=voice_plan,
+                    base_start=segment.get('start_time'),
                 )
             else:
                 # Single speaker fallback (or no dialogue structure)

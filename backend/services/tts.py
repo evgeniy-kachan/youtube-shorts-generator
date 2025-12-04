@@ -136,9 +136,60 @@ class BaseTTSService:
         output_path: str,
         voice_map: dict[str, str],
         pause_ms: int = 300,
+        base_start: float | None = None,
     ) -> str:
-        """Synthesize a dialogue with multiple speakers and concatenate into one file."""
+        """
+        Synthesize a dialogue with multiple speakers.
+
+        If precise timestamps are available for each turn (start/end), we attempt to keep
+        the natural overlaps by placing each synthesized phrase on a shared timeline.
+        Otherwise, we fall back to sequential concatenation with fixed pauses.
+        """
+        if self._dialogue_has_offsets(dialogue_turns):
+            try:
+                return self._synthesize_dialogue_with_overlap(
+                    dialogue_turns=dialogue_turns,
+                    output_path=output_path,
+                    voice_map=voice_map,
+                    base_start=base_start,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Dialogue overlap mixing failed (%s). Falling back to linear merge.",
+                    exc,
+                )
+
+        return self._synthesize_dialogue_linear(
+            dialogue_turns=dialogue_turns,
+            output_path=output_path,
+            voice_map=voice_map,
+            pause_ms=pause_ms,
+        )
+
+    @staticmethod
+    def _dialogue_has_offsets(dialogue_turns: list[dict]) -> bool:
+        if not dialogue_turns:
+            return False
+        for turn in dialogue_turns:
+            start = turn.get("start")
+            if start is None:
+                return False
+            try:
+                float(start)
+            except (TypeError, ValueError):
+                return False
+        return True
+
+    def _synthesize_dialogue_linear(
+        self,
+        dialogue_turns: list[dict],
+        output_path: str,
+        voice_map: dict[str, str],
+        pause_ms: int,
+    ) -> str:
+        """Previous behavior: concatenate turns sequentially with short pauses."""
         audio_segments: list[AudioSegment] = []
+        voice_map = voice_map or {}
 
         for idx, turn in enumerate(dialogue_turns):
             text = turn.get("text_ru") or turn.get("text")
@@ -150,7 +201,7 @@ class BaseTTSService:
             voice = voice_map.get(speaker_id) or voice_map.get("__default__") or default_voice
 
             logger.info(
-                "Synthesizing dialogue turn %s/%s: speaker=%s -> voice=%s, len=%s",
+                "Synthesizing dialogue turn %s/%s: speaker=%s -> voice=%s, len=%s (linear)",
                 idx + 1,
                 len(dialogue_turns),
                 speaker_id,
@@ -186,7 +237,81 @@ class BaseTTSService:
             final_audio += seg_audio
 
         final_audio.export(output_path, format="wav")
-        logger.info("Dialogue audio saved to %s", output_path)
+        logger.info("Dialogue audio saved to %s (linear mode)", output_path)
+        return output_path
+
+    def _synthesize_dialogue_with_overlap(
+        self,
+        dialogue_turns: list[dict],
+        output_path: str,
+        voice_map: dict[str, str],
+        base_start: float | None,
+    ) -> str:
+        """Place every synthesized phrase on a common timeline to preserve overlaps."""
+        voice_map = voice_map or {}
+        offsets = [float(turn["start"]) for turn in dialogue_turns if turn.get("start") is not None]
+        if not offsets:
+            raise ValueError("Dialogue turns missing start timestamps.")
+
+        reference = base_start if base_start is not None else min(offsets)
+        reference = float(reference)
+
+        layers: list[tuple[AudioSegment, int]] = []
+        max_duration_ms = 0
+
+        for idx, turn in enumerate(dialogue_turns):
+            text = turn.get("text_ru") or turn.get("text")
+            if not text:
+                continue
+
+            start_time = float(turn.get("start", reference))
+            offset_ms = max(0, int(round((start_time - reference) * 1000)))
+
+            speaker_id = turn.get("speaker")
+            default_voice = getattr(self, "voice_id", None) or getattr(self, "speaker", None)
+            voice = voice_map.get(speaker_id) or voice_map.get("__default__") or default_voice
+
+            logger.info(
+                "Synthesizing dialogue turn %s/%s: speaker=%s -> voice=%s, len=%s, offset=%.2fs",
+                idx + 1,
+                len(dialogue_turns),
+                speaker_id,
+                voice,
+                len(text),
+                offset_ms / 1000,
+            )
+
+            temp_turn_path = Path(output_path).parent / f"dialogue_turn_{idx}_{Path(output_path).name}"
+            try:
+                self.synthesize(text, str(temp_turn_path), speaker=voice)
+                if not temp_turn_path.exists():
+                    continue
+
+                seg_audio = AudioSegment.from_file(str(temp_turn_path))
+                end_ms = offset_ms + len(seg_audio)
+                max_duration_ms = max(max_duration_ms, end_ms)
+                layers.append((seg_audio, offset_ms))
+            finally:
+                try:
+                    temp_turn_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        if not layers:
+            raise RuntimeError("No audio generated for dialogue")
+
+        final_duration = max(max_duration_ms, 1)
+        final_audio = AudioSegment.silent(duration=final_duration)
+
+        for seg_audio, offset_ms in layers:
+            final_audio = final_audio.overlay(seg_audio, position=offset_ms)
+
+        final_audio.export(output_path, format="wav")
+        logger.info(
+            "Dialogue audio saved to %s (overlap mode, duration %.2fs)",
+            output_path,
+            final_duration / 1000,
+        )
         return output_path
 
 
