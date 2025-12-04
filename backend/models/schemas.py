@@ -72,7 +72,7 @@ class ProcessRequest(BaseModel):
         description="Enable background blur/box behind subtitles"
     )
     preserve_background_audio: bool = Field(
-        default=False,
+        default=True,
         description="Mix original track quietly under synthesized voice"
     )
     

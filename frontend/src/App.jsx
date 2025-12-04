@@ -169,7 +169,7 @@ function App() {
     subtitleBackground,
     ttsProvider = 'local',
     voiceMix = 'male_duo',
-    preserveBackgroundAudio = false
+    preserveBackgroundAudio = true
   ) => {
     try {
       setStage('processing');

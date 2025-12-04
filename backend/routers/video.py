@@ -507,7 +507,7 @@ def _process_segments_task(
     subtitle_font: str = "Montserrat Light",
     subtitle_font_size: int = 86,
     subtitle_background: bool = False,
-    preserve_background_audio: bool = False,
+    preserve_background_audio: bool = True,
 ):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Preparing to render..."}

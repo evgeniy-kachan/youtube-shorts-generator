@@ -321,18 +321,22 @@ class HighlightAnalyzer:
     def _analyze_segment_with_llm(self, segment: Dict) -> Dict[str, float]:
         """Analyze a single segment using LLM."""
         
-        prompt = f"""Analyze the following video transcript segment for its potential as a viral short video (TikTok / Instagram Reels / YouTube Shorts, 30–120 seconds).
+        prompt = f"""You are an editor who вырезает короткие клипы из длинных бизнес-подкастов и интервью (Joe Rogan, предприниматели, инвесторы, мотивационные спикеры). Оцени фрагмент как потенциальный ролик 30–120 секунд для людей, которые ждут:
+- конкретные бизнес-инсайты, секреты роста, метрики, схемы и ходы;
+- точку зрения героя: смелые или нестандартные мнения, философия, мировоззрение;
+- истории факапов и восстановления, уроки “как не повторить мою ошибку”;
+- советы по образу жизни, дисциплине, распорядку дня, продуктивности;
+- вдохновение и мотивацию, но желательно с фактами или личным опытом.
 
-IMPORTANT RULES:
-- Use ONLY the provided text.
-- Do NOT invent context, meanings, tone, or details.
-- Do NOT assume anything not explicitly present in the text.
-- Focus strictly on how this exact segment performs as a short video clip.
+ВАЖНО:
+- Используй ТОЛЬКО данный текст. Не домысливай факты и контекст.
+- Чем конкретнее и полезнее фрагмент (цифры, примеры, actionable steps), тем выше “key_value”.
+- Если кусок пустой, очевидный или требует большого контекста, ставь низкие баллы.
 
-TEXT:
+ТЕКСТ:
 "{segment['text']}"
 
-Evaluate the segment using these criteria (score each from 0.0 to 1.0):
+Оцени фрагмент по критериям (0.0–1.0):
 
 1. emotional_intensity
    Strength of emotions, surprise, tension, inspiration, or sentiment.

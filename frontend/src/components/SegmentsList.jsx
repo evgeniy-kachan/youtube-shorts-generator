@@ -294,7 +294,7 @@ const SegmentsList = ({
   const [subtitleBackground, setSubtitleBackground] = useState(false);
   const [ttsProvider, setTtsProvider] = useState('local');
   const [voiceMix, setVoiceMix] = useState('male_duo');
-  const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(false);
+  const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(true);
 
   // Tabs: 'style', 'text', 'position'
   const [activeTab, setActiveTab] = useState('style');
@@ -599,11 +599,11 @@ const SegmentsList = ({
                 >
                   <div className="font-semibold text-gray-900">
                     {preserveBackgroundAudio
-                      ? '✅ Сохранять оригинальный фон (-35 dB)'
+                      ? '✅ Сохранять оригинальный фон (-25 dB)'
                       : '⬜️ Только новая озвучка'}
                   </div>
                   <div className="text-xs text-gray-500 mt-1">
-                    Если включить — подмешаем тихий оригинальный звук (‑35 dB), чтобы оставить атмосферу площадки.
+                    Если включить — подмешаем тихий оригинальный звук (‑25 dB), чтобы оставить атмосферу площадки.
                   </div>
                 </button>
               </div>

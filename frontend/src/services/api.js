@@ -32,7 +32,7 @@ export const processSegments = async (
   subtitleFont = 'Montserrat Light',
   subtitleFontSize = 86,
   subtitleBackground = false,
-  preserveBackgroundAudio = false
+  preserveBackgroundAudio = true
 ) => {
   const response = await api.post('/api/video/process', {
     video_id: videoId,
