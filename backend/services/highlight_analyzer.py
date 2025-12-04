@@ -321,22 +321,22 @@ class HighlightAnalyzer:
     def _analyze_segment_with_llm(self, segment: Dict) -> Dict[str, float]:
         """Analyze a single segment using LLM."""
         
-        prompt = f"""You are an editor who вырезает короткие клипы из длинных бизнес-подкастов и интервью (Joe Rogan, предприниматели, инвесторы, мотивационные спикеры). Оцени фрагмент как потенциальный ролик 30–120 секунд для людей, которые ждут:
-- конкретные бизнес-инсайты, секреты роста, метрики, схемы и ходы;
-- точку зрения героя: смелые или нестандартные мнения, философия, мировоззрение;
-- истории факапов и восстановления, уроки “как не повторить мою ошибку”;
-- советы по образу жизни, дисциплине, распорядку дня, продуктивности;
-- вдохновение и мотивацию, но желательно с фактами или личным опытом.
+        prompt = f"""You are an editor who curates punchy clips from long-form business podcasts and interviews (Joe Rogan, founders, investors, motivational speakers). Judge this fragment as a potential 30–120 second short for viewers who crave:
+- actionable business insights, growth tactics, metrics, frameworks, contrarian strategies;
+- strong POV from the guest: bold opinions, mindset, philosophy, worldview;
+- honest failure/recovery stories with clear lessons;
+- tips about lifestyle, discipline, routines, productivity systems;
+- inspirational moments backed by concrete experience, not vague hype.
 
-ВАЖНО:
-- Используй ТОЛЬКО данный текст. Не домысливай факты и контекст.
-- Чем конкретнее и полезнее фрагмент (цифры, примеры, actionable steps), тем выше “key_value”.
-- Если кусок пустой, очевидный или требует большого контекста, ставь низкие баллы.
+IMPORTANT:
+- Use ONLY the provided text. Do not invent context.
+- Reward specificity: numbers, clear takeaways, step-by-step advice.
+- Penalize fluff, clichés, or passages that require too much surrounding context.
 
-ТЕКСТ:
+TEXT:
 "{segment['text']}"
 
-Оцени фрагмент по критериям (0.0–1.0):
+Score each dimension from 0.0–1.0:
 
 1. emotional_intensity
    Strength of emotions, surprise, tension, inspiration, or sentiment.
@@ -359,6 +359,9 @@ class HighlightAnalyzer:
 7. clip_worthiness
    Suitability for a standalone viral clip (TikTok / Shorts / Reels) that people would watch fully.
 
+8. business_value
+   Density of practical business insight: tactics, metrics, frameworks, lessons the viewer can reuse immediately.
+
 SCORING RULES:
 - 0.0 = completely absent
 - 1.0 = extremely strong
@@ -374,7 +377,8 @@ Respond ONLY with valid JSON (no explanations, no markdown). Correct format exam
   "story_moment": 0.0,
   "humor": 0.0,
   "dynamic_flow": 0.0,
-  "clip_worthiness": 0.0
+  "clip_worthiness": 0.0,
+  "business_value": 0.0
 }}
 If the format is violated, the response is invalid."""
 
@@ -410,18 +414,21 @@ If the format is violated, the response is invalid."""
                 'key_value': 0.5,
                 'story_moment': 0.5,
                 'humor': 0.5,
+                'dynamic_flow': 0.5,
+                'clip_worthiness': 0.5,
+                'business_value': 0.5,
             }
     
     def _calculate_highlight_score(self, scores: Dict[str, float]) -> float:
         """
-        Calculate weighted highlight score based on 5 key criteria.
+        Calculate weighted highlight score emphasizing actionable and emotional impact.
         """
         highlight_score = (
-            0.30 * scores.get('emotional_intensity', 0) +
-            0.30 * scores.get('hook_potential', 0) +
+            0.25 * scores.get('emotional_intensity', 0) +
+            0.25 * scores.get('hook_potential', 0) +
             0.20 * scores.get('key_value', 0) +
-            0.15 * scores.get('story_moment', 0) +
-            0.05 * scores.get('humor', 0)
+            0.20 * scores.get('business_value', 0) +
+            0.10 * scores.get('story_moment', 0)
         )
         
         return min(1.0, highlight_score)
