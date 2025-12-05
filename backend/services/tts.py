@@ -1,12 +1,14 @@
 """Text-to-Speech services."""
 import io
 import logging
+import os
 import time
 from pathlib import Path
 import re
 from datetime import datetime
 from urllib.error import HTTPError
 
+import ffmpeg
 import httpx
 import torch
 import torchaudio
@@ -20,6 +22,10 @@ logger = logging.getLogger(__name__)
 
 class BaseTTSService:
     """Common helpers shared between different TTS providers."""
+
+    SPEECH_WORDS_PER_SEC = 140.0 / 60.0  # ~2.33 words per second
+    MIN_CHUNK_DURATION = 0.12  # seconds
+    MAX_PAUSE_FRACTION = 0.25  # pauses should not exceed 25% of the turn window
 
     def __init__(self, language: str = "ru", max_chunk_chars: int = 400):
         self.language = language
@@ -130,6 +136,270 @@ class BaseTTSService:
         except Exception as log_exc:
             logger.warning("Unable to write TTS failed chunk log: %s", log_exc)
 
+    def _estimate_pause_ms(self, chunk_text: str) -> int:
+        """Heuristic pause duration after a sentence chunk."""
+        word_count = len(chunk_text.split())
+        if word_count >= 18:
+            return 180
+        if word_count >= 12:
+            return 140
+        if word_count >= 7:
+            return 100
+        if word_count >= 4:
+            return 70
+        return 50
+
+    def _estimate_duration_from_text(self, text: str) -> float:
+        """Fallback duration estimation based on average speech rate."""
+        words = max(1, len(text.split()))
+        return max(0.5, words / self.SPEECH_WORDS_PER_SEC)
+
+    def _split_turn_into_chunks(self, text: str) -> list[str]:
+        """Split turn text into sentence-like chunks with basic normalization."""
+        normalized = (text or "").strip()
+        if not normalized:
+            return []
+
+        sentences = self.splitter.split(normalized) if self.splitter else [normalized]
+        chunks: list[str] = []
+        current = ""
+        min_len = 45
+        max_len = 220
+
+        for sentence in sentences:
+            cleaned = self._sanitize_text(sentence)
+            if not cleaned:
+                continue
+
+            if not current:
+                current = cleaned
+                continue
+
+            candidate = f"{current} {cleaned}".strip()
+            if len(current) < min_len and len(candidate) <= max_len:
+                current = candidate
+                continue
+
+            chunks.append(current.strip())
+            current = cleaned
+
+        if current:
+            chunks.append(current.strip())
+
+        if not chunks:
+            chunks = [self._sanitize_text(normalized)]
+
+        expanded: list[str] = []
+        for chunk in chunks:
+            if len(chunk) > self.max_chunk_chars:
+                expanded.extend(self._chunk_text(chunk))
+            else:
+                expanded.append(chunk)
+
+        return [piece.strip() for piece in expanded if piece.strip()]
+
+    def _plan_turn_chunks(self, turn: dict) -> list[dict]:
+        """
+        Prepare a synthesis plan for a dialogue turn: small chunks with pauses and
+        per-chunk target durations so the final audio matches diarized timings.
+        """
+        text = (turn.get("text_ru") or turn.get("text") or "").strip()
+        if not text:
+            return []
+
+        raw_chunks = self._split_turn_into_chunks(text)
+        plan: list[dict] = []
+        for chunk_text in raw_chunks:
+            cleaned = chunk_text.strip()
+            if not cleaned:
+                continue
+            plan.append(
+                {
+                    "text": cleaned,
+                    "word_count": max(1, len(cleaned.split())),
+                    "pause_ms": self._estimate_pause_ms(cleaned),
+                }
+            )
+
+        if not plan:
+            return []
+
+        plan[-1]["pause_ms"] = 0  # no trailing pause
+
+        try:
+            start_time = float(turn.get("start", 0.0))
+        except (TypeError, ValueError):
+            start_time = 0.0
+
+        diarized_end = turn.get("end")
+        end_time: float | None
+        try:
+            end_time = float(diarized_end) if diarized_end is not None else None
+        except (TypeError, ValueError):
+            end_time = None
+
+        if end_time is not None and end_time > start_time:
+            turn_window = max(0.2, end_time - start_time)
+        else:
+            turn_window = self._estimate_duration_from_text(text)
+
+        raw_pause_ms = sum(chunk["pause_ms"] for chunk in plan[:-1])
+        pause_budget_ms = min(
+            raw_pause_ms,
+            int(turn_window * 1000 * self.MAX_PAUSE_FRACTION),
+        )
+
+        if raw_pause_ms > 0 and pause_budget_ms >= 0:
+            scale = pause_budget_ms / raw_pause_ms if raw_pause_ms else 0.0
+            for chunk in plan[:-1]:
+                chunk["pause_ms"] = int(chunk["pause_ms"] * scale)
+        else:
+            for chunk in plan[:-1]:
+                chunk["pause_ms"] = 0
+
+        pause_total_sec = sum(chunk["pause_ms"] for chunk in plan[:-1]) / 1000.0
+        speech_budget = turn_window - pause_total_sec
+        if speech_budget <= 0:
+            speech_budget = self.MIN_CHUNK_DURATION * len(plan)
+
+        total_weight = sum(chunk["word_count"] for chunk in plan) or len(plan)
+        remaining = speech_budget
+
+        for idx, chunk in enumerate(plan):
+            weight = chunk["word_count"] / total_weight if total_weight else 1 / len(plan)
+            if idx == len(plan) - 1:
+                chunk_duration = max(self.MIN_CHUNK_DURATION, remaining)
+            else:
+                chunk_duration = max(self.MIN_CHUNK_DURATION, speech_budget * weight)
+                remaining = max(0.0, remaining - chunk_duration)
+            chunk["target_duration"] = chunk_duration
+
+        return plan
+
+    @staticmethod
+    def _collect_filters_for_tempo(tempo: float) -> list[float]:
+        """Split tempo factor into ffmpeg-compatible atempo filters."""
+        filters: list[float] = []
+        remaining = tempo
+
+        while remaining > 2.0:
+            filters.append(2.0)
+            remaining /= 2.0
+        while remaining < 0.5 and remaining > 0:
+            filters.append(0.5)
+            remaining /= 0.5
+
+        if remaining > 0 and abs(remaining - 1.0) > 1e-3:
+            filters.append(remaining)
+
+        return [factor for factor in filters if 0.5 <= factor <= 2.0 and abs(factor - 1.0) > 1e-3]
+
+    def _retime_audio_file(self, file_path: Path, tempo: float) -> bool:
+        """
+        Adjust audio duration via ffmpeg atempo filters.
+        tempo > 1.0 speeds up (shorter), tempo < 1.0 slows down (longer).
+        """
+        if tempo <= 0 or abs(tempo - 1.0) < 0.02:
+            return False
+
+        filters = self._collect_filters_for_tempo(tempo)
+        if not filters:
+            return False
+
+        temp_path = file_path.with_suffix(file_path.suffix + ".retime")
+        try:
+            stream = ffmpeg.input(str(file_path)).audio
+            for factor in filters:
+                stream = stream.filter("atempo", factor)
+
+            (
+                ffmpeg.output(
+                    stream,
+                    str(temp_path),
+                    acodec="pcm_s16le",
+                    ac=1,
+                    ar="44100",
+                )
+                .overwrite_output()
+                .run(quiet=True, capture_stdout=True, capture_stderr=True)
+            )
+            temp_path.replace(file_path)
+            return True
+        except ffmpeg.Error as exc:
+            stderr = (exc.stderr or b"").decode(errors="ignore")
+            logger.warning(
+                "Failed to retime %s (tempo=%.2f): %s",
+                file_path,
+                tempo,
+                stderr.strip(),
+            )
+            temp_path.unlink(missing_ok=True)
+            return False
+
+    def _render_turn_chunks(
+        self,
+        plan: list[dict],
+        voice: str | None,
+        destination: Path,
+        turn_idx: int,
+    ) -> AudioSegment | None:
+        """Synthesize per-chunk audio and stitch it with pauses."""
+        combined_segments: list[AudioSegment] = []
+
+        for chunk_idx, chunk in enumerate(plan):
+            chunk_path = (
+                destination.parent
+                / f"dialogue_turn_{turn_idx}_chunk_{chunk_idx}_{destination.name}"
+            )
+            try:
+                self.synthesize(chunk["text"], str(chunk_path), speaker=voice)
+            except Exception as exc:
+                logger.error(
+                    "Failed to synthesize chunk %s/%s for turn %s: %s",
+                    chunk_idx + 1,
+                    len(plan),
+                    turn_idx + 1,
+                    exc,
+                )
+                chunk_path.unlink(missing_ok=True)
+                continue
+
+            try:
+                if not chunk_path.exists():
+                    logger.warning("Chunk path %s missing after synthesis.", chunk_path)
+                    continue
+
+                seg_audio = AudioSegment.from_file(str(chunk_path))
+                current_duration = len(seg_audio) / 1000.0
+                target_duration = chunk.get("target_duration")
+
+                if (
+                    target_duration
+                    and target_duration > 0
+                    and current_duration > 0
+                    and abs(current_duration - target_duration) > 0.08
+                ):
+                    tempo = current_duration / target_duration
+                    if self._retime_audio_file(chunk_path, tempo):
+                        seg_audio = AudioSegment.from_file(str(chunk_path))
+                        current_duration = len(seg_audio) / 1000.0
+
+                combined_segments.append(seg_audio)
+
+                pause_ms = int(chunk.get("pause_ms") or 0)
+                if pause_ms > 0 and chunk_idx != len(plan) - 1:
+                    combined_segments.append(AudioSegment.silent(duration=pause_ms))
+            finally:
+                chunk_path.unlink(missing_ok=True)
+
+        if not combined_segments:
+            return None
+
+        final_audio = combined_segments[0]
+        for seg in combined_segments[1:]:
+            final_audio += seg
+        return final_audio
+
     def synthesize_dialogue(
         self,
         dialogue_turns: list[dict],
@@ -188,6 +458,7 @@ class BaseTTSService:
         pause_ms: int,
     ) -> str:
         """Previous behavior: concatenate turns sequentially with short pauses."""
+        destination = Path(output_path)
         audio_segments: list[AudioSegment] = []
         voice_map = voice_map or {}
         timeline_ms = 0
@@ -201,42 +472,42 @@ class BaseTTSService:
             default_voice = getattr(self, "voice_id", None) or getattr(self, "speaker", None)
             voice = voice_map.get(speaker_id) or voice_map.get("__default__") or default_voice
 
+            plan = self._plan_turn_chunks(turn)
+            if not plan:
+                continue
+
             logger.info(
-                "Synthesizing dialogue turn %s/%s: speaker=%s -> voice=%s, len=%s (linear)",
+                "Synthesizing dialogue turn %s/%s: speaker=%s -> voice=%s, len=%s (linear, %s chunk(s))",
                 idx + 1,
                 len(dialogue_turns),
                 speaker_id,
                 voice,
                 len(text),
+                len(plan),
             )
 
-            temp_turn_path = Path(output_path).parent / f"dialogue_turn_{idx}_{Path(output_path).name}"
-
-            try:
-                self.synthesize(text, str(temp_turn_path), speaker=voice)
-                if temp_turn_path.exists():
-                    seg_audio = AudioSegment.from_file(str(temp_turn_path))
-
-                    if audio_segments:
-                        audio_segments.append(AudioSegment.silent(duration=pause_ms))
-                        timeline_ms += pause_ms
-
-                    start_seconds = timeline_ms / 1000.0
-                    audio_segments.append(seg_audio)
-                    duration_ms = len(seg_audio)
-                    timeline_ms += duration_ms
-
-                    turn["tts_start_offset"] = start_seconds
-                    turn["tts_duration"] = duration_ms / 1000.0
-                    turn["tts_end_offset"] = start_seconds + turn["tts_duration"]
-
-                    try:
-                        temp_turn_path.unlink()
-                    except Exception:
-                        pass
-            except Exception as exc:
-                logger.error("Failed to synthesize dialogue turn %s: %s", idx, exc)
+            seg_audio = self._render_turn_chunks(plan, voice, destination, idx)
+            if seg_audio is None:
                 continue
+
+            logger.info(
+                "Dialogue turn %s rendered at %.2fs duration (linear)",
+                idx + 1,
+                len(seg_audio) / 1000.0,
+            )
+
+            if audio_segments:
+                audio_segments.append(AudioSegment.silent(duration=pause_ms))
+                timeline_ms += pause_ms
+
+            start_seconds = timeline_ms / 1000.0
+            audio_segments.append(seg_audio)
+            duration_ms = len(seg_audio)
+            timeline_ms += duration_ms
+
+            turn["tts_start_offset"] = start_seconds
+            turn["tts_duration"] = duration_ms / 1000.0
+            turn["tts_end_offset"] = start_seconds + turn["tts_duration"]
 
         if not audio_segments:
             raise RuntimeError("No audio generated for dialogue")
@@ -245,7 +516,7 @@ class BaseTTSService:
         for seg_audio in audio_segments[1:]:
             final_audio += seg_audio
 
-        final_audio.export(output_path, format="wav")
+        final_audio.export(str(destination), format="wav")
         logger.info("Dialogue audio saved to %s (linear mode)", output_path)
         return output_path
 
@@ -257,6 +528,7 @@ class BaseTTSService:
         base_start: float | None,
     ) -> str:
         """Place every synthesized phrase on a common timeline to preserve overlaps."""
+        destination = Path(output_path)
         voice_map = voice_map or {}
         offsets = [float(turn["start"]) for turn in dialogue_turns if turn.get("start") is not None]
         if not offsets:
@@ -280,37 +552,50 @@ class BaseTTSService:
             default_voice = getattr(self, "voice_id", None) or getattr(self, "speaker", None)
             voice = voice_map.get(speaker_id) or voice_map.get("__default__") or default_voice
 
+            plan = self._plan_turn_chunks(turn)
+            if not plan:
+                continue
+
             logger.info(
-                "Synthesizing dialogue turn %s/%s: speaker=%s -> voice=%s, len=%s, offset=%.2fs",
+                "Synthesizing dialogue turn %s/%s: speaker=%s -> voice=%s, len=%s, offset=%.2fs (%s chunk(s))",
                 idx + 1,
                 len(dialogue_turns),
                 speaker_id,
                 voice,
                 len(text),
                 offset_ms / 1000,
+                len(plan),
             )
 
-            temp_turn_path = Path(output_path).parent / f"dialogue_turn_{idx}_{Path(output_path).name}"
-            try:
-                self.synthesize(text, str(temp_turn_path), speaker=voice)
-                if not temp_turn_path.exists():
-                    continue
+            seg_audio = self._render_turn_chunks(plan, voice, destination, idx)
+            if seg_audio is None:
+                continue
 
-                seg_audio = AudioSegment.from_file(str(temp_turn_path))
-                duration_seconds = len(seg_audio) / 1000.0
-                relative_start = offset_ms / 1000.0
-                turn["tts_start_offset"] = relative_start
-                turn["tts_duration"] = duration_seconds
-                turn["tts_end_offset"] = relative_start + duration_seconds
+            duration_seconds = len(seg_audio) / 1000.0
+            relative_start = offset_ms / 1000.0
 
-                end_ms = offset_ms + len(seg_audio)
-                max_duration_ms = max(max_duration_ms, end_ms)
-                layers.append((seg_audio, offset_ms))
-            finally:
+            diarized_end = turn.get("end")
+            if diarized_end is not None:
                 try:
-                    temp_turn_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
+                    diarized_end = float(diarized_end)
+                except (TypeError, ValueError):
+                    diarized_end = None
+            if diarized_end is not None:
+                relative_end_target = max(0.0, diarized_end - reference)
+                if relative_end_target > relative_start:
+                    max_allowed = max(self.MIN_CHUNK_DURATION, relative_end_target - relative_start)
+                    if duration_seconds > max_allowed + 0.05:
+                        clip_ms = int(max_allowed * 1000)
+                        seg_audio = seg_audio[:clip_ms]
+                        duration_seconds = len(seg_audio) / 1000.0
+
+            turn["tts_start_offset"] = relative_start
+            turn["tts_duration"] = duration_seconds
+            turn["tts_end_offset"] = relative_start + duration_seconds
+
+            end_ms = offset_ms + len(seg_audio)
+            max_duration_ms = max(max_duration_ms, end_ms)
+            layers.append((seg_audio, offset_ms))
 
         if not layers:
             raise RuntimeError("No audio generated for dialogue")
@@ -321,7 +606,7 @@ class BaseTTSService:
         for seg_audio, offset_ms in layers:
             final_audio = final_audio.overlay(seg_audio, position=offset_ms)
 
-        final_audio.export(output_path, format="wav")
+        final_audio.export(str(destination), format="wav")
         logger.info(
             "Dialogue audio saved to %s (overlap mode, duration %.2fs)",
             output_path,
