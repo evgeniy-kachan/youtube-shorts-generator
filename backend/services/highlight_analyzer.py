@@ -403,6 +403,8 @@ IMPORTANT:
 - Use ONLY the provided text. Do not invent context.
 - Reward specificity: numbers, clear takeaways, step-by-step advice.
 - Penalize fluff, clichés, or passages that require too much surrounding context.
+- Prefer self-contained arcs (question → insight/answer). If the fragment stops right after a question, teaser, or promise and the response is missing, treat it as incomplete: cap clip_worthiness at 0.20 and push other scores down.
+- Use "Next topic" to decide whether the immediate continuation likely contains the missing answer. Until that continuation is included, assume the current fragment is incomplete and score it conservatively.
 
 TEXT:
 "{segment['text']}"
@@ -420,6 +422,7 @@ SCORING RULES:
 - 1.0 = extremely strong
 - Use decimal values (e.g., 0.35, 0.72).
 - Be strict and realistic; high scores only when clearly deserved.
+- If the story feels unfinished (question without answer, buildup without payoff), keep highlight_score < 0.30.
 
 OUTPUT FORMAT:
 Respond ONLY with valid JSON (no explanations, no markdown). Correct format example:

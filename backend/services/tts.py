@@ -306,7 +306,7 @@ class BaseTTSService:
         if not filters:
             return False
 
-        temp_path = file_path.with_suffix(file_path.suffix + ".retime")
+        temp_path = file_path.with_suffix(".retime.wav")
         try:
             stream = ffmpeg.input(str(file_path)).audio
             for factor in filters:
