@@ -570,7 +570,7 @@ def _process_segments_task(
 
             original_duration = max(0.1, float(segment.get('end_time', 0)) - float(segment.get('start_time', 0)))
 
-            if audio_duration > original_duration + 0.4:
+            if audio_duration > original_duration + 0.2:
                 before_duration = audio_duration
                 if _speed_match_audio_duration(audio_path, audio_duration, original_duration):
                     try:
@@ -586,11 +586,17 @@ def _process_segments_task(
                         _scale_dialogue_offsets(segment['dialogue'], scale)
                 else:
                     logger.info(
-                        "Keeping extended duration for %s (audio %.2fs vs original %.2fs).",
+                        "Skipping tempo adjustment for %s (audio %.2fs vs original %.2fs)",
                         segment['id'],
                         audio_duration,
                         original_duration,
                     )
+            else:
+                logger.debug(
+                    "Tempo adjustment not triggered for %s (diff %.2fs <= 0.2s)",
+                    segment['id'],
+                    audio_duration - original_duration,
+                )
 
             target_duration = max(audio_duration, original_duration)
 
