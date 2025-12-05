@@ -26,6 +26,7 @@ httpx>=0.25.2
 ffmpeg-python>=0.2.0
 moviepy>=1.0.3
 pillow>=10.1.0
+opencv-contrib-python>=4.8.1
 
 # Audio Analysis
 librosa>=0.10.1

@@ -6,6 +6,8 @@ from typing import List, Dict, Tuple, Literal
 import subprocess
 import uuid
 
+from backend.services.face_detector import FaceDetector
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,6 +43,24 @@ class VideoProcessor:
 
         desired = max(0.0, min(margin, desired))
         return int(round(desired))
+
+    def _get_face_detector(self) -> FaceDetector:
+        if self._face_detector is None:
+            self._face_detector = FaceDetector()
+        return self._face_detector
+
+    def _estimate_face_focus(self, video_path: str, max_samples: int = 6) -> float | None:
+        try:
+            detector = self._get_face_detector()
+        except Exception as exc:
+            logger.warning("Unable to initialize YuNet face detector: %s", exc)
+            return None
+
+        try:
+            return detector.estimate_horizontal_focus(video_path, max_samples=max_samples)
+        except Exception as exc:
+            logger.warning("YuNet focus estimation failed for %s: %s", video_path, exc)
+            return None
     
     def __init__(self, output_dir: Path, fonts_dir: Path | None = None):
         self.output_dir = output_dir
@@ -54,6 +74,7 @@ class VideoProcessor:
                 "Fonts directory %s was not found. FFmpeg may fall back to system fonts.",
                 self.fonts_dir,
             )
+        self._face_detector: FaceDetector | None = None
         
     def cut_segment(
         self,
@@ -105,6 +126,7 @@ class VideoProcessor:
         output_path: str,
         method: Literal["letterbox", "center_crop"] = "letterbox",
         crop_focus: str = "center",
+        auto_center_ratio: float | None = None,
     ) -> str:
         """
         Convert horizontal video to vertical format (9:16) for Reels/Shorts.
@@ -165,7 +187,18 @@ class VideoProcessor:
                     if scaled_width % 2 != 0:
                         scaled_width += 1
                     margin = max(scaled_width - self.TARGET_WIDTH, 0)
-                    offset_x = self._resolve_crop_offset(margin, focus)
+                    if auto_center_ratio is not None and 0.0 <= auto_center_ratio <= 1.0:
+                        desired_center = scaled_width * auto_center_ratio
+                        offset_x = int(round(desired_center - (self.TARGET_WIDTH / 2)))
+                        offset_x = max(0, min(margin, offset_x))
+                        logger.info(
+                            "Face auto-crop applied (ratio %.3f, offset %dpx of %dpx margin)",
+                            auto_center_ratio,
+                            offset_x,
+                            margin,
+                        )
+                    else:
+                        offset_x = self._resolve_crop_offset(margin, focus)
 
                     pipeline = (
                         ffmpeg
@@ -235,6 +268,7 @@ class VideoProcessor:
         convert_to_vertical: bool = True,
         vertical_method: str = "letterbox",
         crop_focus: str = "center",
+        auto_center_ratio: float | None = None,
         target_duration: float | None = None,
         background_audio_path: str | None = None,
         background_volume_db: float = -20.0,
@@ -267,6 +301,7 @@ class VideoProcessor:
                     str(temp_vertical),
                     method=vertical_method,
                     crop_focus=crop_focus,
+                    auto_center_ratio=auto_center_ratio,
                 )
             
             # Step 2: Create ASS subtitle file with styling
@@ -396,6 +431,8 @@ class VideoProcessor:
             duration = max(original_duration, target_duration or 0.0)
             temp_segment = self.output_dir / f"segment_cut_{uuid.uuid4().hex}.mp4"
             temp_output = self.output_dir / f"segment_processed_{uuid.uuid4().hex}.mp4"
+            effective_crop_focus = (crop_focus or "center").lower()
+            auto_center_ratio: float | None = None
 
             # Step 1: cut source segment
             cut_path = self.cut_segment(
@@ -437,6 +474,15 @@ class VideoProcessor:
                     )
                     background_audio_path = None
 
+            if method == "center_crop" and effective_crop_focus == "face_auto":
+                auto_center_ratio = self._estimate_face_focus(str(cut_path))
+                if auto_center_ratio is None:
+                    effective_crop_focus = "center"
+                    logger.info(
+                        "Face auto-crop fallback to center for %s (no face detected).",
+                        cut_path,
+                    )
+
             # Step 2: prepare basic subtitles
             dialogue_turns = dialogue or []
             speaker_palette = self._assign_speaker_colors(dialogue_turns)
@@ -462,7 +508,8 @@ class VideoProcessor:
                 subtitle_background=subtitle_background,
                 convert_to_vertical=True,
                 vertical_method=method,
-                crop_focus=crop_focus,
+                crop_focus=effective_crop_focus,
+                auto_center_ratio=auto_center_ratio,
                 target_duration=duration,
                 background_audio_path=str(background_audio_path) if background_audio_path else None,
                 background_volume_db=-20.0,
@@ -628,6 +675,16 @@ class VideoProcessor:
         subtitles: List[Dict] = []
         lane_available_until = [0.0, 0.0]  # support two stacked rows
 
+        def allocate_lane(start_time: float, end_time: float) -> int:
+            tolerance = 0.03
+            for idx in range(len(lane_available_until)):
+                if start_time >= lane_available_until[idx] - tolerance:
+                    lane_available_until[idx] = end_time
+                    return idx
+            lane_idx = lane_available_until.index(min(lane_available_until))
+            lane_available_until[lane_idx] = end_time
+            return lane_idx
+
         for turn in dialogue:
             raw_text = (turn.get("text_ru") or turn.get("text") or "").strip()
             if not raw_text:
@@ -669,6 +726,8 @@ class VideoProcessor:
             total_window = max(relative_end - relative_start, 0.1)
             elapsed = relative_start
 
+            chunks_added = 0
+
             for idx, chunk_words in enumerate(word_chunks):
                 chunk_word_count = len(chunk_words)
                 if total_words <= 0:
@@ -695,19 +754,7 @@ class VideoProcessor:
                         }
                     )
 
-                # assign lane (0 – базовый, 1 – поднятый)
-                lane_idx = 0
-                tolerance = 0.03
-                assigned = False
-                for candidate in range(len(lane_available_until)):
-                    if start_time >= lane_available_until[candidate] - tolerance:
-                        lane_idx = candidate
-                        assigned = True
-                        break
-                if not assigned:
-                    lane_idx = lane_available_until.index(min(lane_available_until))
-
-                lane_available_until[lane_idx] = end_time
+                lane_idx = allocate_lane(start_time, end_time)
 
                 subtitles.append(
                     {
@@ -720,6 +767,7 @@ class VideoProcessor:
                         "lane": lane_idx,
                     }
                 )
+                chunks_added += 1
 
             if subtitles and subtitles[-1]["end"] < relative_end:
                 lane_idx = subtitles[-1].get("lane", 0)
@@ -727,6 +775,37 @@ class VideoProcessor:
                 subtitles[-1]["end"] = relative_end
                 if subtitles[-1]["words"]:
                     subtitles[-1]["words"][-1]["end"] = relative_end
+
+            if chunks_added == 0:
+                logger.warning(
+                    "No subtitle chunks generated for speaker %s (%.2f–%.2fs). Adding fallback line.",
+                    speaker_id,
+                    relative_start,
+                    relative_end,
+                )
+                per_word = total_window / max(total_words, 1)
+                word_entries = []
+                for word_idx, word in enumerate(words):
+                    word_start = relative_start + word_idx * per_word
+                    word_entries.append(
+                        {
+                            "word": word,
+                            "start": word_start,
+                            "end": min(relative_end, word_start + per_word),
+                        }
+                    )
+                lane_idx = allocate_lane(relative_start, relative_end)
+                subtitles.append(
+                    {
+                        "start": relative_start,
+                        "end": relative_end,
+                        "text": " ".join(words),
+                        "words": word_entries,
+                        "speaker": speaker_id,
+                        "color": speaker_palette.get(speaker_id),
+                        "lane": lane_idx,
+                    }
+                )
 
         return subtitles
     

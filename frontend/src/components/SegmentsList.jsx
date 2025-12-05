@@ -380,6 +380,9 @@ const SegmentsList = ({
             <p className="text-xs text-gray-500 mt-1">
               Найдено {segments.length} интересных моментов
             </p>
+            <p className="text-xs text-purple-500 mt-1">
+              Нажмите карточку, чтобы раскрыть полный текст (по умолчанию видно 2 строки).
+            </p>
           </div>
           <div className="flex space-x-2">
             <button
@@ -519,11 +522,12 @@ const SegmentsList = ({
                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
                       Фокус кадра
                     </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                       {[
                         { id: 'center', label: 'По центру', description: 'Балансируем между спикерами' },
                         { id: 'left', label: 'Auto Left', description: 'Сдвигаем окно на ≈1/3 влево' },
                         { id: 'right', label: 'Auto Right', description: 'Сдвигаем окно на ≈1/3 вправо' },
+                        { id: 'face_auto', label: '🤖 Авто (лицо)', description: 'YuNet ищет лицо и центрирует кадр' },
                       ].map((option) => (
                         <button
                           key={option.id}
@@ -541,6 +545,9 @@ const SegmentsList = ({
                         </button>
                       ))}
                     </div>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Режим «Авто (лицо)» анализирует несколько кадров сегмента, поэтому конвертация может идти чуть дольше.
+                    </p>
                   </div>
                 )}
               </div>
