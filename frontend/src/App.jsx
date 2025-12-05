@@ -169,7 +169,8 @@ function App() {
     subtitleBackground,
     ttsProvider = 'local',
     voiceMix = 'male_duo',
-    preserveBackgroundAudio = true
+    preserveBackgroundAudio = true,
+    cropFocus = 'center'
   ) => {
     try {
       setStage('processing');
@@ -188,7 +189,8 @@ function App() {
         subtitleFont,
         subtitleFontSize,
         subtitleBackground,
-        preserveBackgroundAudio
+        preserveBackgroundAudio,
+        cropFocus
       );
       setProcessingTask(response.task_id);
     } catch (error) {

@@ -22,6 +22,25 @@ class VideoProcessor:
         "lower_right": {"x": 720, "y": 1350, "an": 9, "marginv": 380},
         "bottom_center": {"x": 540, "y": 1520, "an": 2, "marginv": 260},
     }
+
+    @staticmethod
+    def _resolve_crop_offset(margin: int, focus: str) -> int:
+        """Return horizontal offset in pixels for crop window based on focus hint."""
+        if margin <= 0:
+            return 0
+        normalized = (focus or "center").lower()
+        center = margin / 2
+        shift = margin / 3  # move roughly a third of the available leeway
+
+        if normalized == "left":
+            desired = center - shift
+        elif normalized == "right":
+            desired = center + shift
+        else:
+            desired = center
+
+        desired = max(0.0, min(margin, desired))
+        return int(round(desired))
     
     def __init__(self, output_dir: Path, fonts_dir: Path | None = None):
         self.output_dir = output_dir
@@ -84,7 +103,8 @@ class VideoProcessor:
         self,
         video_path: str,
         output_path: str,
-        method: Literal["letterbox", "center_crop"] = "letterbox"
+        method: Literal["letterbox", "center_crop"] = "letterbox",
+        crop_focus: str = "center",
     ) -> str:
         """
         Convert horizontal video to vertical format (9:16) for Reels/Shorts.
@@ -137,14 +157,27 @@ class VideoProcessor:
             elif method == "center_crop":
                 target_ratio = self.TARGET_WIDTH / self.TARGET_HEIGHT
                 input_ratio = input_width / input_height if input_height else target_ratio
+                focus = (crop_focus or "center").lower()
 
                 if input_ratio >= target_ratio:
                     # Видео шире 9:16 → вписываем по высоте и обрезаем по бокам
+                    scaled_width = max(self.TARGET_WIDTH, int(round(self.TARGET_HEIGHT * input_ratio)))
+                    if scaled_width % 2 != 0:
+                        scaled_width += 1
+                    margin = max(scaled_width - self.TARGET_WIDTH, 0)
+                    offset_x = self._resolve_crop_offset(margin, focus)
+
                     pipeline = (
                         ffmpeg
                         .input(video_path)
-                        .filter('scale', -1, self.TARGET_HEIGHT)
-                        .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT)
+                        .filter('scale', scaled_width, self.TARGET_HEIGHT)
+                        .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT, offset_x, 0)
+                    )
+                    logger.info(
+                        "Center crop focus=%s (offset %dpx of %dpx margin)",
+                        focus,
+                        offset_x,
+                        margin,
                     )
                 else:
                     # Видео уже/ближе к вертикальному → вписываем по ширине и обрезаем верх/низ
@@ -201,6 +234,7 @@ class VideoProcessor:
         subtitle_background: bool = False,
         convert_to_vertical: bool = True,
         vertical_method: str = "letterbox",
+        crop_focus: str = "center",
         target_duration: float | None = None,
         background_audio_path: str | None = None,
         background_volume_db: float = -20.0,
@@ -231,7 +265,8 @@ class VideoProcessor:
                 working_video = self.convert_to_vertical(
                     video_path, 
                     str(temp_vertical),
-                    method=vertical_method
+                    method=vertical_method,
+                    crop_focus=crop_focus,
                 )
             
             # Step 2: Create ASS subtitle file with styling
@@ -348,6 +383,7 @@ class VideoProcessor:
         subtitle_background: bool = False,
         dialogue: list[dict] | None = None,
         preserve_background_audio: bool = False,
+        crop_focus: str = "center",
     ) -> str:
         """
         End-to-end helper that cuts the source video, converts it to vertical format,
@@ -420,12 +456,13 @@ class VideoProcessor:
                 output_path=str(temp_output),
                 style=subtitle_style,
                 animation=subtitle_animation,
-                        font_name=subtitle_font,
-                        font_size=subtitle_font_size,
-                        subtitle_position=subtitle_position,
-                        subtitle_background=subtitle_background,
+                font_name=subtitle_font,
+                font_size=subtitle_font_size,
+                subtitle_position=subtitle_position,
+                subtitle_background=subtitle_background,
                 convert_to_vertical=True,
                 vertical_method=method,
+                crop_focus=crop_focus,
                 target_duration=duration,
                 background_audio_path=str(background_audio_path) if background_audio_path else None,
                 background_volume_db=-20.0,

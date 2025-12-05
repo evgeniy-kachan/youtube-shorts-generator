@@ -295,6 +295,7 @@ const SegmentsList = ({
   const [ttsProvider, setTtsProvider] = useState('local');
   const [voiceMix, setVoiceMix] = useState('male_duo');
   const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(true);
+  const [cropFocus, setCropFocus] = useState('center');
 
   // Tabs: 'style', 'text', 'position'
   const [activeTab, setActiveTab] = useState('style');
@@ -335,7 +336,8 @@ const SegmentsList = ({
         subtitleBackground,
         ttsProvider,
         voiceMix,
-        preserveBackgroundAudio
+        preserveBackgroundAudio,
+        cropFocus
       );
     }
   };
@@ -512,6 +514,35 @@ const SegmentsList = ({
                     </button>
                   ))}
                 </div>
+                {verticalMethod === 'center_crop' && (
+                  <div className="mt-4">
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                      Фокус кадра
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {[
+                        { id: 'center', label: 'По центру', description: 'Балансируем между спикерами' },
+                        { id: 'left', label: 'Auto Left', description: 'Сдвигаем окно на ≈1/3 влево' },
+                        { id: 'right', label: 'Auto Right', description: 'Сдвигаем окно на ≈1/3 вправо' },
+                      ].map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          disabled={loading}
+                          onClick={() => setCropFocus(option.id)}
+                          className={`p-3 border rounded-xl text-left transition ${
+                            cropFocus === option.id
+                              ? 'border-purple-600 bg-purple-50 ring-1 ring-purple-300'
+                              : 'border-gray-200 hover:border-purple-400'
+                          }`}
+                        >
+                          <div className="font-semibold text-gray-900">{option.label}</div>
+                          <div className="text-xs text-gray-500 mt-1">{option.description}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>

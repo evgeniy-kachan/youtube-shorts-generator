@@ -15,7 +15,7 @@ from pydub import AudioSegment
 
 from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
-from backend.services.highlight_analyzer import HighlightAnalyzer
+from backend.services.highlight_analyzer import HighlightAnalyzer, determine_target_highlights
 from backend.services.translation import Translator
 from backend.services.tts import TTSService, ElevenLabsTTSService
 from backend.services.video_processor import VideoProcessor
@@ -166,19 +166,27 @@ def _is_segment_fully_contained(inner: dict, outer: dict) -> bool:
     return (inner['start_time'] >= outer['start_time'] and 
             inner['end_time'] <= outer['end_time'])
 
-def _filter_overlapping_segments(segments: list, iou_threshold: float = 0.7) -> list:
+def _filter_overlapping_segments(
+    segments: list,
+    iou_threshold: float = 0.7,
+    min_start_gap: float = 10.0,
+    desired_count: Optional[int] = None,
+) -> list:
     """
     Filter out segments that have a high IoU with higher-scoring segments.
     Uses stricter filtering: IoU threshold 0.7, checks for full containment,
-    and ensures minimum 10s gap between segment starts.
+    and ensures minimum gap between segment starts.
     """
     if not segments:
         return []
 
     # Ensure segments are sorted by highlight_score, descending
     segments.sort(key=lambda x: x.get('highlight_score', 0), reverse=True)
+    original_count = len(segments)
     
     kept_segments = []
+    kept_ids = set()
+    removed_segments = []
     for segment in segments:
         should_keep = True
         
@@ -203,18 +211,46 @@ def _filter_overlapping_segments(segments: list, iou_threshold: float = 0.7) -> 
                 break
             
             # Check 4: Minimum gap between starts (10 seconds)
-            if abs(segment['start_time'] - kept_segment['start_time']) < 10.0:
-                logger.info(f"Segment {segment['id']} starts too close ({abs(segment['start_time'] - kept_segment['start_time']):.1f}s) to {kept_segment['id']}. Discarding.")
+            if abs(segment['start_time'] - kept_segment['start_time']) < min_start_gap:
+                logger.info(
+                    f"Segment {segment['id']} starts too close ({abs(segment['start_time'] - kept_segment['start_time']):.1f}s) "
+                    f"to {kept_segment['id']} (min gap {min_start_gap}s). Discarding."
+                )
                 should_keep = False
                 break
         
         if should_keep:
             kept_segments.append(segment)
+            kept_ids.add(segment['id'])
+        else:
+            removed_segments.append(segment)
+
+    if desired_count and len(kept_segments) < desired_count and removed_segments:
+        deficit = desired_count - len(kept_segments)
+        logger.info(
+            "Relaxing overlap filter to reach %d segments (currently %d, deficit %d).",
+            desired_count,
+            len(kept_segments),
+            deficit,
+        )
+        for segment in removed_segments:
+            if segment['id'] in kept_ids:
+                continue
+            kept_segments.append(segment)
+            kept_ids.add(segment['id'])
+            deficit -= 1
+            if deficit <= 0:
+                break
             
     # Re-sort by start time for chronological order in the UI
     kept_segments.sort(key=lambda x: x['start_time'])
     
-    logger.info(f"Filtered {len(segments)} segments down to {len(kept_segments)} non-overlapping segments.")
+    logger.info(
+        "Filtered %d segments down to %d non-overlapping segments%s.",
+        original_count,
+        len(kept_segments),
+        f" (target {desired_count})" if desired_count else "",
+    )
     return kept_segments
 
 
@@ -367,6 +403,8 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
     transcriber = get_service("transcription")
     transcription_result = transcriber.transcribe_audio_from_video(video_path)
     segments = transcription_result['segments']
+    video_duration = segments[-1]['end'] if segments else 0.0
+    target_highlight_count = determine_target_highlights(video_duration)
 
     tasks[task_id] = {"status": "processing", "progress": 0.5, "message": "Analyzing content..."}
     
@@ -375,8 +413,16 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
     highlights = analyzer.analyze_segments(segments)
 
     # 4. Filter out highly overlapping segments
-    logger.info(f"Filtering {len(highlights)} segments for overlaps...")
-    filtered_highlights = _filter_overlapping_segments(highlights, iou_threshold=0.5)
+    logger.info(
+        "Filtering %d segments for overlaps (target count %d)...",
+        len(highlights),
+        target_highlight_count,
+    )
+    filtered_highlights = _filter_overlapping_segments(
+        highlights,
+        iou_threshold=0.5,
+        desired_count=target_highlight_count,
+    )
     logger.info(f"Found {len(filtered_highlights)} non-overlapping segments.")
     
     tasks[task_id] = {"status": "processing", "progress": 0.7, "message": "Translating segments..."}
@@ -508,6 +554,7 @@ def _process_segments_task(
     subtitle_font_size: int = 86,
     subtitle_background: bool = False,
     preserve_background_audio: bool = True,
+    crop_focus: str = "center",
 ):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Preparing to render..."}
@@ -644,6 +691,7 @@ def _process_segments_task(
                 subtitle_background=subtitle_background,
                 dialogue=segment.get('dialogue'),
                 preserve_background_audio=preserve_background_audio,
+                crop_focus=crop_focus,
             )
             renderer.save_video(final_clip, output_path)
             
@@ -755,6 +803,7 @@ async def process_segments(request: ProcessRequest, background_tasks: Background
         request.subtitle_font_size,
         request.subtitle_background,
         request.preserve_background_audio,
+        request.crop_focus,
     )
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Processing task queued")
 

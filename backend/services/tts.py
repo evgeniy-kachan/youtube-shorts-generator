@@ -345,6 +345,9 @@ class BaseTTSService:
     ) -> AudioSegment | None:
         """Synthesize per-chunk audio and stitch it with pauses."""
         combined_segments: list[AudioSegment] = []
+        speech_target = sum(chunk.get("target_duration", 0.0) for chunk in plan)
+        pause_target = sum(chunk.get("pause_ms", 0) for chunk in plan[:-1]) / 1000.0
+        turn_target_duration = speech_target + pause_target
 
         for chunk_idx, chunk in enumerate(plan):
             chunk_path = (
@@ -372,13 +375,18 @@ class BaseTTSService:
                 seg_audio = AudioSegment.from_file(str(chunk_path))
                 current_duration = len(seg_audio) / 1000.0
                 target_duration = chunk.get("target_duration")
+                word_count = chunk.get("word_count") or len(chunk.get("text", "").split())
 
-                if (
+                should_retime_chunk = (
                     target_duration
                     and target_duration > 0
                     and current_duration > 0
                     and abs(current_duration - target_duration) > 0.08
-                ):
+                    and current_duration >= 0.6
+                    and word_count >= 4
+                )
+
+                if should_retime_chunk:
                     tempo = current_duration / target_duration
                     if self._retime_audio_file(chunk_path, tempo):
                         seg_audio = AudioSegment.from_file(str(chunk_path))
@@ -398,6 +406,19 @@ class BaseTTSService:
         final_audio = combined_segments[0]
         for seg in combined_segments[1:]:
             final_audio += seg
+
+        actual_duration = len(final_audio) / 1000.0
+        if (
+            turn_target_duration > 0
+            and actual_duration > 0
+            and abs(actual_duration - turn_target_duration) > 0.12
+        ):
+            temp_path = destination.parent / f"dialogue_turn_{turn_idx}_retime_{destination.name}"
+            final_audio.export(str(temp_path), format="wav")
+            tempo = actual_duration / turn_target_duration
+            if self._retime_audio_file(temp_path, tempo):
+                final_audio = AudioSegment.from_file(str(temp_path))
+            temp_path.unlink(missing_ok=True)
         return final_audio
 
     def synthesize_dialogue(

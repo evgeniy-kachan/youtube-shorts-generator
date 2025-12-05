@@ -1,5 +1,6 @@
 """Analyze transcription to find interesting segments using LLM."""
 import logging
+import math
 from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -15,8 +16,27 @@ logger = logging.getLogger(__name__)
 
 HIGHLIGHT_SCORE_THRESHOLD = 0.30
 MIN_HIGHLIGHTS = 3
+MAX_HIGHLIGHTS = 45
+TARGET_HIGHLIGHT_INTERVAL_MIN = 3  # Aim for ~1 clip every 3 minutes
 PREV_TOPIC_MAX_WORDS = 50
 NEXT_TOPIC_MAX_WORDS = 30
+
+
+def determine_target_highlights(video_duration: float) -> int:
+    """Derive how many highlights we should surface for a given clip length."""
+    if video_duration <= 0:
+        return MIN_HIGHLIGHTS
+
+    minutes = video_duration / 60.0
+    if TARGET_HIGHLIGHT_INTERVAL_MIN > 0:
+        dynamic_target = math.ceil(minutes / TARGET_HIGHLIGHT_INTERVAL_MIN)
+    else:
+        dynamic_target = MIN_HIGHLIGHTS
+
+    target = max(MIN_HIGHLIGHTS, dynamic_target)
+    if MAX_HIGHLIGHTS:
+        target = min(target, MAX_HIGHLIGHTS)
+    return target
 
 
 class HighlightAnalyzer:
@@ -53,6 +73,16 @@ class HighlightAnalyzer:
             List of highlighted segments with scores
         """
         try:
+            video_duration = segments[-1]['end'] if segments else 0.0
+            target_highlights = determine_target_highlights(video_duration)
+            logger.info(
+                "Video duration %.1fs (~%.1f min) -> target highlights: %d (min=%d, max=%d)",
+                video_duration,
+                video_duration / 60 if video_duration else 0.0,
+                target_highlights,
+                MIN_HIGHLIGHTS,
+                MAX_HIGHLIGHTS,
+            )
             # Merge consecutive Whisper segments into larger candidates to limit LLM calls
             potential_segments = self._merge_segments(
                 segments,
@@ -87,7 +117,7 @@ class HighlightAnalyzer:
                 if highlight_score >= HIGHLIGHT_SCORE_THRESHOLD:
                     highlights.append(self._build_highlight_payload(i, segment, scores, highlight_score))
 
-            if len(highlights) < MIN_HIGHLIGHTS and scored_segments:
+            if len(highlights) < target_highlights and scored_segments:
                 existing_ids = {item['id'] for item in highlights}
                 fallback_candidates = sorted(
                     scored_segments,
@@ -95,7 +125,7 @@ class HighlightAnalyzer:
                     reverse=True,
                 )
                 for idx, segment, scores, highlight_score in fallback_candidates:
-                    if len(highlights) >= MIN_HIGHLIGHTS:
+                    if len(highlights) >= target_highlights:
                         break
                     if f"segment_{idx}" in existing_ids:
                         continue
@@ -112,6 +142,14 @@ class HighlightAnalyzer:
             
             # Sort by highlight score
             highlights.sort(key=lambda x: x['highlight_score'], reverse=True)
+
+            if MAX_HIGHLIGHTS and len(highlights) > MAX_HIGHLIGHTS:
+                logger.info(
+                    "Trimming highlight list from %d to top %d entries per MAX_HIGHLIGHTS.",
+                    len(highlights),
+                    MAX_HIGHLIGHTS,
+                )
+                highlights = highlights[:MAX_HIGHLIGHTS]
             
             logger.info(f"Found {len(highlights)} interesting segments")
             return highlights

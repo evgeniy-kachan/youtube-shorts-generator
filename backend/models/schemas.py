@@ -75,6 +75,10 @@ class ProcessRequest(BaseModel):
         default=True,
         description="Mix original track quietly under synthesized voice"
     )
+    crop_focus: str = Field(
+        default="center",
+        description="Horizontal crop focus for center_crop method: center, left, right"
+    )
     
 
 class ProcessedSegment(BaseModel):
