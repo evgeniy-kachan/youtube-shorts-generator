@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 HIGHLIGHT_SCORE_THRESHOLD = 0.30
 MIN_HIGHLIGHTS = 3
+PREV_TOPIC_MAX_WORDS = 50
+NEXT_TOPIC_MAX_WORDS = 30
 
 
 class HighlightAnalyzer:
@@ -58,6 +60,7 @@ class HighlightAnalyzer:
                 max_duration=max_duration,
                 segments_per_chunk=HIGHLIGHT_SEGMENTS_PER_CHUNK,
             )
+            self._attach_context_metadata(potential_segments)
             logger.info(
                 "Prepared %d merged candidates from %d raw Whisper segments (chunk=%s)",
                 len(potential_segments),
@@ -85,7 +88,6 @@ class HighlightAnalyzer:
                     highlights.append(self._build_highlight_payload(i, segment, scores, highlight_score))
 
             if len(highlights) < MIN_HIGHLIGHTS and scored_segments:
-                needed = MIN_HIGHLIGHTS - len(highlights)
                 existing_ids = {item['id'] for item in highlights}
                 fallback_candidates = sorted(
                     scored_segments,
@@ -338,6 +340,31 @@ class HighlightAnalyzer:
         return merged
 
     @staticmethod
+    @staticmethod
+    def _sanitize_topic_text(text: str | None, max_words: int) -> str:
+        cleaned_words = (text or "").split()
+        if not cleaned_words:
+            return "Unknown"
+        snippet = " ".join(cleaned_words[:max_words])
+        if len(cleaned_words) > max_words:
+            snippet += "..."
+        return snippet
+
+    def _attach_context_metadata(self, segments: list[dict]) -> None:
+        for idx, segment in enumerate(segments):
+            prev_text = segments[idx - 1]['text'] if idx > 0 else None
+            next_text = segments[idx + 1]['text'] if idx + 1 < len(segments) else None
+            segment['prev_topic'] = self._sanitize_topic_text(prev_text, PREV_TOPIC_MAX_WORDS)
+            segment['next_topic'] = self._sanitize_topic_text(next_text, NEXT_TOPIC_MAX_WORDS)
+
+            primary_speaker = None
+            if segment.get('speakers'):
+                primary_speaker = segment['speakers'][0]
+            if not primary_speaker and segment.get('dialogue'):
+                primary_speaker = (segment['dialogue'][0] or {}).get('speaker')
+            segment['primary_speaker'] = primary_speaker or "Unknown"
+
+    @staticmethod
     def _build_highlight_payload(idx: int, segment: dict, scores: dict, highlight_score: float, is_fallback: bool = False) -> dict:
         payload = {
             'id': f"segment_{idx}",
@@ -367,6 +394,11 @@ class HighlightAnalyzer:
 
 Assume natural speech (~140 words per minute). Focus on fragments roughly 45–210 words long (≈20–90 s).
 
+CONTEXT:
+Previous topic: {segment.get('prev_topic', 'Unknown')}
+Next topic: {segment.get('next_topic', 'Unknown')}
+Speaker: {segment.get('primary_speaker', 'Unknown')}
+
 IMPORTANT:
 - Use ONLY the provided text. Do not invent context.
 - Reward specificity: numbers, clear takeaways, step-by-step advice.
@@ -375,31 +407,13 @@ IMPORTANT:
 TEXT:
 "{segment['text']}"
 
-Score each dimension from 0.0–1.0:
+Score each dimension from 0.0–1.0 (clip is acceptable when highlight_score ≥ 0.30):
 
-1. emotional_intensity
-   Strength of emotions, surprise, tension, inspiration, or sentiment.
-
-2. hook_potential
-   How strongly the beginning grabs attention (unexpected fact, provocative claim, emotional trigger, intrigue).
-
-3. key_value
-   Presence of useful information, insight, clear takeaway, advice, or lesson.
-
-4. story_moment
-   Presence of a personal example, story beat, conflict, resolution, or narrative progression.
-
-5. humor
-   Entertainment via jokes, irony, comic situations, playful or amusing tone.
-
-6. dynamic_flow
-   Sustained engagement without repetition, drag, or filler.
-
-7. clip_worthiness
-   Suitability for a standalone viral clip (TikTok / Shorts / Reels) that people would watch fully.
-
-8. business_value
-   Density of practical business insight: tactics, metrics, frameworks, lessons the viewer can reuse immediately.
+1. emotional_intensity — strength of emotions, surprise, tension, inspiration.
+2. hook_potential — how strongly the beginning grabs attention.
+3. business_value — density of practical business insight (tactics, metrics, lessons).
+4. actionable_value — clarity/usefulness of advice, steps, or frameworks.
+5. clip_worthiness — suitability as a standalone viral clip viewers will watch fully.
 
 SCORING RULES:
 - 0.0 = completely absent
@@ -412,12 +426,9 @@ Respond ONLY with valid JSON (no explanations, no markdown). Correct format exam
 {{
   "emotional_intensity": 0.0,
   "hook_potential": 0.0,
-  "key_value": 0.0,
-  "story_moment": 0.0,
-  "humor": 0.0,
-  "dynamic_flow": 0.0,
-  "clip_worthiness": 0.0,
-  "business_value": 0.0
+  "business_value": 0.0,
+  "actionable_value": 0.0,
+  "clip_worthiness": 0.0
 }}
 If the format is violated, the response is invalid."""
 
@@ -450,12 +461,9 @@ If the format is violated, the response is invalid."""
             return {
                 'emotional_intensity': 0.5,
                 'hook_potential': 0.5,
-                'key_value': 0.5,
-                'story_moment': 0.5,
-                'humor': 0.5,
-                'dynamic_flow': 0.5,
-                'clip_worthiness': 0.5,
                 'business_value': 0.5,
+                'actionable_value': 0.5,
+                'clip_worthiness': 0.5,
             }
     
     def _calculate_highlight_score(self, scores: Dict[str, float]) -> float:
@@ -463,11 +471,11 @@ If the format is violated, the response is invalid."""
         Calculate weighted highlight score emphasizing actionable and emotional impact.
         """
         highlight_score = (
-            0.25 * scores.get('emotional_intensity', 0) +
+            0.30 * scores.get('emotional_intensity', 0) +
             0.25 * scores.get('hook_potential', 0) +
-            0.20 * scores.get('key_value', 0) +
-            0.20 * scores.get('business_value', 0) +
-            0.10 * scores.get('story_moment', 0)
+            0.25 * scores.get('business_value', 0) +
+            0.15 * scores.get('actionable_value', 0) +
+            0.05 * scores.get('clip_worthiness', 0)
         )
         
         return min(1.0, highlight_score)

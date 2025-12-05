@@ -203,7 +203,7 @@ class VideoProcessor:
         vertical_method: str = "letterbox",
         target_duration: float | None = None,
         background_audio_path: str | None = None,
-        background_volume_db: float = -25.0,
+        background_volume_db: float = -20.0,
     ) -> str:
         """
         Add TTS audio and stylized subtitles to video.
@@ -428,7 +428,7 @@ class VideoProcessor:
                 vertical_method=method,
                 target_duration=duration,
                 background_audio_path=str(background_audio_path) if background_audio_path else None,
-                background_volume_db=-25.0,
+                background_volume_db=-20.0,
             )
 
             return processed_path
