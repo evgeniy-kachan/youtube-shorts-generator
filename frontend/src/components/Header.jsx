@@ -1,6 +1,6 @@
 import React from 'react';
 
-const Header = () => {
+const Header = ({ onNewVideo, canStartOver, isBusy }) => {
   return (
     <header className="bg-white shadow-lg">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -36,10 +36,43 @@ const Header = () => {
               Online
             </span>
           </div>
+          <div className="flex items-center space-x-3">
+            <button
+              type="button"
+              onClick={onNewVideo}
+              disabled={!canStartOver}
+              className={`inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium border transition ${
+                canStartOver
+                  ? 'text-purple-600 border-purple-200 hover:bg-purple-50'
+                  : 'text-gray-400 border-gray-200 cursor-not-allowed'
+              }`}
+            >
+              <svg
+                className="w-4 h-4 mr-2"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 8v8m4-4H8m12 0a8 8 0 11-16 0 8 8 0 0116 0z"
+                />
+              </svg>
+              {isBusy ? 'Завершаем...' : 'Сделать новое видео'}
+            </button>
+          </div>
         </div>
       </div>
     </header>
   );
+};
+
+Header.defaultProps = {
+  onNewVideo: () => {},
+  canStartOver: false,
+  isBusy: false,
 };
 
 export default Header;

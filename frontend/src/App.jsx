@@ -198,6 +198,10 @@ function App() {
     }
   };
 
+  const isBusyStage = stage === 'analyzing' || stage === 'processing';
+  const hasSessionData =
+    !!videoData || segments.length > 0 || processedSegments.length > 0;
+
   const handleReset = () => {
     setStage('input');
     setAnalysisTask(null);
@@ -211,9 +215,31 @@ function App() {
     setIsUploading(false);
   };
 
+  const handleNewVideoRequest = () => {
+    if (isBusyStage) {
+      alert('Дождитесь завершения текущей операции, затем начните заново.');
+      return;
+    }
+
+    if (hasSessionData) {
+      const confirmed = window.confirm(
+        'Текущие результаты будут сброшены. Начать новое видео?'
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    handleReset();
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50">
-      <Header />
+      <Header
+        onNewVideo={handleNewVideoRequest}
+        canStartOver={!isBusyStage && hasSessionData}
+        isBusy={isBusyStage}
+      />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {stage === 'input' && (
