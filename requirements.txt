@@ -26,8 +26,8 @@ httpx>=0.25.2
 ffmpeg-python>=0.2.0
 moviepy>=1.0.3
 pillow>=10.1.0
-# YuNet/ONNX поддерживается сборкой OpenCV 4.10.0.84 (совместима с NumPy 2.x)
-opencv-contrib-python==4.10.0.84
+# YuNet/ONNX поддерживается сборкой OpenCV 4.11.0.86 (совместима с NumPy 2.x)
+opencv-contrib-python==4.11.0.86
 
 # Audio Analysis
 librosa>=0.10.1
