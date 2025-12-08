@@ -1,4 +1,4 @@
-"""Face detection helper built on top of OpenCV YuNet."""
+"""Face detection helper powered by UltraFace (ONNXRuntime)."""
 from __future__ import annotations
 
 import logging
@@ -6,106 +6,57 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 import cv2
-import httpx
 import numpy as np
+import onnxruntime as ort
 
 from backend import config
 
 logger = logging.getLogger(__name__)
 
-YUNET_MODEL_URL = (
-    "https://raw.githubusercontent.com/opencv/opencv_zoo/master/models/"
-    "face_detection_yunet/face_detection_yunet_2023mar.onnx"
-)
-YUNET_MODEL_NAME = "face_detection_yunet_2023mar.onnx"
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+ASSETS_DIR = BACKEND_DIR / "assets" / "models" / "ultraface"
+ULTRAFACE_MODEL_NAME = "version-RFB-320.onnx"
 
 
 class FaceDetector:
     """
-    Thin wrapper around cv2.FaceDetectorYN (YuNet) to estimate horizontal face focus.
-
-    We keep a single detector instance per process and lazily resize it for every frame
-    sequence to avoid re-loading weights for each crop request.
+    Thin wrapper around the UltraFace ONNX model to estimate horizontal face focus.
     """
 
     def __init__(
         self,
         model_path: Optional[Path] = None,
-        download_timeout: float = 60.0,
-        score_threshold: float = 0.85,
+        score_threshold: float = 0.6,
         nms_threshold: float = 0.3,
     ):
-        self.model_path = model_path or self._ensure_model(download_timeout)
+        self.model_path = model_path or self._resolve_default_model()
         self.score_threshold = score_threshold
         self.nms_threshold = nms_threshold
-        self._detector = None
-        self._input_size: Optional[tuple[int, int]] = None
+        self._detector = UltraFace(
+            self.model_path,
+            score_threshold=self.score_threshold,
+            nms_threshold=self.nms_threshold,
+        )
 
     @staticmethod
-    def _ensure_model(timeout: float) -> Path:
-        models_dir = Path(config.TEMP_DIR) / "models"
-        models_dir.mkdir(parents=True, exist_ok=True)
-        model_path = models_dir / YUNET_MODEL_NAME
+    def _resolve_default_model() -> Path:
+        # Allow overriding via config but fallback to shipped asset to avoid network calls.
+        candidate = getattr(config, "ULTRAFACE_MODEL_PATH", None)
+        if candidate:
+            candidate_path = Path(candidate)
+            if candidate_path.exists():
+                return candidate_path
 
-        if model_path.exists():
-            return model_path
-
-        logger.info("Downloading YuNet face detector weights to %s", model_path)
-        with httpx.stream("GET", YUNET_MODEL_URL, timeout=timeout) as response:
-            response.raise_for_status()
-            with open(model_path, "wb") as model_file:
-                for chunk in response.iter_bytes():
-                    model_file.write(chunk)
-
-        logger.info("YuNet model downloaded successfully.")
-        return model_path
-
-    def _get_detector(self, width: int, height: int):
-        size = (width, height)
-        if self._detector is None:
-            self._detector = cv2.FaceDetectorYN.create(
-                str(self.model_path),
-                "",
-                size,
-                score_threshold=self.score_threshold,
-                nms_threshold=self.nms_threshold,
-                top_k=5000,
+        bundled = ASSETS_DIR / ULTRAFACE_MODEL_NAME
+        if not bundled.exists():
+            raise FileNotFoundError(
+                f"UltraFace model not found at {bundled}. "
+                "Ensure assets are included or provide ULTRAFACE_MODEL_PATH."
             )
-            self._input_size = size
-        elif self._input_size != size:
-            self._detector.setInputSize(size)
-            self._input_size = size
-        return self._detector
+        return bundled
 
     def _detect_faces(self, frame: np.ndarray) -> Sequence[dict]:
-        height, width = frame.shape[:2]
-        detector = self._get_detector(width, height)
-        detector.setInputSize((width, height))
-        _, faces = detector.detect(frame)
-
-        if faces is None:
-            return []
-
-        results = []
-        for face in faces:
-            # YuNet output layout:
-            # [x, y, w, h, score, landmarks...]
-            x, y, w, h, score = face[:5]
-            if score < self.score_threshold:
-                continue
-            results.append(
-                {
-                    "x": float(x),
-                    "y": float(y),
-                    "w": float(w),
-                    "h": float(h),
-                    "score": float(score),
-                    "area": float(w * h),
-                    "center_x": float(x + w / 2.0),
-                    "width": width,
-                }
-            )
-        return results
+        return self._detector.detect(frame)
 
     def estimate_horizontal_focus(
         self,
@@ -121,7 +72,7 @@ class FaceDetector:
         """
         capture = cv2.VideoCapture(video_path)
         if not capture.isOpened():
-            logger.warning("YuNet: unable to open video %s for face detection", video_path)
+            logger.warning("UltraFace: unable to open video %s for face detection", video_path)
             return None
 
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
@@ -147,7 +98,7 @@ class FaceDetector:
         capture.release()
 
         if not weighted_centers:
-            logger.info("YuNet: no faces found in %s", video_path)
+            logger.info("UltraFace: no faces found in %s", video_path)
             return None
 
         numerator = sum(center * weight for center, weight in weighted_centers)
@@ -157,6 +108,153 @@ class FaceDetector:
 
         focus = numerator / denominator
         focus = float(max(0.0, min(1.0, focus)))
-        logger.info("YuNet: estimated horizontal focus %.3f for %s", focus, video_path)
+        logger.info("UltraFace: estimated horizontal focus %.3f for %s", focus, video_path)
         return focus
+
+
+class UltraFace:
+    """UltraFace ONNX runtime wrapper."""
+
+    def __init__(
+        self,
+        model_path: Path,
+        score_threshold: float = 0.6,
+        nms_threshold: float = 0.3,
+    ):
+        self.model_path = Path(model_path)
+        self.score_threshold = score_threshold
+        self.nms_threshold = nms_threshold
+        self.input_size = (320, 240)
+        self.mean = np.array([127.0, 127.0, 127.0], dtype=np.float32)
+        self.std = 128.0
+        self.center_variance = 0.1
+        self.size_variance = 0.2
+        self.feature_maps = [[40, 60], [20, 30], [10, 15], [5, 7]]
+        self.min_boxes = [[10, 16, 24], [32, 48], [64, 96], [128, 192, 256]]
+        self.shrinkage = [[8, 8], [16, 16], [32, 32], [64, 64]]
+        self.priors = self._generate_priors()
+        self.session = self._create_session()
+        self.input_name = self.session.get_inputs()[0].name
+
+    def _create_session(self) -> ort.InferenceSession:
+        providers: list[str] = []
+        try:
+            available = ort.get_available_providers()
+        except Exception:  # pragma: no cover - defensive
+            available = ["CPUExecutionProvider"]
+
+        if "CUDAExecutionProvider" in available:
+            providers.append("CUDAExecutionProvider")
+        providers.append("CPUExecutionProvider")
+        logger.info("UltraFace providers: %s", providers)
+        return ort.InferenceSession(str(self.model_path), providers=providers)
+
+    def _generate_priors(self) -> np.ndarray:
+        priors: list[list[float]] = []
+        image_h, image_w = self.input_size[1], self.input_size[0]  # note: (w, h)
+        for idx, feature_map in enumerate(self.feature_maps):
+            scale_w = image_w / self.shrinkage[idx][1]
+            scale_h = image_h / self.shrinkage[idx][0]
+            for y in range(feature_map[0]):
+                for x in range(feature_map[1]):
+                    cx = (x + 0.5) / scale_w
+                    cy = (y + 0.5) / scale_h
+                    for box_size in self.min_boxes[idx]:
+                        s_kx = box_size / image_w
+                        s_ky = box_size / image_h
+                        priors.append([cx, cy, s_kx, s_ky])
+        return np.array(priors, dtype=np.float32)
+
+    def detect(self, frame: np.ndarray) -> Sequence[dict]:
+        orig_h, orig_w = frame.shape[:2]
+        resized = cv2.resize(frame, self.input_size, interpolation=cv2.INTER_LINEAR)
+        image = resized.astype(np.float32)
+        image = (image - self.mean) / self.std
+        image = np.transpose(image, (2, 0, 1))
+        input_tensor = np.expand_dims(image, axis=0)
+
+        scores, boxes = self.session.run(None, {self.input_name: input_tensor})
+        scores = scores[0][:, 1]
+        mask = scores > self.score_threshold
+        if not np.any(mask):
+            return []
+
+        filtered_scores = scores[mask]
+        filtered_boxes = boxes[0][mask]
+        decoded_boxes = self._decode_boxes(filtered_boxes)
+        decoded_boxes = self._clip_boxes(decoded_boxes, orig_w, orig_h)
+
+        keep = self._nms(decoded_boxes, filtered_scores)
+        detections = []
+        for idx in keep:
+            xmin, ymin, xmax, ymax = decoded_boxes[idx]
+            score = float(filtered_scores[idx])
+            w = xmax - xmin
+            h = ymax - ymin
+            detections.append(
+                {
+                    "x": float(xmin),
+                    "y": float(ymin),
+                    "w": float(w),
+                    "h": float(h),
+                    "score": score,
+                    "area": float(w * h),
+                    "center_x": float(xmin + w / 2.0),
+                    "width": float(orig_w),
+                }
+            )
+        return detections
+
+    def _decode_boxes(self, raw_boxes: np.ndarray) -> np.ndarray:
+        priors = self.priors[: raw_boxes.shape[0]]
+        boxes = np.concatenate(
+            [
+                priors[:, :2] + raw_boxes[:, :2] * self.center_variance * priors[:, 2:],
+                priors[:, 2:] * np.exp(raw_boxes[:, 2:] * self.size_variance),
+            ],
+            axis=1,
+        )
+        boxes[:, :2] -= boxes[:, 2:] / 2  # cx, cy -> xmin, ymin
+        boxes[:, 2:] += boxes[:, :2]      # width/height -> xmax, ymax
+        boxes[:, [0, 2]] *= self.input_size[0]
+        boxes[:, [1, 3]] *= self.input_size[1]
+        return boxes
+
+    def _clip_boxes(self, boxes: np.ndarray, width: int, height: int) -> np.ndarray:
+        boxes[:, 0] = np.clip(boxes[:, 0], 0, width)
+        boxes[:, 1] = np.clip(boxes[:, 1], 0, height)
+        boxes[:, 2] = np.clip(boxes[:, 2], 0, width)
+        boxes[:, 3] = np.clip(boxes[:, 3], 0, height)
+        return boxes
+
+    def _nms(self, boxes: np.ndarray, scores: np.ndarray) -> Sequence[int]:
+        if boxes.size == 0:
+            return []
+        order = scores.argsort()[::-1]
+        keep = []
+        while order.size > 0:
+            i = order[0]
+            keep.append(i)
+            if order.size == 1:
+                break
+            iou = self._iou(boxes[i], boxes[order[1:]])
+            inds = np.where(iou <= self.nms_threshold)[0]
+            order = order[inds + 1]
+        return keep
+
+    @staticmethod
+    def _iou(box: np.ndarray, boxes: np.ndarray) -> np.ndarray:
+        if boxes.size == 0:
+            return np.array([])
+        x_min = np.maximum(box[0], boxes[:, 0])
+        y_min = np.maximum(box[1], boxes[:, 1])
+        x_max = np.minimum(box[2], boxes[:, 2])
+        y_max = np.minimum(box[3], boxes[:, 3])
+        inter = np.clip(x_max - x_min, a_min=0, a_max=None) * np.clip(
+            y_max - y_min, a_min=0, a_max=None
+        )
+        box_area = (box[2] - box[0]) * (box[3] - box[1])
+        boxes_area = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+        union = box_area + boxes_area - inter + 1e-5
+        return inter / union
 
