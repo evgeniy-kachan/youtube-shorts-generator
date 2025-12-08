@@ -10,6 +10,21 @@ import whisperx
 
 logger = logging.getLogger(__name__)
 
+# WhisperX (<=3.7.4) может попытаться сделать `from transformers import Pipeline`.
+# Для версий transformers, где Pipeline не экспортируется с верхнего уровня,
+# подложим атрибут из `transformers.pipelines`.
+try:
+    import transformers
+    from transformers.pipelines import Pipeline as _TransformersPipeline
+
+    if not hasattr(transformers, "Pipeline"):
+        transformers.Pipeline = _TransformersPipeline
+except Exception:  # pragma: no cover
+    logger.warning(
+        "Could not patch transformers.Pipeline; WhisperX may fail to import.",
+        exc_info=True,
+    )
+
 from backend.config import (
     HUGGINGFACE_TOKEN,
     TEMP_DIR,
