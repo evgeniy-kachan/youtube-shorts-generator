@@ -8,6 +8,8 @@ import ffmpeg
 import torch
 import whisperx
 
+logger = logging.getLogger(__name__)
+
 from backend.config import (
     HUGGINGFACE_TOKEN,
     TEMP_DIR,
