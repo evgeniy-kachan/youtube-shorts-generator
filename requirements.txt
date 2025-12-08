@@ -18,6 +18,7 @@ torch>=2.1.0
 torchaudio>=2.1.0
 whisperx>=3.1.1
 pyannote.audio>=3.1.1
+torchvision>=0.21.0
 
 # LLM Integration (DeepSeek API client)
 httpx>=0.25.2
