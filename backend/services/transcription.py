@@ -6,6 +6,21 @@ from typing import Dict, List, Optional, Tuple
 
 import ffmpeg
 import torch
+
+logger = logging.getLogger(__name__)
+
+try:
+    import transformers
+    from transformers.pipelines import Pipeline as _TransformersPipeline
+
+    if not hasattr(transformers, "Pipeline"):
+        transformers.Pipeline = _TransformersPipeline
+except Exception:  # pragma: no cover - defensive guard
+    logger.warning(
+        "Could not patch transformers.Pipeline; WhisperX may fail to import.",
+        exc_info=True,
+    )
+
 import whisperx
 
 from backend.config import (
@@ -14,8 +29,6 @@ from backend.config import (
     WHISPERX_BATCH_SIZE,
     WHISPERX_ENABLE_DIARIZATION,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class TranscriptionService:
