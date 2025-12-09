@@ -182,6 +182,13 @@ class UltraFace:
         filtered_scores = scores[mask]
         filtered_boxes = boxes[0][mask]
         decoded_boxes = self._decode_boxes(filtered_boxes)
+
+        # Scale boxes back to original frame size
+        scale_w = orig_w / self.input_size[0]
+        scale_h = orig_h / self.input_size[1]
+        decoded_boxes[:, [0, 2]] *= scale_w
+        decoded_boxes[:, [1, 3]] *= scale_h
+
         decoded_boxes = self._clip_boxes(decoded_boxes, orig_w, orig_h)
 
         keep = self._nms(decoded_boxes, filtered_scores)
