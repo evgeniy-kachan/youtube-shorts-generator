@@ -90,6 +90,12 @@ class FaceDetector:
             if not faces:
                 continue
 
+            # Debug log
+            logger.info("UltraFace frame %d: found %d faces", index, len(faces))
+            for i, f in enumerate(faces):
+                logger.info("  Face %d: x=%.1f, w=%.1f, score=%.2f, center_x=%.1f, width=%.1f", 
+                            i, f['x'], f['w'], f['score'], f['center_x'], f['width'])
+
             best_face = max(faces, key=lambda f: f["score"] * f["area"])
             center_ratio = best_face["center_x"] / best_face["width"]
             weight = best_face["score"] * best_face["area"]
