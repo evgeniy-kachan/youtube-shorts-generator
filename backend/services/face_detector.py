@@ -211,6 +211,18 @@ class UltraFace:
         decoded_boxes[:, 2] = decoded_boxes[:, 2] * scale_w  # xmax
         decoded_boxes[:, 1] = decoded_boxes[:, 1] * scale_h  # ymin
         decoded_boxes[:, 3] = decoded_boxes[:, 3] * scale_h  # ymax
+        if decoded_boxes.size > 0:
+            logger.info(
+                "UltraFace scale_w=%.2f scale_h=%.2f sample_box=[%.1f %.1f %.1f %.1f] orig_w=%d orig_h=%d",
+                scale_w,
+                scale_h,
+                decoded_boxes[0, 0],
+                decoded_boxes[0, 1],
+                decoded_boxes[0, 2],
+                decoded_boxes[0, 3],
+                orig_w,
+                orig_h,
+            )
 
         decoded_boxes = self._clip_boxes(decoded_boxes, orig_w, orig_h)
 
