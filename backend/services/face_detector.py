@@ -204,12 +204,13 @@ class UltraFace:
         decoded_boxes = self._decode_boxes(filtered_boxes)
 
         # IMPORTANT: _decode_boxes returns coordinates relative to input_size (320x240).
-        # We MUST scale them to the original image size. Use explicit multiplication
-        # to avoid any view/copy surprises.
-        scale_w = orig_w / self.input_size[0]
-        scale_h = orig_h / self.input_size[1]
-        scales = np.array([scale_w, scale_h, scale_w, scale_h], dtype=np.float32)
-        decoded_boxes = decoded_boxes * scales
+        # We MUST scale them to the original image size. Do it explicitly per column.
+        scale_w = float(orig_w) / float(self.input_size[0])
+        scale_h = float(orig_h) / float(self.input_size[1])
+        decoded_boxes[:, 0] = decoded_boxes[:, 0] * scale_w  # xmin
+        decoded_boxes[:, 2] = decoded_boxes[:, 2] * scale_w  # xmax
+        decoded_boxes[:, 1] = decoded_boxes[:, 1] * scale_h  # ymin
+        decoded_boxes[:, 3] = decoded_boxes[:, 3] * scale_h  # ymax
 
         decoded_boxes = self._clip_boxes(decoded_boxes, orig_w, orig_h)
 
