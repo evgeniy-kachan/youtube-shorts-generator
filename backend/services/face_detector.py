@@ -87,6 +87,11 @@ class FaceDetector:
             if not ok or frame is None:
                 continue
             faces = self._detect_faces(frame)
+            # Drop tiny detections (<1% площади кадра), чтобы не тянуть шум
+            faces = [
+                f for f in faces
+                if f.get("area", 0.0) >= 0.01 * f.get("width", 1.0) * f.get("height", 1.0)
+            ]
             if not faces:
                 continue
 
@@ -114,6 +119,8 @@ class FaceDetector:
 
         focus = numerator / denominator
         focus = float(max(0.0, min(1.0, focus)))
+        # Clamp extreme values to avoid hard-left/right crops when detections are uncertain
+        focus = float(max(0.2, min(0.8, focus)))
         logger.info("UltraFace: estimated horizontal focus %.3f for %s", focus, video_path)
         return focus
 
@@ -220,6 +227,7 @@ class UltraFace:
                     "area": float(w * h),
                     "center_x": float(xmin + w / 2.0),
                     "width": float(orig_w),
+                    "height": float(orig_h),
                 }
             )
         return detections
