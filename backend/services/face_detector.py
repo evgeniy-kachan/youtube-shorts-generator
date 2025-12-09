@@ -189,11 +189,17 @@ class UltraFace:
         filtered_boxes = boxes[0][mask]
         decoded_boxes = self._decode_boxes(filtered_boxes)
 
-        # Scale boxes back to original frame size
+        # IMPORTANT: _decode_boxes returns coordinates relative to input_size (320x240).
+        # We MUST scale them to the original image size.
         scale_w = orig_w / self.input_size[0]
         scale_h = orig_h / self.input_size[1]
-        decoded_boxes[:, [0, 2]] *= scale_w
-        decoded_boxes[:, [1, 3]] *= scale_h
+        
+        # Scale xmin, xmax
+        decoded_boxes[:, 0] *= scale_w
+        decoded_boxes[:, 2] *= scale_w
+        # Scale ymin, ymax
+        decoded_boxes[:, 1] *= scale_h
+        decoded_boxes[:, 3] *= scale_h
 
         decoded_boxes = self._clip_boxes(decoded_boxes, orig_w, orig_h)
 
