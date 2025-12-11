@@ -163,7 +163,9 @@ class UltraFace:
         self.std = 128.0
         self.center_variance = 0.1
         self.size_variance = 0.2
-        self.feature_maps = [[40, 60], [20, 30], [10, 15], [5, 7]]
+        # Feature maps for input 320x240 with strides 8/16/32/64:
+        # h = ceil(240/stride), w = ceil(320/stride)
+        self.feature_maps = [[30, 40], [15, 20], [8, 10], [4, 5]]
         self.min_boxes = [[10, 16, 24], [32, 48], [64, 96], [128, 192, 256]]
         self.shrinkage = [[8, 8], [16, 16], [32, 32], [64, 64]]
         self.priors = self._generate_priors()
