@@ -178,14 +178,15 @@ class UltraFace:
         self.model_path = Path(model_path)
         self.score_threshold = score_threshold
         self.nms_threshold = nms_threshold
-        self.input_size = (320, 240)
+        # Try transposed orientation: width=240, height=320
+        self.input_size = (240, 320)
         self.mean = np.array([127.0, 127.0, 127.0], dtype=np.float32)
         self.std = 128.0
         self.center_variance = 0.1
         self.size_variance = 0.2
-        # Feature maps for input 320x240 with strides 8/16/32/64:
-        # h = ceil(240/stride), w = ceil(320/stride)
-        self.feature_maps = [[30, 40], [15, 20], [8, 10], [4, 5]]
+        # Feature maps for input 240x320 with strides 8/16/32/64:
+        # h = ceil(320/stride), w = ceil(240/stride)
+        self.feature_maps = [[40, 30], [20, 15], [10, 8], [5, 4]]
         self.min_boxes = [[10, 16, 24], [32, 48], [64, 96], [128, 192, 256]]
         self.shrinkage = [[8, 8], [16, 16], [32, 32], [64, 64]]
         self.priors = self._generate_priors()
