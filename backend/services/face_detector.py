@@ -99,8 +99,22 @@ class FaceDetector:
             # Debug log
             logger.info("UltraFace frame %d: found %d faces", index, len(faces))
             for i, f in enumerate(faces):
-                logger.info("  Face %d: x=%.1f, w=%.1f, score=%.2f, center_x=%.1f, width=%.1f", 
-                            i, f['x'], f['w'], f['score'], f['center_x'], f['width'])
+                logger.info(
+                    (
+                        "  Face %d: x=%.1f, w=%.1f, score=%.2f, center_x=%.1f, "
+                        "center_x_input=%.1f, ratio=%.3f, ratio_input=%.3f, width=%.1f, input_w=%.1f"
+                    ),
+                    i,
+                    f["x"],
+                    f["w"],
+                    f["score"],
+                    f["center_x"],
+                    f.get("center_x_input", -1.0),
+                    f["center_x"] / max(f["width"], 1.0),
+                    f.get("center_x_input", 0.0) / max(f.get("input_width", 1.0), 1.0),
+                    f["width"],
+                    f.get("input_width", -1.0),
+                )
 
             best_face = max(faces, key=lambda f: f["score"] * f["area"])
             center_ratio = best_face["center_x"] / best_face["width"]
