@@ -144,6 +144,15 @@ class FaceDetector:
             return None
 
         focus_raw = numerator / denominator
+        # If all detections cluster too far to a border, treat as unreliable and fall back to center.
+        if focus_raw < 0.15 or focus_raw > 0.85:
+            logger.warning(
+                "UltraFace: focus_raw=%.3f looks unreliable (all faces near edge), "
+                "fallback to center crop 0.5",
+                focus_raw,
+            )
+            return 0.5
+
         focus = float(max(0.0, min(1.0, focus_raw)))
         # Clamp extreme values to avoid hard-left/right crops when detections are uncertain
         focus = float(max(0.2, min(0.8, focus)))
