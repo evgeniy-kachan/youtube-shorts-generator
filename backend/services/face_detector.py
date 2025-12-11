@@ -225,6 +225,8 @@ class UltraFace:
     def detect(self, frame: np.ndarray) -> Sequence[dict]:
         orig_h, orig_w = frame.shape[:2]
         resized = cv2.resize(frame, self.input_size, interpolation=cv2.INTER_LINEAR)
+        # Try RGB instead of BGR: some checkpoints are trained in RGB
+        resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         image = resized.astype(np.float32)
         image = (image - self.mean) / self.std
         image = np.transpose(image, (2, 0, 1))
