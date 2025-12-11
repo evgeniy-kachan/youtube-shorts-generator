@@ -201,7 +201,8 @@ class UltraFace:
 
         filtered_scores = scores[mask]
         filtered_boxes = boxes[0][mask]
-        decoded_boxes = self._decode_boxes(filtered_boxes)
+        decoded_boxes_input = self._decode_boxes(filtered_boxes)
+        decoded_boxes = decoded_boxes_input.copy()
 
         # IMPORTANT: _decode_boxes returns coordinates relative to input_size (320x240).
         # We MUST scale them to the original image size. Do it explicitly per column.
@@ -233,6 +234,8 @@ class UltraFace:
             score = float(filtered_scores[idx])
             w = xmax - xmin
             h = ymax - ymin
+            xmin_in, ymin_in, xmax_in, ymax_in = decoded_boxes_input[idx]
+            center_x_in = float((xmin_in + xmax_in) / 2.0)
             detections.append(
                 {
                     "x": float(xmin),
@@ -244,6 +247,8 @@ class UltraFace:
                     "center_x": float(xmin + w / 2.0),
                     "width": float(orig_w),
                     "height": float(orig_h),
+                    "center_x_input": center_x_in,
+                    "input_width": float(self.input_size[0]),
                 }
             )
         return detections
