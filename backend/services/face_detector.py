@@ -101,19 +101,30 @@ class FaceDetector:
             for i, f in enumerate(faces):
                 logger.info(
                     (
-                        "  Face %d: x=%.1f, w=%.1f, score=%.2f, center_x=%.1f, "
-                        "center_x_input=%.1f, ratio=%.3f, ratio_input=%.3f, width=%.1f, input_w=%.1f"
+                        "  Face %d: x=%.1f, y=%.1f, w=%.1f, h=%.1f, score=%.2f, "
+                        "center_x=%.1f, center_y=%.1f, "
+                        "center_x_input=%.1f, center_y_input=%.1f, "
+                        "ratio_x=%.3f, ratio_x_in=%.3f, ratio_y=%.3f, ratio_y_in=%.3f, "
+                        "width=%.1f, height=%.1f, input_w=%.1f, input_h=%.1f"
                     ),
                     i,
                     f["x"],
+                    f.get("y", -1.0),
                     f["w"],
+                    f.get("h", -1.0),
                     f["score"],
                     f["center_x"],
+                    f.get("center_y", -1.0),
                     f.get("center_x_input", -1.0),
+                    f.get("center_y_input", -1.0),
                     f["center_x"] / max(f["width"], 1.0),
                     f.get("center_x_input", 0.0) / max(f.get("input_width", 1.0), 1.0),
+                    f.get("center_y", 0.0) / max(f.get("height", 1.0), 1.0),
+                    f.get("center_y_input", 0.0) / max(f.get("input_height", 1.0), 1.0),
                     f["width"],
+                    f["height"],
                     f.get("input_width", -1.0),
+                    f.get("input_height", -1.0),
                 )
 
             best_face = max(faces, key=lambda f: f["score"] * f["area"])
@@ -252,6 +263,7 @@ class UltraFace:
             h = ymax - ymin
             xmin_in, ymin_in, xmax_in, ymax_in = decoded_boxes_input[idx]
             center_x_in = float((xmin_in + xmax_in) / 2.0)
+            center_y_in = float((ymin_in + ymax_in) / 2.0)
             detections.append(
                 {
                     "x": float(xmin),
@@ -261,10 +273,13 @@ class UltraFace:
                     "score": score,
                     "area": float(w * h),
                     "center_x": float(xmin + w / 2.0),
+                    "center_y": float(ymin + h / 2.0),
                     "width": float(orig_w),
                     "height": float(orig_h),
                     "center_x_input": center_x_in,
+                    "center_y_input": center_y_in,
                     "input_width": float(self.input_size[0]),
+                    "input_height": float(self.input_size[1]),
                 }
             )
         return detections
