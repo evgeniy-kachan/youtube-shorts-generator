@@ -146,22 +146,39 @@ class FaceDetector:
                     f["center_x"] / max(f["width"], 1.0),
                 )
 
-            # If multiple faces: pick the one closest to center (0.5)
-            # This focuses on the main speaker rather than trying to fit everyone
+            # If multiple faces:
+            # - default: pick the face closest to center (0.5)
+            # - if two sides are represented and span is large enough, center between extremes
             if len(faces) >= 2:
                 frame_width = faces[0].get("width", 1.0)
-                best_face = min(
-                    faces,
-                    key=lambda f: abs(f["center_x"] / frame_width - 0.5)
-                )
-                center_ratio = best_face["center_x"] / frame_width
-                weight = best_face["score"] * best_face["area"]
-                logger.info(
-                    "  Multi-face: picked center-most face (ratio=%.3f, weight=%.0f)",
-                    center_ratio,
-                    weight,
-                )
-                weighted_centers.append((center_ratio, weight))
+                centers = [f["center_x"] / frame_width for f in faces]
+                span = max(centers) - min(centers)
+                has_both_sides = min(centers) < 0.5 < max(centers)
+
+                if has_both_sides and span >= 0.35:
+                    center_ratio = (min(centers) + max(centers)) / 2.0
+                    weight = sum(f["score"] * f["area"] for f in faces)
+                    logger.info(
+                        "  Multi-face: balanced center between extremes (span=%.3f, center=%.3f, weight=%.0f)",
+                        span,
+                        center_ratio,
+                        weight,
+                    )
+                    weighted_centers.append((center_ratio, weight))
+                else:
+                    best_face = min(
+                        faces,
+                        key=lambda f: abs(f["center_x"] / frame_width - 0.5)
+                    )
+                    center_ratio = best_face["center_x"] / frame_width
+                    weight = best_face["score"] * best_face["area"]
+                    logger.info(
+                        "  Multi-face: picked center-most face (ratio=%.3f, span=%.3f, weight=%.0f)",
+                        center_ratio,
+                        span,
+                        weight,
+                    )
+                    weighted_centers.append((center_ratio, weight))
             else:
                 best_face = max(faces, key=lambda f: f["score"] * f["area"])
                 center_ratio = best_face["center_x"] / best_face["width"]
