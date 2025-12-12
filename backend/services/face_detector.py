@@ -81,13 +81,22 @@ class FaceDetector:
         self,
         video_path: str,
         max_samples: int = 6,
-    ) -> tuple[Optional[float], Optional[float]]:
+        dialogue: list[dict] | None = None,
+        segment_start: float = 0.0,
+    ) -> Optional[float]:
         """
-        Return averaged face center ratio (0..1) and multi-face span ratio for the clip.
+        Return averaged face center ratio (0..1) for the clip.
 
         Args:
             video_path: path to the already cut clip (few dozen seconds max)
-            max_samples: number of frames to sample uniformly across the clip
+            max_samples: number of frames to sample
+            dialogue: list of dialogue turns with speaker, start, end times
+            segment_start: absolute start time of the segment in the original video
+        
+        Strategy:
+        - If dialogue is provided: sample frames from primary speaker's speech moments
+        - If multiple faces detected: pick the one closest to center
+        - Fallback to uniform sampling if no dialogue or no faces found
         """
         capture = cv2.VideoCapture(video_path)
         if not capture.isOpened():
@@ -95,11 +104,18 @@ class FaceDetector:
             return None
 
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
-        step = max(frame_count // max_samples, 1)
-        sample_indices = list(range(0, frame_count, step))[:max_samples]
+        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        
+        # Determine sample timestamps
+        sample_indices = self._get_sample_indices(
+            dialogue=dialogue,
+            segment_start=segment_start,
+            frame_count=frame_count,
+            fps=fps,
+            max_samples=max_samples,
+        )
 
         weighted_centers: list[tuple[float, float]] = []
-        weighted_spans: list[tuple[float, float]] = []
 
         for index in sample_indices:
             capture.set(cv2.CAP_PROP_POS_FRAMES, index)
@@ -107,8 +123,7 @@ class FaceDetector:
             if not ok or frame is None:
                 continue
             faces = self._detect_faces(frame)
-            # Drop tiny detections (<1% площади кадра), чтобы не тянуть шум
-            # Keep even небольшие лица: порог 0.2% площади кадра, чтобы не отбрасывать средние планы
+            # Drop tiny detections (<0.2% area)
             faces = [
                 f for f in faces
                 if f.get("area", 0.0) >= 0.002 * f.get("width", 1.0) * f.get("height", 1.0)
@@ -131,24 +146,22 @@ class FaceDetector:
                     f["center_x"] / max(f["width"], 1.0),
                 )
 
-            # If 2+ faces: center between leftmost and rightmost faces to keep both in frame.
-            # Also capture span ratio to decide auto zoom-out upstream.
-            # Otherwise: pick the strongest single face.
+            # If multiple faces: pick the one closest to center (0.5)
+            # This focuses on the main speaker rather than trying to fit everyone
             if len(faces) >= 2:
-                left_face = min(faces, key=lambda f: f["center_x"])
-                right_face = max(faces, key=lambda f: f["center_x"])
-                frame_width = max(left_face.get("width", 1.0), right_face.get("width", 1.0))
-                span_ratio = (right_face["center_x"] - left_face["center_x"]) / frame_width
-                center_ratio = (left_face["center_x"] + right_face["center_x"]) / (2.0 * frame_width)
-                weight = sum(f["score"] * f["area"] for f in faces)
+                frame_width = faces[0].get("width", 1.0)
+                best_face = min(
+                    faces,
+                    key=lambda f: abs(f["center_x"] / frame_width - 0.5)
+                )
+                center_ratio = best_face["center_x"] / frame_width
+                weight = best_face["score"] * best_face["area"]
                 logger.info(
-                    "  Multi-face span=%.3f center=%.3f weight=%.0f",
-                    span_ratio,
+                    "  Multi-face: picked center-most face (ratio=%.3f, weight=%.0f)",
                     center_ratio,
                     weight,
                 )
                 weighted_centers.append((center_ratio, weight))
-                weighted_spans.append((span_ratio, weight))
             else:
                 best_face = max(faces, key=lambda f: f["score"] * f["area"])
                 center_ratio = best_face["center_x"] / best_face["width"]
@@ -159,12 +172,12 @@ class FaceDetector:
 
         if not weighted_centers:
             logger.info("InsightFace: no faces found in %s", video_path)
-            return None, None
+            return None
 
         numerator = sum(center * weight for center, weight in weighted_centers)
         denominator = sum(weight for _, weight in weighted_centers)
         if denominator <= 0:
-            return None, None
+            return None
 
         focus_raw = numerator / denominator
         # If all detections cluster too far to a border, treat as unreliable and fall back to center.
@@ -174,25 +187,111 @@ class FaceDetector:
                 "fallback to center crop 0.5",
                 focus_raw,
             )
-            focus_raw = 0.5
+            return 0.5
 
         focus = float(max(0.0, min(1.0, focus_raw)))
         # Clamp extreme values to avoid hard-left/right crops when detections are uncertain
         focus = float(max(0.2, min(0.8, focus)))
 
-        span = None
-        if weighted_spans:
-            span_num = sum(span * weight for span, weight in weighted_spans)
-            span_den = sum(weight for _, weight in weighted_spans)
-            if span_den > 0:
-                span = float(span_num / span_den)
-
         logger.info(
-            "InsightFace: focus raw=%.3f clamped=%.3f span=%s samples=%d",
+            "InsightFace: focus raw=%.3f clamped=%.3f samples=%d",
             focus_raw,
             focus,
-            f"{span:.3f}" if span is not None else "n/a",
             len(weighted_centers),
         )
-        logger.info("InsightFace: estimated horizontal focus %.3f span %s for %s", focus, span, video_path)
-        return focus, span
+        logger.info("InsightFace: estimated horizontal focus %.3f for %s", focus, video_path)
+        return focus
+    
+    def _get_sample_indices(
+        self,
+        dialogue: list[dict] | None,
+        segment_start: float,
+        frame_count: int,
+        fps: float,
+        max_samples: int,
+    ) -> list[int]:
+        """
+        Return frame indices to sample for face detection.
+        
+        If dialogue is provided, sample from primary speaker's speech moments.
+        Otherwise, sample uniformly across the clip.
+        """
+        if not dialogue:
+            # Uniform sampling fallback
+            step = max(frame_count // max_samples, 1)
+            return list(range(0, frame_count, step))[:max_samples]
+        
+        # Find primary speaker (longest total speech duration)
+        speaker_durations: dict[str, float] = {}
+        for turn in dialogue:
+            speaker = turn.get("speaker")
+            if not speaker:
+                continue
+            start = turn.get("start", 0.0)
+            end = turn.get("end", 0.0)
+            duration = max(0.0, end - start)
+            speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + duration
+        
+        if not speaker_durations:
+            # No valid speakers, fallback to uniform
+            step = max(frame_count // max_samples, 1)
+            return list(range(0, frame_count, step))[:max_samples]
+        
+        primary_speaker = max(speaker_durations, key=speaker_durations.get)
+        logger.info(
+            "Primary speaker: %s (%.1fs total), segment_start=%.2fs",
+            primary_speaker,
+            speaker_durations[primary_speaker],
+            segment_start,
+        )
+        
+        # Collect primary speaker's speech intervals relative to segment
+        speech_intervals: list[tuple[float, float]] = []
+        for turn in dialogue:
+            if turn.get("speaker") != primary_speaker:
+                continue
+            # dialogue times are absolute in original video
+            abs_start = turn.get("start", 0.0)
+            abs_end = turn.get("end", 0.0)
+            # Convert to relative to segment
+            rel_start = max(0.0, abs_start - segment_start)
+            rel_end = max(0.0, abs_end - segment_start)
+            if rel_end > rel_start:
+                speech_intervals.append((rel_start, rel_end))
+        
+        if not speech_intervals:
+            # Primary speaker not in this segment, fallback to uniform
+            logger.info("Primary speaker not in this segment, using uniform sampling")
+            step = max(frame_count // max_samples, 1)
+            return list(range(0, frame_count, step))[:max_samples]
+        
+        # Sample frames from speech intervals
+        total_speech_duration = sum(end - start for start, end in speech_intervals)
+        samples_per_interval = max(1, max_samples // len(speech_intervals))
+        
+        sample_indices: list[int] = []
+        for start_time, end_time in speech_intervals:
+            start_frame = int(start_time * fps)
+            end_frame = int(end_time * fps)
+            interval_frames = max(1, end_frame - start_frame)
+            step = max(1, interval_frames // samples_per_interval)
+            for frame_idx in range(start_frame, end_frame, step):
+                if frame_idx < frame_count:
+                    sample_indices.append(frame_idx)
+                if len(sample_indices) >= max_samples:
+                    break
+            if len(sample_indices) >= max_samples:
+                break
+        
+        if not sample_indices:
+            # Fallback to uniform
+            step = max(frame_count // max_samples, 1)
+            sample_indices = list(range(0, frame_count, step))[:max_samples]
+        
+        logger.info(
+            "Sampled %d frames from %d speech intervals (%.1fs total)",
+            len(sample_indices),
+            len(speech_intervals),
+            total_speech_duration,
+        )
+        return sample_indices[:max_samples]

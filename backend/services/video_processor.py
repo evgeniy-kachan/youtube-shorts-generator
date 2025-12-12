@@ -49,19 +49,30 @@ class VideoProcessor:
             self._face_detector = FaceDetector()
         return self._face_detector
 
-    def _estimate_face_focus(self, video_path: str, max_samples: int = 6) -> tuple[float | None, float | None]:
+    def _estimate_face_focus(
+        self,
+        video_path: str,
+        max_samples: int = 6,
+        dialogue: list[dict] | None = None,
+        segment_start: float = 0.0,
+    ) -> float | None:
         try:
             detector = self._get_face_detector()
         except Exception as exc:
-            logger.warning("Unable to initialize YuNet face detector: %s", exc)
-            return None, None
+            logger.warning("Unable to initialize face detector: %s", exc)
+            return None
 
         try:
-            focus, span = detector.estimate_horizontal_focus(video_path, max_samples=max_samples)
-            return focus, span
+            focus = detector.estimate_horizontal_focus(
+                video_path,
+                max_samples=max_samples,
+                dialogue=dialogue,
+                segment_start=segment_start,
+            )
+            return focus
         except Exception as exc:
-            logger.warning("YuNet focus estimation failed for %s: %s", video_path, exc)
-            return None, None
+            logger.warning("Face focus estimation failed for %s: %s", video_path, exc)
+            return None
     
     def __init__(self, output_dir: Path, fonts_dir: Path | None = None):
         self.output_dir = output_dir
@@ -128,7 +139,6 @@ class VideoProcessor:
         method: Literal["letterbox", "center_crop"] = "letterbox",
         crop_focus: str = "center",
         auto_center_ratio: float | None = None,
-        auto_face_span: float | None = None,
     ) -> str:
         """
         Convert horizontal video to vertical format (9:16) for Reels/Shorts.
@@ -185,27 +195,7 @@ class VideoProcessor:
 
                 if input_ratio >= target_ratio:
                     # Видео шире 9:16 → вписываем по высоте и обрезаем по бокам
-                    zoom = 1.0
-                    if auto_face_span is not None and auto_face_span > 0:
-                        # Auto zoom-out when two faces span too wide to fit the 1080 crop.
-                        # Condition: span_scaled * margin_factor <= TARGET_WIDTH
-                        # span_scaled = span_ratio * (TARGET_HEIGHT * zoom * input_ratio)
-                        span_margin = 1.2  # small padding so faces are not at the very edges
-                        zoom_limit = self.TARGET_WIDTH / (span_margin * auto_face_span * self.TARGET_HEIGHT * input_ratio)
-                        zoom = min(1.0, zoom_limit)
-                        zoom = max(0.65, zoom)  # avoid too much blur
-                        if zoom < 1.0:
-                            logger.info(
-                                "Auto zoom-out applied: span=%.3f zoom=%.3f (limit=%.3f)",
-                                auto_face_span,
-                                zoom,
-                                zoom_limit,
-                            )
-
-                    scaled_height = int(round(self.TARGET_HEIGHT * zoom))
-                    if scaled_height % 2 != 0:
-                        scaled_height += 1
-                    scaled_width = max(self.TARGET_WIDTH, int(round(scaled_height * input_ratio)))
+                    scaled_width = max(self.TARGET_WIDTH, int(round(self.TARGET_HEIGHT * input_ratio)))
                     if scaled_width % 2 != 0:
                         scaled_width += 1
                     margin = max(scaled_width - self.TARGET_WIDTH, 0)
@@ -225,19 +215,14 @@ class VideoProcessor:
                     pipeline = (
                         ffmpeg
                         .input(video_path)
-                        .filter('scale', scaled_width, scaled_height)
-                        .filter('crop', self.TARGET_WIDTH, scaled_height, offset_x, 0)
+                        .filter('scale', scaled_width, self.TARGET_HEIGHT)
+                        .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT, offset_x, 0)
                     )
-                    if scaled_height != self.TARGET_HEIGHT:
-                        pipeline = pipeline.filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT)
                     logger.info(
-                        "Center crop focus=%s (offset %dpx of %dpx margin, zoom=%.3f, scaled=%dx%d)",
+                        "Center crop focus=%s (offset %dpx of %dpx margin)",
                         focus,
                         offset_x,
                         margin,
-                        zoom,
-                        scaled_width,
-                        scaled_height,
                     )
                 else:
                     # Видео уже/ближе к вертикальному → вписываем по ширине и обрезаем верх/низ
@@ -296,7 +281,6 @@ class VideoProcessor:
         vertical_method: str = "letterbox",
         crop_focus: str = "center",
         auto_center_ratio: float | None = None,
-        auto_face_span: float | None = None,
         target_duration: float | None = None,
         background_audio_path: str | None = None,
         background_volume_db: float = -20.0,
@@ -330,7 +314,6 @@ class VideoProcessor:
                     method=vertical_method,
                     crop_focus=crop_focus,
                     auto_center_ratio=auto_center_ratio,
-                    auto_face_span=auto_face_span,
                 )
             
             # Step 2: Create ASS subtitle file with styling
@@ -503,15 +486,20 @@ class VideoProcessor:
                     )
                     background_audio_path = None
 
-            auto_face_span: float | None = None
             if method == "center_crop" and effective_crop_focus == "face_auto":
-                auto_center_ratio, auto_face_span = self._estimate_face_focus(str(cut_path))
+                auto_center_ratio = self._estimate_face_focus(
+                    str(cut_path),
+                    dialogue=dialogue,
+                    segment_start=start_time,
+                )
                 if auto_center_ratio is None:
                     effective_crop_focus = "center"
                     logger.info(
                         "Face auto-crop fallback to center for %s (no face detected).",
                         cut_path,
                     )
+            else:
+                auto_center_ratio = None
 
             # Step 2: prepare basic subtitles
             dialogue_turns = dialogue or []
@@ -540,7 +528,6 @@ class VideoProcessor:
                 vertical_method=method,
                 crop_focus=effective_crop_focus,
                 auto_center_ratio=auto_center_ratio,
-                auto_face_span=auto_face_span,
                 target_duration=duration,
                 background_audio_path=str(background_audio_path) if background_audio_path else None,
                 background_volume_db=-20.0,
