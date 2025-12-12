@@ -81,9 +81,9 @@ class FaceDetector:
         self,
         video_path: str,
         max_samples: int = 6,
-    ) -> Optional[float]:
+    ) -> tuple[Optional[float], Optional[float]]:
         """
-        Return averaged face center ratio (0..1) for the supplied video clip.
+        Return averaged face center ratio (0..1) and multi-face span ratio for the clip.
 
         Args:
             video_path: path to the already cut clip (few dozen seconds max)
@@ -99,6 +99,7 @@ class FaceDetector:
         sample_indices = list(range(0, frame_count, step))[:max_samples]
 
         weighted_centers: list[tuple[float, float]] = []
+        weighted_spans: list[tuple[float, float]] = []
 
         for index in sample_indices:
             capture.set(cv2.CAP_PROP_POS_FRAMES, index)
@@ -131,12 +132,14 @@ class FaceDetector:
                 )
 
             # If 2+ faces: center between leftmost and rightmost faces to keep both in frame.
+            # Also capture span ratio to decide auto zoom-out upstream.
             # Otherwise: pick the strongest single face.
             if len(faces) >= 2:
                 left_face = min(faces, key=lambda f: f["center_x"])
                 right_face = max(faces, key=lambda f: f["center_x"])
-                span_ratio = (right_face["center_x"] - left_face["center_x"]) / max(left_face["width"], 1.0)
-                center_ratio = (left_face["center_x"] + right_face["center_x"]) / (2.0 * max(left_face["width"], 1.0))
+                frame_width = max(left_face.get("width", 1.0), right_face.get("width", 1.0))
+                span_ratio = (right_face["center_x"] - left_face["center_x"]) / frame_width
+                center_ratio = (left_face["center_x"] + right_face["center_x"]) / (2.0 * frame_width)
                 weight = sum(f["score"] * f["area"] for f in faces)
                 logger.info(
                     "  Multi-face span=%.3f center=%.3f weight=%.0f",
@@ -145,6 +148,7 @@ class FaceDetector:
                     weight,
                 )
                 weighted_centers.append((center_ratio, weight))
+                weighted_spans.append((span_ratio, weight))
             else:
                 best_face = max(faces, key=lambda f: f["score"] * f["area"])
                 center_ratio = best_face["center_x"] / best_face["width"]
@@ -155,12 +159,12 @@ class FaceDetector:
 
         if not weighted_centers:
             logger.info("InsightFace: no faces found in %s", video_path)
-            return None
+            return None, None
 
         numerator = sum(center * weight for center, weight in weighted_centers)
         denominator = sum(weight for _, weight in weighted_centers)
         if denominator <= 0:
-            return None
+            return None, None
 
         focus_raw = numerator / denominator
         # If all detections cluster too far to a border, treat as unreliable and fall back to center.
@@ -170,16 +174,25 @@ class FaceDetector:
                 "fallback to center crop 0.5",
                 focus_raw,
             )
-            return 0.5
+            focus_raw = 0.5
 
         focus = float(max(0.0, min(1.0, focus_raw)))
         # Clamp extreme values to avoid hard-left/right crops when detections are uncertain
         focus = float(max(0.2, min(0.8, focus)))
+
+        span = None
+        if weighted_spans:
+            span_num = sum(span * weight for span, weight in weighted_spans)
+            span_den = sum(weight for _, weight in weighted_spans)
+            if span_den > 0:
+                span = float(span_num / span_den)
+
         logger.info(
-            "InsightFace: focus raw=%.3f clamped=%.3f samples=%d",
+            "InsightFace: focus raw=%.3f clamped=%.3f span=%s samples=%d",
             focus_raw,
             focus,
+            f"{span:.3f}" if span is not None else "n/a",
             len(weighted_centers),
         )
-        logger.info("InsightFace: estimated horizontal focus %.3f for %s", focus, video_path)
-        return focus
+        logger.info("InsightFace: estimated horizontal focus %.3f span %s for %s", focus, span, video_path)
+        return focus, span
