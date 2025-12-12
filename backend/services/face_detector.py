@@ -130,15 +130,26 @@ class FaceDetector:
                     f["center_x"] / max(f["width"], 1.0),
                 )
 
-            # Prioritize face closest to center (0.5), weighted by confidence×area
-            # This avoids picking a secondary face when multiple people are in frame
-            best_face = min(
-                faces,
-                key=lambda f: abs(f["center_x"] / f["width"] - 0.5) / max(f["score"] * f["area"], 0.01)
-            )
-            center_ratio = best_face["center_x"] / best_face["width"]
-            weight = best_face["score"] * best_face["area"]
-            weighted_centers.append((center_ratio, weight))
+            # If 2+ faces: center between leftmost and rightmost faces to keep both in frame.
+            # Otherwise: pick the strongest single face.
+            if len(faces) >= 2:
+                left_face = min(faces, key=lambda f: f["center_x"])
+                right_face = max(faces, key=lambda f: f["center_x"])
+                span_ratio = (right_face["center_x"] - left_face["center_x"]) / max(left_face["width"], 1.0)
+                center_ratio = (left_face["center_x"] + right_face["center_x"]) / (2.0 * max(left_face["width"], 1.0))
+                weight = sum(f["score"] * f["area"] for f in faces)
+                logger.info(
+                    "  Multi-face span=%.3f center=%.3f weight=%.0f",
+                    span_ratio,
+                    center_ratio,
+                    weight,
+                )
+                weighted_centers.append((center_ratio, weight))
+            else:
+                best_face = max(faces, key=lambda f: f["score"] * f["area"])
+                center_ratio = best_face["center_x"] / best_face["width"]
+                weight = best_face["score"] * best_face["area"]
+                weighted_centers.append((center_ratio, weight))
 
         capture.release()
 
