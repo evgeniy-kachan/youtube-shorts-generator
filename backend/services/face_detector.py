@@ -130,7 +130,12 @@ class FaceDetector:
                     f["center_x"] / max(f["width"], 1.0),
                 )
 
-            best_face = max(faces, key=lambda f: f["score"] * f["area"])
+            # Prioritize face closest to center (0.5), weighted by confidence×area
+            # This avoids picking a secondary face when multiple people are in frame
+            best_face = min(
+                faces,
+                key=lambda f: abs(f["center_x"] / f["width"] - 0.5) / max(f["score"] * f["area"], 0.01)
+            )
             center_ratio = best_face["center_x"] / best_face["width"]
             weight = best_face["score"] * best_face["area"]
             weighted_centers.append((center_ratio, weight))

@@ -27,7 +27,7 @@ huggingface_hub==0.36.0
 # Video Processing
 ffmpeg-python>=0.2.0
 moviepy>=1.0.3
-pillow>=10.1.0
+pillow>=10.1.0,<12.0
 onnxruntime>=1.18.0
 insightface>=0.7.3
 # YuNet/ONNX поддерживается сборкой OpenCV 4.11.0.86 (совместима с NumPy 2.x)
