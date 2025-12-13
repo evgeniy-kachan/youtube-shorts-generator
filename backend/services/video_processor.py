@@ -335,6 +335,14 @@ class VideoProcessor:
                     crop_focus=crop_focus,
                     auto_center_ratio=auto_center_ratio,
                 )
+                
+                # Diagnostic: check face positions in final cropped video
+                if crop_focus == "face_auto" and auto_center_ratio is not None:
+                    try:
+                        detector = self._get_face_detector()
+                        detector.diagnose_final_crop(working_video, max_samples=3)
+                    except Exception as diag_exc:
+                        logger.warning("Post-crop diagnostic failed: %s", diag_exc)
             
             # Step 2: Create ASS subtitle file with styling
             subtitle_path = Path(output_path).with_suffix('.ass')

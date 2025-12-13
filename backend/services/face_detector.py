@@ -150,7 +150,7 @@ class FaceDetector:
             # Logic:
             # - Single face: use its center
             # - Multiple faces, span < 0.40: center between extremes (show both)
-            # - Multiple faces, span >= 0.40: closest to 0.5 (show active speaker only)
+            # - Multiple faces, span >= 0.40: SKIP this frame (can't fit both, unclear which to pick)
             if len(faces) >= 2:
                 frame_width = faces[0].get("width", 1.0)
                 centers = [f["center_x"] / frame_width for f in faces]
@@ -168,20 +168,11 @@ class FaceDetector:
                     )
                     weighted_centers.append((center_ratio, weight))
                 else:
-                    # Faces too far apart → focus on one closest to center
-                    best_face = min(
-                        faces,
-                        key=lambda f: abs(f["center_x"] / frame_width - 0.5)
-                    )
-                    center_ratio = best_face["center_x"] / frame_width
-                    weight = best_face["score"] * best_face["area"]
+                    # Faces too far apart → skip this frame, use only single-face frames
                     logger.info(
-                        "  Multi-face (span=%.3f >= 0.40): focus on center-most, ratio=%.3f, weight=%.0f",
+                        "  Multi-face (span=%.3f >= 0.40): SKIP frame (too far apart to fit both)",
                         span,
-                        center_ratio,
-                        weight,
                     )
-                    weighted_centers.append((center_ratio, weight))
             else:
                 # Single face
                 best_face = max(faces, key=lambda f: f["score"] * f["area"])
@@ -223,6 +214,76 @@ class FaceDetector:
         )
         logger.info("InsightFace: estimated horizontal focus %.3f for %s", focus, video_path)
         return focus
+    
+    def diagnose_final_crop(self, video_path: str, max_samples: int = 3) -> None:
+        """
+        Diagnostic: check where faces ended up in the final cropped video.
+        Logs face positions in the 1080px wide frame to verify crop quality.
+        """
+        capture = cv2.VideoCapture(video_path)
+        if not capture.isOpened():
+            logger.warning("Diagnose: unable to open video %s", video_path)
+            return
+        
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        step = max(frame_count // max_samples, 1)
+        sample_indices = list(range(0, frame_count, step))[:max_samples]
+        
+        logger.info("=" * 60)
+        logger.info("POST-CROP DIAGNOSTIC for %s", video_path)
+        logger.info("=" * 60)
+        
+        for index in sample_indices:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                continue
+            
+            faces = self._detect_faces(frame)
+            frame_width = frame.shape[1]
+            frame_height = frame.shape[0]
+            
+            logger.info("Frame %d (resolution %dx%d): found %d faces", index, frame_width, frame_height, len(faces))
+            
+            if not faces:
+                logger.info("  No faces detected")
+                continue
+            
+            for i, f in enumerate(faces):
+                x = f["x"]
+                w = f["w"]
+                center_x = f["center_x"]
+                
+                # Check if face is cut off
+                left_cut = x < 0
+                right_cut = (x + w) > frame_width
+                
+                status = "OK"
+                if left_cut and right_cut:
+                    status = "CUT BOTH SIDES"
+                elif left_cut:
+                    status = "CUT LEFT"
+                elif right_cut:
+                    status = "CUT RIGHT"
+                
+                logger.info(
+                    "  Face %d: x=%.1f center_x=%.1f w=%.1f [%.1f - %.1f] score=%.2f | %s",
+                    i,
+                    x,
+                    center_x,
+                    w,
+                    x,
+                    x + w,
+                    f["score"],
+                    status,
+                )
+                logger.info(
+                    "    Position: %.1f%% from left (0%%=left edge, 50%%=center, 100%%=right edge)",
+                    (center_x / frame_width) * 100,
+                )
+        
+        logger.info("=" * 60)
+        capture.release()
     
     def _get_sample_indices(
         self,
