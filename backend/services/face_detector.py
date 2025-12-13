@@ -120,7 +120,8 @@ class FaceDetector:
         )
 
         weighted_centers: list[tuple[float, float]] = []
-        single_face_positions: list[float] = []  # Track single-face positions to identify primary speaker location
+        single_face_data: list[tuple[int, float]] = []  # Track (frame_index, position) for single faces
+        multi_face_data: list[tuple[float, float]] = []  # Track (left_pos, right_pos) from multi-face frames
 
         for index in sample_indices:
             capture.set(cv2.CAP_PROP_POS_FRAMES, index)
@@ -154,7 +155,7 @@ class FaceDetector:
             # Logic:
             # - Single face: use its center, track for primary speaker identification
             # - Multiple faces, span < 0.40: center between extremes (show both)
-            # - Multiple faces, span >= 0.40: pick face closest to primary speaker position
+            # - Multiple faces, span >= 0.40: track positions for later primary speaker detection
             if len(faces) >= 2:
                 frame_width = faces[0].get("width", 1.0)
                 centers = [f["center_x"] / frame_width for f in faces]
@@ -172,17 +173,22 @@ class FaceDetector:
                     )
                     weighted_centers.append((center_ratio, weight))
                 else:
-                    # Faces too far apart - will decide later based on primary speaker position
+                    # Faces too far apart - track both positions for primary speaker detection
+                    left_pos = min(centers)
+                    right_pos = max(centers)
+                    multi_face_data.append((left_pos, right_pos))
                     logger.info(
-                        "  Multi-face (span=%.3f >= 0.40): defer to primary speaker position",
+                        "  Multi-face (span=%.3f >= 0.40): track positions left=%.3f right=%.3f",
                         span,
+                        left_pos,
+                        right_pos,
                     )
             else:
                 # Single face - track for identifying primary speaker position
                 best_face = max(faces, key=lambda f: f["score"] * f["area"])
                 center_ratio = best_face["center_x"] / best_face["width"]
                 weight = best_face["score"] * best_face["area"]
-                single_face_positions.append(center_ratio)
+                single_face_data.append((index, center_ratio))
                 weighted_centers.append((center_ratio, weight))
 
         capture.release()
@@ -191,56 +197,104 @@ class FaceDetector:
             logger.info("InsightFace: no faces found in %s", video_path)
             return None
 
-        # Check if we have two speakers on different positions (left vs right)
-        if len(single_face_positions) >= 3:
-            min_pos = min(single_face_positions)
-            max_pos = max(single_face_positions)
+        # Check if we have two speakers on different positions
+        # Use multi-face data (wide span frames) to identify left/right speaker positions
+        two_speaker_mode = False
+        left_speaker_pos: float | None = None
+        right_speaker_pos: float | None = None
+        
+        if multi_face_data:
+            # We have frames showing both speakers far apart
+            # Average their positions across all multi-face frames
+            left_positions = [left for left, right in multi_face_data]
+            right_positions = [right for left, right in multi_face_data]
+            left_speaker_pos = sum(left_positions) / len(left_positions)
+            right_speaker_pos = sum(right_positions) / len(right_positions)
+            two_speaker_mode = True
+            
+            logger.info(
+                "Detected two-speaker setup from %d multi-face frames: left=%.3f, right=%.3f",
+                len(multi_face_data),
+                left_speaker_pos,
+                right_speaker_pos,
+            )
+        elif len(single_face_data) >= 3:
+            # Fallback: check if single-face positions span across frame
+            single_positions = [pos for idx, pos in single_face_data]
+            min_pos = min(single_positions)
+            max_pos = max(single_positions)
             position_span = max_pos - min_pos
             
             if position_span > 0.35:
-                logger.info(
-                    "Detected speakers on different positions (span=%.3f): left=%.3f, right=%.3f",
-                    position_span,
-                    min_pos,
-                    max_pos,
+                two_speaker_mode = True
+                midpoint = (min_pos + max_pos) / 2.0
+                left_positions = [p for p in single_positions if p < midpoint]
+                right_positions = [p for p in single_positions if p >= midpoint]
+                
+                if left_positions and right_positions:
+                    left_speaker_pos = sum(left_positions) / len(left_positions)
+                    right_speaker_pos = sum(right_positions) / len(right_positions)
+                    logger.info(
+                        "Detected two-speaker setup from single-face span (%.3f): left=%.3f, right=%.3f",
+                        position_span,
+                        left_speaker_pos,
+                        right_speaker_pos,
+                    )
+        
+        # If two-speaker mode, determine primary speaker and focus on them
+        if two_speaker_mode and left_speaker_pos is not None and right_speaker_pos is not None:
+            primary_speaker = self._get_primary_speaker(dialogue, segment_start, segment_end)
+            
+            if primary_speaker and dialogue:
+                # Calculate which position (left or right) corresponds to primary speaker
+                # Heuristic: match single-face frames to primary speaker's speech intervals
+                primary_interval_frames = self._get_speaker_frame_indices(
+                    dialogue, primary_speaker, segment_start, frame_count, fps
                 )
                 
-                # Determine primary speaker (who talks more in this segment)
-                primary_speaker = self._get_primary_speaker(dialogue, segment_start, segment_end)
+                # Count which cluster (left/right) has more overlap with primary speaker frames
+                midpoint = (left_speaker_pos + right_speaker_pos) / 2.0
+                left_cluster_indices = [
+                    idx for idx in sample_indices 
+                    if idx in primary_interval_frames
+                ]
                 
-                if primary_speaker:
-                    # Split single-face positions into left and right clusters
-                    midpoint = (min_pos + max_pos) / 2.0
-                    left_positions = [p for p in single_face_positions if p < midpoint]
-                    right_positions = [p for p in single_face_positions if p >= midpoint]
+                # Determine primary speaker position by comparing to left/right
+                # Use single-face positions that occurred during primary speaker's speech
+                primary_single_faces = []
+                for frame_idx, pos in single_face_data:
+                    if frame_idx in primary_interval_frames:
+                        primary_single_faces.append(pos)
+                
+                if primary_single_faces:
+                    avg_primary_pos = sum(primary_single_faces) / len(primary_single_faces)
                     
-                    logger.info(
-                        "Position clusters: left=%d faces (avg=%.3f), right=%d faces (avg=%.3f)",
-                        len(left_positions),
-                        sum(left_positions) / len(left_positions) if left_positions else 0.0,
-                        len(right_positions),
-                        sum(right_positions) / len(right_positions) if right_positions else 0.0,
-                    )
-                    
-                    # Heuristic: primary speaker is in the cluster with MORE single-face frames
-                    # (because they talk more, so more frames show only them)
-                    primary_cluster_positions = None
-                    if len(left_positions) > len(right_positions):
-                        primary_cluster_positions = left_positions
-                        logger.info("Primary speaker '%s' identified on LEFT", primary_speaker)
-                    elif len(right_positions) > len(left_positions):
-                        primary_cluster_positions = right_positions
-                        logger.info("Primary speaker '%s' identified on RIGHT", primary_speaker)
+                    # Is primary speaker closer to left or right position?
+                    if abs(avg_primary_pos - left_speaker_pos) < abs(avg_primary_pos - right_speaker_pos):
+                        focus = left_speaker_pos
+                        logger.info(
+                            "Primary speaker '%s' (%.0f%% speech) identified on LEFT (%.3f), focusing there",
+                            primary_speaker,
+                            self._get_speaker_percentage(dialogue, primary_speaker, segment_start, segment_end),
+                            focus,
+                        )
                     else:
-                        # Equal counts - use center as fallback
-                        logger.info("Equal cluster sizes, using center")
-                        primary_cluster_positions = None
+                        focus = right_speaker_pos
+                        logger.info(
+                            "Primary speaker '%s' (%.0f%% speech) identified on RIGHT (%.3f), focusing there",
+                            primary_speaker,
+                            self._get_speaker_percentage(dialogue, primary_speaker, segment_start, segment_end),
+                            focus,
+                        )
                     
-                    if primary_cluster_positions:
-                        focus = sum(primary_cluster_positions) / len(primary_cluster_positions)
-                        focus = float(max(0.2, min(0.8, focus)))
-                        logger.info("Focusing on primary speaker cluster: %.3f", focus)
-                        return focus
+                    focus = float(max(0.2, min(0.8, focus)))
+                    return focus
+            
+            # Fallback: use center between both speakers
+            focus = (left_speaker_pos + right_speaker_pos) / 2.0
+            logger.info("Unable to identify primary speaker, using center=%.3f", focus)
+            focus = float(max(0.2, min(0.8, focus)))
+            return focus
 
         # Normal weighted average calculation
         numerator = sum(center * weight for center, weight in weighted_centers)
@@ -402,6 +456,72 @@ class FaceDetector:
         )
         
         return primary_speaker
+    
+    def _get_speaker_percentage(
+        self,
+        dialogue: list[dict] | None,
+        speaker: str,
+        segment_start: float,
+        segment_end: float | None,
+    ) -> float:
+        """Calculate what percentage of segment this speaker talks."""
+        if not dialogue:
+            return 0.0
+        
+        if segment_end is None:
+            segment_end = max((turn.get("end", segment_start) for turn in dialogue), default=segment_start + 30.0)
+        
+        speaker_duration = 0.0
+        total_duration = 0.0
+        
+        for turn in dialogue:
+            turn_start = turn.get("start", 0.0)
+            turn_end = turn.get("end", 0.0)
+            overlap_start = max(turn_start, segment_start)
+            overlap_end = min(turn_end, segment_end)
+            overlap_duration = max(0.0, overlap_end - overlap_start)
+            
+            if overlap_duration > 0:
+                total_duration += overlap_duration
+                if turn.get("speaker") == speaker:
+                    speaker_duration += overlap_duration
+        
+        if total_duration <= 0:
+            return 0.0
+        
+        return (speaker_duration / total_duration) * 100.0
+    
+    def _get_speaker_frame_indices(
+        self,
+        dialogue: list[dict] | None,
+        speaker: str,
+        segment_start: float,
+        frame_count: int,
+        fps: float,
+    ) -> set[int]:
+        """Get frame indices that fall within this speaker's speech intervals."""
+        if not dialogue:
+            return set()
+        
+        speaker_frames = set()
+        
+        for turn in dialogue:
+            if turn.get("speaker") != speaker:
+                continue
+            
+            # Convert absolute time to relative frame indices
+            turn_start = turn.get("start", 0.0)
+            turn_end = turn.get("end", 0.0)
+            rel_start = max(0.0, turn_start - segment_start)
+            rel_end = max(0.0, turn_end - segment_start)
+            
+            start_frame = int(rel_start * fps)
+            end_frame = int(rel_end * fps)
+            
+            for frame_idx in range(start_frame, min(end_frame, frame_count)):
+                speaker_frames.add(frame_idx)
+        
+        return speaker_frames
     
     def _get_sample_indices(
         self,
