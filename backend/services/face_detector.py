@@ -83,9 +83,9 @@ class FaceDetector:
         max_samples: int = 6,
         dialogue: list[dict] | None = None,
         segment_start: float = 0.0,
-    ) -> Optional[float]:
+    ) -> tuple[Optional[float], bool]:
         """
-        Return averaged face center ratio (0..1) for the clip.
+        Return averaged face center ratio (0..1) and zoom-out flag for the clip.
 
         Args:
             video_path: path to the already cut clip (few dozen seconds max)
@@ -93,15 +93,18 @@ class FaceDetector:
             dialogue: list of dialogue turns with speaker, start, end times
             segment_start: absolute start time of the segment in the original video
         
+        Returns:
+            (focus_ratio, needs_zoom_out): focus position 0-1, and whether zoom-out is needed for multi-speaker
+        
         Strategy:
-        - If dialogue is provided: sample frames from primary speaker's speech moments
-        - If multiple faces detected: pick the one closest to center
+        - If dialogue is provided: sample frames from all speakers proportionally
+        - If multiple faces detected: pick the one closest to center (or balance between extremes if span is wide)
         - Fallback to uniform sampling if no dialogue or no faces found
         """
         capture = cv2.VideoCapture(video_path)
         if not capture.isOpened():
             logger.warning("InsightFace: unable to open video %s for face detection", video_path)
-            return None
+            return (None, False)
 
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
         fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
@@ -192,17 +195,17 @@ class FaceDetector:
 
         if not weighted_centers:
             logger.info("InsightFace: no faces found in %s", video_path)
-            return None
+            return (None, False)
 
         numerator = sum(center * weight for center, weight in weighted_centers)
         denominator = sum(weight for _, weight in weighted_centers)
         if denominator <= 0:
-            return None
+            return (None, False)
 
         focus_raw = numerator / denominator
         # If we saw a wide span across both sides, force center to keep both faces in frame.
         if balanced_hit:
-            logger.info("Balanced multi-face span detected (>=0.50), forcing focus_raw to 0.5")
+            logger.info("Balanced multi-face span detected (>=0.50), forcing focus_raw to 0.5, zoom-out needed")
             focus_raw = 0.5
         # If all detections cluster too far to a border, treat as unreliable and fall back to center.
         if focus_raw < 0.15 or focus_raw > 0.85:
@@ -211,20 +214,21 @@ class FaceDetector:
                 "fallback to center crop 0.5",
                 focus_raw,
             )
-            return 0.5
+            return (0.5, False)
 
         focus = float(max(0.0, min(1.0, focus_raw)))
         # Clamp extreme values to avoid hard-left/right crops when detections are uncertain
         focus = float(max(0.2, min(0.8, focus)))
 
         logger.info(
-            "InsightFace: focus raw=%.3f clamped=%.3f samples=%d",
+            "InsightFace: focus raw=%.3f clamped=%.3f samples=%d zoom_out=%s",
             focus_raw,
             focus,
             len(weighted_centers),
+            balanced_hit,
         )
-        logger.info("InsightFace: estimated horizontal focus %.3f for %s", focus, video_path)
-        return focus
+        logger.info("InsightFace: estimated horizontal focus %.3f (zoom_out=%s) for %s", focus, balanced_hit, video_path)
+        return (focus, balanced_hit)
     
     def _get_sample_indices(
         self,
