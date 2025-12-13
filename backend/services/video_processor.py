@@ -203,11 +203,28 @@ class VideoProcessor:
                         desired_center = scaled_width * auto_center_ratio
                         offset_x = int(round(desired_center - (self.TARGET_WIDTH / 2)))
                         offset_x = max(0, min(margin, offset_x))
+                        
+                        # Calculate where faces will appear in final 1080px wide crop
+                        crop_start_x = offset_x
+                        crop_end_x = offset_x + self.TARGET_WIDTH
+                        face_center_in_scaled = scaled_width * auto_center_ratio
+                        face_center_in_crop = face_center_in_scaled - crop_start_x
+                        face_center_ratio_in_crop = face_center_in_crop / self.TARGET_WIDTH
+                        
                         logger.info(
                             "Face auto-crop applied (ratio %.3f, offset %dpx of %dpx margin)",
                             auto_center_ratio,
                             offset_x,
                             margin,
+                        )
+                        logger.info(
+                            "Crop window: [%dpx - %dpx] of scaled %dpx width. "
+                            "Face center in final crop: %.1fpx (%.1f%% from left edge, 0%%=left 50%%=center 100%%=right)",
+                            crop_start_x,
+                            crop_end_x,
+                            scaled_width,
+                            face_center_in_crop,
+                            face_center_ratio_in_crop * 100,
                         )
                     else:
                         offset_x = self._resolve_crop_offset(margin, focus)
