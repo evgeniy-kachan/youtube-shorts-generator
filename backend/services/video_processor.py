@@ -55,24 +55,24 @@ class VideoProcessor:
         max_samples: int = 6,
         dialogue: list[dict] | None = None,
         segment_start: float = 0.0,
-    ) -> tuple[float | None, bool]:
+    ) -> float | None:
         try:
             detector = self._get_face_detector()
         except Exception as exc:
             logger.warning("Unable to initialize face detector: %s", exc)
-            return (None, False)
+            return None
 
         try:
-            focus, needs_zoom = detector.estimate_horizontal_focus(
+            focus = detector.estimate_horizontal_focus(
                 video_path,
                 max_samples=max_samples,
                 dialogue=dialogue,
                 segment_start=segment_start,
             )
-            return (focus, needs_zoom)
+            return focus
         except Exception as exc:
             logger.warning("Face focus estimation failed for %s: %s", video_path, exc)
-            return (None, False)
+            return None
     
     def __init__(self, output_dir: Path, fonts_dir: Path | None = None):
         self.output_dir = output_dir
@@ -139,7 +139,6 @@ class VideoProcessor:
         method: Literal["letterbox", "center_crop"] = "letterbox",
         crop_focus: str = "center",
         auto_center_ratio: float | None = None,
-        auto_needs_zoom: bool = False,
     ) -> str:
         """
         Convert horizontal video to vertical format (9:16) for Reels/Shorts.
@@ -196,24 +195,10 @@ class VideoProcessor:
 
                 if input_ratio >= target_ratio:
                     # Видео шире 9:16 → вписываем по высоте и обрезаем по бокам
-                    # Apply zoom-out if needed for multi-speaker (wide span)
-                    zoom_factor = 0.70 if auto_needs_zoom else 1.0
-                    scaled_height = int(round(self.TARGET_HEIGHT * zoom_factor))
-                    if scaled_height % 2 != 0:
-                        scaled_height += 1
-                    
-                    scaled_width = max(self.TARGET_WIDTH, int(round(scaled_height * input_ratio)))
+                    scaled_width = max(self.TARGET_WIDTH, int(round(self.TARGET_HEIGHT * input_ratio)))
                     if scaled_width % 2 != 0:
                         scaled_width += 1
                     margin = max(scaled_width - self.TARGET_WIDTH, 0)
-                    
-                    if auto_needs_zoom:
-                        logger.info(
-                            "Multi-speaker zoom-out: factor=%.2f, scaled_height=%dpx (instead of %dpx)",
-                            zoom_factor,
-                            scaled_height,
-                            self.TARGET_HEIGHT,
-                        )
                     
                     if auto_center_ratio is not None and 0.0 <= auto_center_ratio <= 1.0:
                         desired_center = scaled_width * auto_center_ratio
@@ -239,7 +224,7 @@ class VideoProcessor:
                             crop_start_x,
                             crop_end_x,
                             scaled_width,
-                            scaled_height,
+                            self.TARGET_HEIGHT,
                             face_center_in_crop,
                             face_center_ratio_in_crop * 100,
                         )
@@ -249,20 +234,15 @@ class VideoProcessor:
                     pipeline = (
                         ffmpeg
                         .input(video_path)
-                        .filter('scale', scaled_width, scaled_height)
-                        .filter('crop', self.TARGET_WIDTH, scaled_height, offset_x, 0)
+                        .filter('scale', scaled_width, self.TARGET_HEIGHT)
+                        .filter('crop', self.TARGET_WIDTH, self.TARGET_HEIGHT, offset_x, 0)
                     )
                     
-                    # If zoom was applied, scale back to target height
-                    if auto_needs_zoom:
-                        pipeline = pipeline.filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT)
-                    
                     logger.info(
-                        "Center crop focus=%s (offset %dpx of %dpx margin) zoom=%s",
+                        "Center crop focus=%s (offset %dpx of %dpx margin)",
                         focus,
                         offset_x,
                         margin,
-                        "yes" if auto_needs_zoom else "no",
                     )
                 else:
                     # Видео уже/ближе к вертикальному → вписываем по ширине и обрезаем верх/низ
@@ -321,7 +301,6 @@ class VideoProcessor:
         vertical_method: str = "letterbox",
         crop_focus: str = "center",
         auto_center_ratio: float | None = None,
-        auto_needs_zoom: bool = False,
         target_duration: float | None = None,
         background_audio_path: str | None = None,
         background_volume_db: float = -20.0,
@@ -355,7 +334,6 @@ class VideoProcessor:
                     method=vertical_method,
                     crop_focus=crop_focus,
                     auto_center_ratio=auto_center_ratio,
-                    auto_needs_zoom=auto_needs_zoom,
                 )
             
             # Step 2: Create ASS subtitle file with styling
@@ -528,9 +506,8 @@ class VideoProcessor:
                     )
                     background_audio_path = None
 
-            auto_needs_zoom = False
             if method == "center_crop" and effective_crop_focus == "face_auto":
-                auto_center_ratio, auto_needs_zoom = self._estimate_face_focus(
+                auto_center_ratio = self._estimate_face_focus(
                     str(cut_path),
                     dialogue=dialogue,
                     segment_start=start_time,
@@ -571,7 +548,6 @@ class VideoProcessor:
                 vertical_method=method,
                 crop_focus=effective_crop_focus,
                 auto_center_ratio=auto_center_ratio,
-                auto_needs_zoom=auto_needs_zoom,
                 target_duration=duration,
                 background_audio_path=str(background_audio_path) if background_audio_path else None,
                 background_volume_db=-20.0,
