@@ -55,6 +55,7 @@ class VideoProcessor:
         max_samples: int = 6,
         dialogue: list[dict] | None = None,
         segment_start: float = 0.0,
+        segment_end: float | None = None,
     ) -> float | None:
         try:
             detector = self._get_face_detector()
@@ -68,6 +69,7 @@ class VideoProcessor:
                 max_samples=max_samples,
                 dialogue=dialogue,
                 segment_start=segment_start,
+                segment_end=segment_end,
             )
             return focus
         except Exception as exc:
@@ -519,6 +521,7 @@ class VideoProcessor:
                     str(cut_path),
                     dialogue=dialogue,
                     segment_start=start_time,
+                    segment_end=end_time,
                 )
                 if auto_center_ratio is None:
                     effective_crop_focus = "center"
