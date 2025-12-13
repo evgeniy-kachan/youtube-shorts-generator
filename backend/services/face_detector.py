@@ -116,6 +116,7 @@ class FaceDetector:
         )
 
         weighted_centers: list[tuple[float, float]] = []
+        balanced_hit = False
 
         for index in sample_indices:
             capture.set(cv2.CAP_PROP_POS_FRAMES, index)
@@ -165,6 +166,8 @@ class FaceDetector:
                         weight,
                     )
                     weighted_centers.append((center_ratio, weight))
+                    if span >= 0.50:
+                        balanced_hit = True
                 else:
                     best_face = min(
                         faces,
@@ -197,6 +200,10 @@ class FaceDetector:
             return None
 
         focus_raw = numerator / denominator
+        # If we saw a wide span across both sides, force center to keep both faces in frame.
+        if balanced_hit:
+            logger.info("Balanced multi-face span detected (>=0.50), forcing focus_raw to 0.5")
+            focus_raw = 0.5
         # If all detections cluster too far to a border, treat as unreliable and fall back to center.
         if focus_raw < 0.15 or focus_raw > 0.85:
             logger.warning(
@@ -230,7 +237,7 @@ class FaceDetector:
         """
         Return frame indices to sample for face detection.
         
-        If dialogue is provided, sample from primary speaker's speech moments.
+        If dialogue is provided, sample from ALL speakers proportionally to their speech time.
         Otherwise, sample uniformly across the clip.
         """
         if not dialogue:
@@ -238,77 +245,98 @@ class FaceDetector:
             step = max(frame_count // max_samples, 1)
             return list(range(0, frame_count, step))[:max_samples]
         
-        # Find primary speaker (longest total speech duration)
+        # Calculate speech duration for each speaker
         speaker_durations: dict[str, float] = {}
+        speaker_intervals: dict[str, list[tuple[float, float]]] = {}
+        
         for turn in dialogue:
             speaker = turn.get("speaker")
             if not speaker:
                 continue
-            start = turn.get("start", 0.0)
-            end = turn.get("end", 0.0)
-            duration = max(0.0, end - start)
-            speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + duration
+            abs_start = turn.get("start", 0.0)
+            abs_end = turn.get("end", 0.0)
+            # Convert to relative to segment
+            rel_start = max(0.0, abs_start - segment_start)
+            rel_end = max(0.0, abs_end - segment_start)
+            duration = max(0.0, rel_end - rel_start)
+            
+            if duration > 0:
+                speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + duration
+                if speaker not in speaker_intervals:
+                    speaker_intervals[speaker] = []
+                speaker_intervals[speaker].append((rel_start, rel_end))
         
         if not speaker_durations:
             # No valid speakers, fallback to uniform
             step = max(frame_count // max_samples, 1)
             return list(range(0, frame_count, step))[:max_samples]
         
-        primary_speaker = max(speaker_durations, key=speaker_durations.get)
+        total_speech_time = sum(speaker_durations.values())
+        
+        # Allocate samples proportionally to each speaker's speech time
+        # But ensure each speaker gets at least 1 sample
+        sample_allocation: dict[str, int] = {}
+        remaining_samples = max_samples
+        
+        # First pass: give everyone at least 1 sample
+        for speaker in speaker_durations:
+            sample_allocation[speaker] = 1
+            remaining_samples -= 1
+        
+        # Second pass: distribute remaining samples proportionally
+        if remaining_samples > 0:
+            for speaker, duration in speaker_durations.items():
+                proportion = duration / total_speech_time
+                extra_samples = int(proportion * remaining_samples)
+                sample_allocation[speaker] += extra_samples
+        
         logger.info(
-            "Primary speaker: %s (%.1fs total), segment_start=%.2fs",
-            primary_speaker,
-            speaker_durations[primary_speaker],
-            segment_start,
+            "Speaker durations: %s, sample allocation: %s",
+            {k: f"{v:.1f}s" for k, v in speaker_durations.items()},
+            sample_allocation,
         )
         
-        # Collect primary speaker's speech intervals relative to segment
-        speech_intervals: list[tuple[float, float]] = []
-        for turn in dialogue:
-            if turn.get("speaker") != primary_speaker:
-                continue
-            # dialogue times are absolute in original video
-            abs_start = turn.get("start", 0.0)
-            abs_end = turn.get("end", 0.0)
-            # Convert to relative to segment
-            rel_start = max(0.0, abs_start - segment_start)
-            rel_end = max(0.0, abs_end - segment_start)
-            if rel_end > rel_start:
-                speech_intervals.append((rel_start, rel_end))
-        
-        if not speech_intervals:
-            # Primary speaker not in this segment, fallback to uniform
-            logger.info("Primary speaker not in this segment, using uniform sampling")
-            step = max(frame_count // max_samples, 1)
-            return list(range(0, frame_count, step))[:max_samples]
-        
-        # Sample frames from speech intervals
-        total_speech_duration = sum(end - start for start, end in speech_intervals)
-        samples_per_interval = max(1, max_samples // len(speech_intervals))
-        
+        # Sample frames from each speaker's intervals
         sample_indices: list[int] = []
-        for start_time, end_time in speech_intervals:
-            start_frame = int(start_time * fps)
-            end_frame = int(end_time * fps)
-            interval_frames = max(1, end_frame - start_frame)
-            step = max(1, interval_frames // samples_per_interval)
-            for frame_idx in range(start_frame, end_frame, step):
-                if frame_idx < frame_count:
-                    sample_indices.append(frame_idx)
-                if len(sample_indices) >= max_samples:
+        
+        for speaker, num_samples in sample_allocation.items():
+            if num_samples <= 0:
+                continue
+            intervals = speaker_intervals.get(speaker, [])
+            if not intervals:
+                continue
+            
+            samples_per_interval = max(1, num_samples // len(intervals))
+            speaker_samples = []
+            
+            for start_time, end_time in intervals:
+                start_frame = int(start_time * fps)
+                end_frame = int(end_time * fps)
+                interval_frames = max(1, end_frame - start_frame)
+                step = max(1, interval_frames // samples_per_interval)
+                
+                for frame_idx in range(start_frame, end_frame, step):
+                    if frame_idx < frame_count:
+                        speaker_samples.append(frame_idx)
+                    if len(speaker_samples) >= num_samples:
+                        break
+                if len(speaker_samples) >= num_samples:
                     break
-            if len(sample_indices) >= max_samples:
-                break
+            
+            sample_indices.extend(speaker_samples[:num_samples])
         
         if not sample_indices:
             # Fallback to uniform
             step = max(frame_count // max_samples, 1)
             sample_indices = list(range(0, frame_count, step))[:max_samples]
         
+        # Sort and limit
+        sample_indices = sorted(set(sample_indices))[:max_samples]
+        
         logger.info(
-            "Sampled %d frames from %d speech intervals (%.1fs total)",
+            "Sampled %d frames from %d speakers (%.1fs total speech)",
             len(sample_indices),
-            len(speech_intervals),
-            total_speech_duration,
+            len(speaker_durations),
+            total_speech_time,
         )
-        return sample_indices[:max_samples]
+        return sample_indices
