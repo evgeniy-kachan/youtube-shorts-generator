@@ -18,13 +18,13 @@ class FaceDetector:
 
     def __init__(
         self,
-        model_name: str = "buffalo_s",
+        model_name: str = "scrfd_10g_gnkps",  # default to SCRFD (better on profiles)
         det_thresh: float = 0.5,
         ctx_id: int = 0,
     ):
         """
         Args:
-            model_name: InsightFace model pack name (buffalo_s, buffalo_l, etc.)
+            model_name: InsightFace model pack name (scrfd_*, buffalo_s, etc.)
             det_thresh: Detection threshold (0.0-1.0)
             ctx_id: Context ID: 0 for GPU, -1 for CPU
         """
@@ -40,7 +40,10 @@ class FaceDetector:
             from insightface.app import FaceAnalysis
             
             logger.info("Initializing InsightFace with model=%s, ctx_id=%d", self.model_name, self.ctx_id)
-            self._detector = FaceAnalysis(name=self.model_name, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+            self._detector = FaceAnalysis(
+                name=self.model_name,
+                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+            )
             self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(640, 640))
             logger.info("InsightFace initialized successfully")
         except Exception as e:
