@@ -7,6 +7,7 @@ import subprocess
 import uuid
 
 from backend.services.face_detector import FaceDetector
+from backend.services.diarization_runner import run_external_diarization
 
 logger = logging.getLogger(__name__)
 
@@ -602,6 +603,7 @@ class VideoProcessor:
             effective_crop_focus = (crop_focus or "center").lower()
             auto_center_ratio: float | None = None
             focus_timeline: list[dict] | None = None
+            dialogue_turns = dialogue or []
 
             # Step 1: cut source segment
             cut_path = self.cut_segment(
@@ -610,6 +612,29 @@ class VideoProcessor:
                 end_time=end_time,
                 output_path=str(temp_segment)
             )
+
+            # Optional external diarization (separate venv) if no dialogue provided
+            if not dialogue_turns and os.getenv("EXTERNAL_DIARIZATION_ENABLED", "0") == "1":
+                diar_segments = run_external_diarization(
+                    input_path=str(cut_path),
+                    diar_python=os.getenv("EXTERNAL_DIAR_PY"),
+                    diar_script=os.getenv("EXTERNAL_DIAR_SCRIPT"),
+                    hf_token=os.getenv("HUGGINGFACE_TOKEN"),
+                )
+                dialogue_turns = [
+                    {
+                        "start": seg["start"],
+                        "end": seg["end"],
+                        "speaker": seg.get("speaker") or f"SPEAKER_{idx:02d}",
+                        "text": seg.get("text") or "",
+                        "text_ru": seg.get("text_ru") or "",
+                    }
+                    for idx, seg in enumerate(diar_segments)
+                ]
+                if dialogue_turns:
+                    logger.info("External diarization attached %d turns", len(dialogue_turns))
+                else:
+                    logger.info("External diarization returned no segments; proceeding without dialogue.")
 
             # Optional: extract quiet background audio
             if preserve_background_audio:
@@ -647,7 +672,7 @@ class VideoProcessor:
                 # Build timeline (dynamic crops). If timeline has 0 or 1 segment, fall back to single focus.
                 focus_timeline = self._build_focus_timeline(
                     str(cut_path),
-                    dialogue=dialogue,
+                    dialogue=dialogue_turns,
                     segment_start=start_time,
                     segment_end=end_time,
                     sample_period=0.33,
@@ -679,7 +704,6 @@ class VideoProcessor:
                 auto_center_ratio = None
 
             # Step 2: prepare basic subtitles
-            dialogue_turns = dialogue or []
             speaker_palette = self._assign_speaker_colors(dialogue_turns)
             subtitles = self._generate_basic_subtitles(
                 text=text,
