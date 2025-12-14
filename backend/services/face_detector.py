@@ -335,7 +335,7 @@ class FaceDetector:
         dialogue: list[dict] | None = None,
         segment_start: float = 0.0,
         segment_end: float | None = None,
-        sample_period: float = 0.5,
+        sample_period: float = 0.33,
     ) -> list[dict]:
         """
         Build a coarse per-time focus timeline for dynamic cropping.
@@ -409,6 +409,7 @@ class FaceDetector:
         sample_step = max(1, int(sample_period * fps))
         timeline_raw: list[tuple[float, Optional[float]]] = []
 
+        last_detect_ts = 0.0
         for frame_idx in range(0, frame_count, sample_step):
             capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ok, frame = capture.read()
@@ -418,29 +419,52 @@ class FaceDetector:
             faces = self._detect_faces(frame)
             focus_val = _focus_for_faces(faces, frame_idx)
             timeline_raw.append((frame_idx / fps, focus_val))
+            if focus_val is not None:
+                last_detect_ts = frame_idx / fps
 
         capture.release()
 
-        # Fill gaps: carry last known focus, default center
+        # Fill gaps: carry last known focus, default center, but if долго нет лиц — сбрасываем в центр
         filled: list[tuple[float, float]] = []
         last_focus = 0.5
+        last_seen_ts = 0.0
         for ts, focus in timeline_raw:
             if focus is None:
+                # если нет лиц больше 0.7с — сброс к центру
+                if (ts - last_seen_ts) > 0.7:
+                    last_focus = 0.5
                 focus = last_focus
-            last_focus = focus
+            else:
+                last_focus = focus
+                last_seen_ts = ts
             filled.append((ts, focus))
 
         if not filled:
             return []
 
-        # Merge into segments if focus change is small (< 0.05)
-        merged: list[dict] = []
-        seg_start = filled[0][0]
-        seg_focus = filled[0][1]
-        threshold = 0.05
+        # Лёгкое сглаживание внутри стабильных участков (окно 3) без замедления прыжков
+        smoothed: list[tuple[float, float]] = []
+        window: list[float] = []
+        jump_threshold = 0.12
+        for ts, fval in filled:
+            if window and abs(fval - window[-1]) > jump_threshold:
+                # резкий скачок — сбрасываем окно
+                window = [fval]
+                smoothed.append((ts, fval))
+                continue
+            window.append(fval)
+            if len(window) > 3:
+                window.pop(0)
+            smoothed.append((ts, sum(window) / len(window)))
 
-        for i in range(1, len(filled)):
-            ts, fval = filled[i]
+        # Merge into segments if focus change is small (< 0.07)
+        merged: list[dict] = []
+        seg_start = smoothed[0][0]
+        seg_focus = smoothed[0][1]
+        threshold = 0.07
+
+        for i in range(1, len(smoothed)):
+            ts, fval = smoothed[i]
             if abs(fval - seg_focus) <= threshold:
                 continue
             # close current segment at this timestamp
@@ -451,10 +475,10 @@ class FaceDetector:
         # tail
         merged.append({"start": seg_start, "end": duration, "focus": seg_focus})
 
-        # Filter extremely short segments (<0.4s) by merging with previous
+        # Filter extremely short segments (<1.0s) by merging with previous
         cleaned: list[dict] = []
         for seg in merged:
-            if cleaned and (seg["end"] - seg["start"]) < 0.4:
+            if cleaned and (seg["end"] - seg["start"]) < 1.0:
                 # merge into previous
                 prev = cleaned[-1]
                 new_end = seg["end"]
