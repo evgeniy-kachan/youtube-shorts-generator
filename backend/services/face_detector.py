@@ -325,6 +325,146 @@ class FaceDetector:
         )
         logger.info("InsightFace: estimated horizontal focus %.3f for %s", focus, video_path)
         return focus
+
+    # ------------------------------------------------------------------ #
+    # Dynamic focus timeline (per-frame sampling, no smoothing)
+    # ------------------------------------------------------------------ #
+    def build_focus_timeline(
+        self,
+        video_path: str,
+        dialogue: list[dict] | None = None,
+        segment_start: float = 0.0,
+        segment_end: float | None = None,
+        sample_period: float = 0.5,
+    ) -> list[dict]:
+        """
+        Build a coarse per-time focus timeline for dynamic cropping.
+
+        - Samples frames every `sample_period` seconds (no smoothing).
+        - For each sample, picks focus using the same rules:
+          * 1 face  -> center on that face
+          * 2 faces, span < 0.35 -> center between faces (show both)
+          * 2+ faces, span >= 0.35 -> focus on primary speaker if known,
+            otherwise closest to center
+          * 0 faces -> fallback to last focus (or center 0.5)
+        - Returns a list of segments {start, end, focus} where focus stays
+          approximately stable (merged if delta < 0.05).
+        """
+        capture = cv2.VideoCapture(video_path)
+        if not capture.isOpened():
+            logger.warning("InsightFace: unable to open video %s for timeline", video_path)
+            return []
+
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        duration = frame_count / fps
+
+        # Primary speaker for disambiguation
+        primary_speaker = self._get_primary_speaker(dialogue, segment_start, segment_end)
+
+        # Precompute speaker time windows in frames (for mapping primary to position)
+        primary_frames: set[int] = set()
+        if primary_speaker:
+            primary_frames = self._get_speaker_frame_indices(dialogue, primary_speaker, segment_start, frame_count, fps)
+
+        # Helper to choose focus per detected faces in one frame
+        def _focus_for_faces(faces, frame_index: int) -> Optional[float]:
+            if not faces:
+                return None
+            # Drop tiny detections
+            faces_f = [
+                f for f in faces
+                if f.get("area", 0.0) >= 0.002 * f.get("width", 1.0) * f.get("height", 1.0)
+            ]
+            if not faces_f:
+                return None
+
+            if len(faces_f) == 1:
+                f = faces_f[0]
+                return float(max(0.2, min(0.8, f["center_x"] / f["width"])))
+
+            frame_width = faces_f[0].get("width", 1.0)
+            centers = [f["center_x"] / frame_width for f in faces_f]
+            span = max(centers) - min(centers)
+
+            if span < 0.35:
+                return float(max(0.2, min(0.8, (min(centers) + max(centers)) / 2.0)))
+
+            # span wide: pick primary speaker position if we can infer left/right
+            left_pos = min(centers)
+            right_pos = max(centers)
+
+            if primary_speaker:
+                # Heuristic: if current frame is inside primary speaker speech, decide closest cluster to center
+                if frame_index in primary_frames:
+                    # Assume primary speaker is nearer to center (0.5) or pick closer cluster
+                    if abs(0.5 - left_pos) < abs(0.5 - right_pos):
+                        return float(max(0.2, min(0.8, left_pos)))
+                    return float(max(0.2, min(0.8, right_pos)))
+
+            # Fallback: closest to center
+            best = min(centers, key=lambda c: abs(c - 0.5))
+            return float(max(0.2, min(0.8, best)))
+
+        sample_step = max(1, int(sample_period * fps))
+        timeline_raw: list[tuple[float, Optional[float]]] = []
+
+        for frame_idx in range(0, frame_count, sample_step):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                timeline_raw.append((frame_idx / fps, None))
+                continue
+            faces = self._detect_faces(frame)
+            focus_val = _focus_for_faces(faces, frame_idx)
+            timeline_raw.append((frame_idx / fps, focus_val))
+
+        capture.release()
+
+        # Fill gaps: carry last known focus, default center
+        filled: list[tuple[float, float]] = []
+        last_focus = 0.5
+        for ts, focus in timeline_raw:
+            if focus is None:
+                focus = last_focus
+            last_focus = focus
+            filled.append((ts, focus))
+
+        if not filled:
+            return []
+
+        # Merge into segments if focus change is small (< 0.05)
+        merged: list[dict] = []
+        seg_start = filled[0][0]
+        seg_focus = filled[0][1]
+        threshold = 0.05
+
+        for i in range(1, len(filled)):
+            ts, fval = filled[i]
+            if abs(fval - seg_focus) <= threshold:
+                continue
+            # close current segment at this timestamp
+            merged.append({"start": seg_start, "end": ts, "focus": seg_focus})
+            seg_start = ts
+            seg_focus = fval
+
+        # tail
+        merged.append({"start": seg_start, "end": duration, "focus": seg_focus})
+
+        # Filter extremely short segments (<0.4s) by merging with previous
+        cleaned: list[dict] = []
+        for seg in merged:
+            if cleaned and (seg["end"] - seg["start"]) < 0.4:
+                # merge into previous
+                prev = cleaned[-1]
+                new_end = seg["end"]
+                # keep focus of previous; extend duration
+                prev["end"] = new_end
+            else:
+                cleaned.append(seg)
+
+        logger.info("Built focus timeline: %s", cleaned)
+        return cleaned
     
     def diagnose_final_crop(self, video_path: str, max_samples: int = 3) -> None:
         """

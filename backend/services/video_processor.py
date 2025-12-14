@@ -75,6 +75,35 @@ class VideoProcessor:
         except Exception as exc:
             logger.warning("Face focus estimation failed for %s: %s", video_path, exc)
             return None
+
+    def _build_focus_timeline(
+        self,
+        video_path: str,
+        dialogue: list[dict] | None,
+        segment_start: float,
+        segment_end: float | None,
+        sample_period: float = 0.5,
+    ) -> list[dict]:
+        """
+        Build a per-time focus timeline (no smoothing). Returns list of dicts:
+        [{"start": float, "end": float, "focus": float}, ...]
+        """
+        try:
+            detector = self._get_face_detector()
+        except Exception as exc:
+            logger.warning("Unable to initialize face detector: %s", exc)
+            return []
+        try:
+            return detector.build_focus_timeline(
+                video_path=video_path,
+                dialogue=dialogue,
+                segment_start=segment_start,
+                segment_end=segment_end,
+                sample_period=sample_period,
+            )
+        except Exception as exc:
+            logger.warning("Focus timeline build failed for %s: %s", video_path, exc)
+            return []
     
     def __init__(self, output_dir: Path, fonts_dir: Path | None = None):
         self.output_dir = output_dir
@@ -141,6 +170,7 @@ class VideoProcessor:
         method: Literal["letterbox", "center_crop"] = "letterbox",
         crop_focus: str = "center",
         auto_center_ratio: float | None = None,
+        focus_timeline: list[dict] | None = None,
     ) -> str:
         """
         Convert horizontal video to vertical format (9:16) for Reels/Shorts.
@@ -178,6 +208,14 @@ class VideoProcessor:
                 )
                 return output_path
             
+            # If we have a focus timeline (multiple segments), use multi-crop flow
+            if method == "center_crop" and focus_timeline and len(focus_timeline) > 1:
+                return self._convert_with_focus_timeline(
+                    video_path=video_path,
+                    output_path=output_path,
+                    focus_timeline=focus_timeline,
+                )
+
             if method == "letterbox":
                 # Fit video into frame without cropping, add black bars where needed
                 (
@@ -274,6 +312,92 @@ class VideoProcessor:
             logger.error(f"Error converting to vertical: {e}", exc_info=True)
             raise
     
+    def _convert_with_focus_timeline(
+        self,
+        video_path: str,
+        output_path: str,
+        focus_timeline: list[dict],
+    ) -> str:
+        """
+        Multi-segment crop: for each time span apply its own horizontal offset,
+        then concat all segments back. No smoothing; hard cuts when focus jumps.
+        """
+        if not focus_timeline:
+            raise ValueError("focus_timeline is empty")
+
+        # Probe source
+        probe = ffmpeg.probe(video_path)
+        video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
+        input_width = int(video_info['width'])
+        input_height = int(video_info['height'])
+
+        target_ratio = self.TARGET_WIDTH / self.TARGET_HEIGHT
+        input_ratio = input_width / input_height if input_height else target_ratio
+
+        # Compute scaling params once
+        if input_ratio >= target_ratio:
+            scaled_width = max(self.TARGET_WIDTH, int(round(self.TARGET_HEIGHT * input_ratio)))
+            if scaled_width % 2 != 0:
+                scaled_width += 1
+            margin = max(scaled_width - self.TARGET_WIDTH, 0)
+        else:
+            scaled_width = self.TARGET_WIDTH
+            margin = 0
+
+        # Build filter_complex with trim+scale+crop per segment
+        parts = []
+        labels = []
+        for idx, seg in enumerate(focus_timeline):
+            start = max(0.0, float(seg.get("start", 0.0)))
+            end = float(seg.get("end", start))
+            focus = float(seg.get("focus", 0.5))
+            focus = max(0.0, min(1.0, focus))
+
+            offset = int(round(focus * scaled_width - (self.TARGET_WIDTH / 2)))
+            offset = max(0, min(margin, offset))
+
+            label = f"v{idx}"
+            labels.append(label)
+            parts.append(
+                f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS,"
+                f"scale={scaled_width}:{self.TARGET_HEIGHT},"
+                f"crop={self.TARGET_WIDTH}:{self.TARGET_HEIGHT}:{offset}:0[{label}]"
+            )
+
+        concat = "".join([f"[{l}]" for l in labels]) + f"concat=n={len(labels)}:v=1:a=0[outv]"
+        filter_complex = ";".join(parts + [concat])
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            video_path,
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[outv]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            output_path,
+        ]
+
+        logger.info("Applying multi-crop timeline with %d segments", len(focus_timeline))
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = exc.stderr.decode(errors="ignore") if exc.stderr else ""
+            stdout = exc.stdout.decode(errors="ignore") if exc.stdout else ""
+            logger.error("FFmpeg multi-crop failed.\nSTDOUT:\n%s\nSTDERR:\n%s", stdout.strip(), stderr.strip())
+            raise
+
+        return output_path
+    
     @staticmethod
     def _probe_duration(media_path: str) -> float | None:
         """Return media duration in seconds using ffmpeg probe."""
@@ -303,6 +427,7 @@ class VideoProcessor:
         vertical_method: str = "letterbox",
         crop_focus: str = "center",
         auto_center_ratio: float | None = None,
+        focus_timeline: list[dict] | None = None,
         target_duration: float | None = None,
         background_audio_path: str | None = None,
         background_volume_db: float = -20.0,
@@ -336,6 +461,7 @@ class VideoProcessor:
                     method=vertical_method,
                     crop_focus=crop_focus,
                     auto_center_ratio=auto_center_ratio,
+                    focus_timeline=focus_timeline,
                 )
                 
                 # Diagnostic: check face positions in final cropped video
@@ -475,6 +601,7 @@ class VideoProcessor:
             temp_output = self.output_dir / f"segment_processed_{uuid.uuid4().hex}.mp4"
             effective_crop_focus = (crop_focus or "center").lower()
             auto_center_ratio: float | None = None
+            focus_timeline: list[dict] | None = None
 
             # Step 1: cut source segment
             cut_path = self.cut_segment(
@@ -517,18 +644,37 @@ class VideoProcessor:
                     background_audio_path = None
 
             if method == "center_crop" and effective_crop_focus == "face_auto":
-                auto_center_ratio = self._estimate_face_focus(
+                # Build timeline (dynamic crops). If timeline has 0 or 1 segment, fall back to single focus.
+                focus_timeline = self._build_focus_timeline(
                     str(cut_path),
                     dialogue=dialogue,
                     segment_start=start_time,
                     segment_end=end_time,
+                    sample_period=0.5,
                 )
-                if auto_center_ratio is None:
-                    effective_crop_focus = "center"
-                    logger.info(
-                        "Face auto-crop fallback to center for %s (no face detected).",
-                        cut_path,
+                if focus_timeline:
+                    if len(focus_timeline) == 1:
+                        # Single stable focus - reuse classic flow
+                        auto_center_ratio = focus_timeline[0]["focus"]
+                        focus_timeline = None
+                    else:
+                        # Multiple segments: ignore auto_center_ratio, use timeline
+                        auto_center_ratio = None
+                        logger.info("Using multi-segment face timeline (%d segments)", len(focus_timeline))
+                else:
+                    # Fallback: single focus estimation
+                    auto_center_ratio = self._estimate_face_focus(
+                        str(cut_path),
+                        dialogue=dialogue,
+                        segment_start=start_time,
+                        segment_end=end_time,
                     )
+                    if auto_center_ratio is None:
+                        effective_crop_focus = "center"
+                        logger.info(
+                            "Face auto-crop fallback to center for %s (no face detected).",
+                            cut_path,
+                        )
             else:
                 auto_center_ratio = None
 
@@ -559,6 +705,7 @@ class VideoProcessor:
                 vertical_method=method,
                 crop_focus=effective_crop_focus,
                 auto_center_ratio=auto_center_ratio,
+                focus_timeline=focus_timeline,
                 target_duration=duration,
                 background_audio_path=str(background_audio_path) if background_audio_path else None,
                 background_volume_db=-20.0,
