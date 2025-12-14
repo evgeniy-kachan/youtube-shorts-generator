@@ -442,13 +442,37 @@ class FaceDetector:
         if not filled:
             return []
 
-        # Лёгкое сглаживание внутри стабильных участков (окно 3) без замедления прыжков
+        # Гистерезис + лёгкое сглаживание (окно 3) внутри плана.
+        # Чтобы не дёргалось: требуем 2 подряд “новых” точек далеко от текущего плана.
+        stabilized: list[tuple[float, float]] = []
+        current_focus = filled[0][1]
+        pending_focus = None
+        pending_count = 0
+        jump_threshold = 0.15  # что считаем “другим” планом
+
+        for ts, fval in filled:
+            if abs(fval - current_focus) > jump_threshold:
+                # кандидат на новый план
+                if pending_focus is None or abs(fval - pending_focus) > 1e-6:
+                    pending_focus = fval
+                    pending_count = 1
+                else:
+                    pending_count += 1
+                if pending_count >= 2:  # два подряд подтверждения
+                    current_focus = pending_focus
+                    pending_focus = None
+                    pending_count = 0
+            else:
+                # остаёмся в текущем плане
+                pending_focus = None
+                pending_count = 0
+            stabilized.append((ts, current_focus))
+
+        # Лёгкое сглаживание внутри плана (окно 3) без задержки прыжков
         smoothed: list[tuple[float, float]] = []
         window: list[float] = []
-        jump_threshold = 0.12
-        for ts, fval in filled:
+        for ts, fval in stabilized:
             if window and abs(fval - window[-1]) > jump_threshold:
-                # резкий скачок — сбрасываем окно
                 window = [fval]
                 smoothed.append((ts, fval))
                 continue
@@ -457,11 +481,11 @@ class FaceDetector:
                 window.pop(0)
             smoothed.append((ts, sum(window) / len(window)))
 
-        # Merge into segments if focus change is small (< 0.07)
+        # Merge into segments if focus change is small (< 0.10)
         merged: list[dict] = []
         seg_start = smoothed[0][0]
         seg_focus = smoothed[0][1]
-        threshold = 0.07
+        threshold = 0.10
 
         for i in range(1, len(smoothed)):
             ts, fval = smoothed[i]
@@ -475,10 +499,10 @@ class FaceDetector:
         # tail
         merged.append({"start": seg_start, "end": duration, "focus": seg_focus})
 
-        # Filter extremely short segments (<1.0s) by merging with previous
+        # Filter extremely short segments (<1.2s) by merging with previous
         cleaned: list[dict] = []
         for seg in merged:
-            if cleaned and (seg["end"] - seg["start"]) < 1.0:
+            if cleaned and (seg["end"] - seg["start"]) < 1.2:
                 # merge into previous
                 prev = cleaned[-1]
                 new_end = seg["end"]
