@@ -18,7 +18,7 @@ class FaceDetector:
 
     def __init__(
         self,
-        model_name: str = "scrfd_10g_gnkps",  # default to SCRFD (better on profiles)
+        model_name: str = "antelopev2",  # default to SCRFD (better on profiles)
         det_thresh: float = 0.5,
         ctx_id: int = 0,
     ):
