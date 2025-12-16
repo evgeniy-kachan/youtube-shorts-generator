@@ -396,6 +396,17 @@ class VideoProcessor:
             offset_y = int(round(focus_y * scaled_height - (self.TARGET_HEIGHT / 2)))
             offset_y = max(0, min(margin_y, offset_y))
 
+            logger.info(
+                "Segment %d: t=[%.2f, %.2f] focus_x=%.3f offset_x=%d focus_y=%.3f offset_y=%d",
+                idx,
+                start,
+                end,
+                focus,
+                offset_x,
+                focus_y,
+                offset_y,
+            )
+
             label = f"v{idx}"
             labels.append(label)
             parts.append(
@@ -506,14 +517,14 @@ class VideoProcessor:
                     focus_timeline_y=focus_timeline_y,
                 )
                 
-                # Diagnostic: check face positions in final cropped video
-                # (always run for face_auto, even when using multi-segment timeline)
-                if crop_focus == "face_auto":
-                    try:
-                        detector = self._get_face_detector()
-                        detector.diagnose_final_crop(working_video, max_samples=16)
-                    except Exception as diag_exc:
-                        logger.warning("Post-crop diagnostic failed: %s", diag_exc)
+            # Diagnostic: check face positions in final cropped video
+            # (always run for face_auto, even when using multi-segment timeline)
+            if crop_focus == "face_auto":
+                try:
+                    detector = self._get_face_detector()
+                    detector.diagnose_final_crop(working_video, max_samples=16)
+                except Exception as diag_exc:
+                    logger.warning("Post-crop diagnostic failed: %s", diag_exc)
             
             # Step 2: Create ASS subtitle file with styling
             subtitle_path = Path(output_path).with_suffix('.ass')
