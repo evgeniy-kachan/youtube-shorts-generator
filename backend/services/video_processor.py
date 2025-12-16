@@ -109,6 +109,8 @@ class VideoProcessor:
     def _build_vertical_focus_timeline(
         self,
         video_path: str,
+        segment_start: float,
+        segment_end: float | None,
         sample_period: float = 0.5,
     ) -> list[dict]:
         """
@@ -122,6 +124,8 @@ class VideoProcessor:
         try:
             return detector.build_vertical_focus_timeline(
                 video_path=video_path,
+                segment_start=segment_start,
+                segment_end=segment_end,
                 sample_period=sample_period,
             )
         except Exception as exc:
@@ -730,11 +734,13 @@ class VideoProcessor:
                     dialogue=dialogue_turns,
                     segment_start=start_time,
                     segment_end=end_time,
-                    sample_period=0.15,  # максимум частоты замеров для теста проблемных кадров
+                    sample_period=0.10,  # частая детекция (0.10s) + scene detection для резких смен планов
                 )
                 focus_timeline_y = self._build_vertical_focus_timeline(
                     str(cut_path),
-                    sample_period=0.15,
+                    segment_start=start_time,
+                    segment_end=end_time,
+                    sample_period=0.10,
                 )
                 if focus_timeline:
                     if len(focus_timeline) == 1:

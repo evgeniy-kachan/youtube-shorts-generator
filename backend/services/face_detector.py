@@ -331,6 +331,76 @@ class FaceDetector:
         return focus
 
     # ------------------------------------------------------------------ #
+    # Scene detection helper for dynamic timeline splitting
+    # ------------------------------------------------------------------ #
+    def _detect_scene_changes(
+        self,
+        video_path: str,
+        segment_start: float = 0.0,
+        segment_end: float | None = None,
+        threshold: float = 35.0,
+        check_interval: int = 3,
+    ) -> list[float]:
+        """
+        Detect abrupt scene changes (camera cuts) using frame difference.
+        
+        Args:
+            video_path: Path to video file
+            segment_start: Start time in seconds
+            segment_end: End time in seconds (None = full video)
+            threshold: Mean absolute difference threshold (0-255) for scene cut
+            check_interval: Check every N frames (for speed)
+        
+        Returns:
+            List of timestamps (in seconds) where scene changes occur
+        """
+        capture = cv2.VideoCapture(video_path)
+        if not capture.isOpened():
+            logger.warning("Unable to open video %s for scene detection", video_path)
+            return []
+
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        
+        if segment_end is None:
+            segment_end = frame_count / fps
+        
+        start_frame = int(segment_start * fps)
+        end_frame = int(segment_end * fps)
+        
+        scene_changes: list[float] = []
+        prev_gray = None
+        
+        for frame_idx in range(start_frame, end_frame, check_interval):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                continue
+            
+            # Convert to grayscale and resize for speed
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, (160, 90))  # Small size for fast comparison
+            
+            if prev_gray is not None:
+                # Calculate mean absolute difference
+                diff = cv2.absdiff(gray, prev_gray)
+                mean_diff = np.mean(diff)
+                
+                if mean_diff > threshold:
+                    timestamp = frame_idx / fps
+                    scene_changes.append(timestamp)
+                    logger.info(
+                        "Scene change detected at %.2fs (frame %d, diff=%.1f)",
+                        timestamp, frame_idx, mean_diff
+                    )
+            
+            prev_gray = gray
+        
+        capture.release()
+        logger.info("Detected %d scene changes in [%.1f, %.1f]", len(scene_changes), segment_start, segment_end or 0)
+        return scene_changes
+
+    # ------------------------------------------------------------------ #
     # Dynamic focus timeline (per-frame sampling, no smoothing)
     # ------------------------------------------------------------------ #
     def build_focus_timeline(
@@ -516,6 +586,34 @@ class FaceDetector:
         # tail
         merged.append({"start": seg_start, "end": duration, "focus": seg_focus})
 
+        # Detect scene changes (camera cuts) and split segments at those boundaries
+        scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
+        
+        # Split merged segments at scene change boundaries
+        if scene_changes:
+            split_segments: list[dict] = []
+            for seg in merged:
+                seg_start_time = seg["start"]
+                seg_end_time = seg["end"]
+                seg_focus_val = seg["focus"]
+                
+                # Find scene changes within this segment
+                cuts_in_seg = [sc for sc in scene_changes if seg_start_time < sc < seg_end_time]
+                
+                if not cuts_in_seg:
+                    split_segments.append(seg)
+                else:
+                    # Split segment at each scene change
+                    cuts_sorted = sorted(cuts_in_seg)
+                    prev_cut = seg_start_time
+                    for cut_ts in cuts_sorted:
+                        split_segments.append({"start": prev_cut, "end": cut_ts, "focus": seg_focus_val})
+                        prev_cut = cut_ts
+                    # Add final sub-segment
+                    split_segments.append({"start": prev_cut, "end": seg_end_time, "focus": seg_focus_val})
+            
+            merged = split_segments
+
         # Filter extremely short segments (<1.2s) by merging with previous
         cleaned: list[dict] = []
         for seg in merged:
@@ -537,6 +635,8 @@ class FaceDetector:
     def build_vertical_focus_timeline(
         self,
         video_path: str,
+        segment_start: float = 0.0,
+        segment_end: float | None = None,
         sample_period: float = 0.15,
     ) -> list[dict]:
         """
@@ -615,6 +715,33 @@ class FaceDetector:
             seg_start = ts
             seg_focus = v
         merged.append({"start": seg_start, "end": duration, "focus_y": seg_focus})
+
+        # Detect scene changes and split segments at those boundaries
+        scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
+        
+        if scene_changes:
+            split_segments: list[dict] = []
+            for seg in merged:
+                seg_start_time = seg["start"]
+                seg_end_time = seg["end"]
+                seg_focus_val = seg["focus_y"]
+                
+                # Find scene changes within this segment
+                cuts_in_seg = [sc for sc in scene_changes if seg_start_time < sc < seg_end_time]
+                
+                if not cuts_in_seg:
+                    split_segments.append(seg)
+                else:
+                    # Split segment at each scene change
+                    cuts_sorted = sorted(cuts_in_seg)
+                    prev_cut = seg_start_time
+                    for cut_ts in cuts_sorted:
+                        split_segments.append({"start": prev_cut, "end": cut_ts, "focus_y": seg_focus_val})
+                        prev_cut = cut_ts
+                    # Add final sub-segment
+                    split_segments.append({"start": prev_cut, "end": seg_end_time, "focus_y": seg_focus_val})
+            
+            merged = split_segments
 
         # Filter very short
         cleaned: list[dict] = []
