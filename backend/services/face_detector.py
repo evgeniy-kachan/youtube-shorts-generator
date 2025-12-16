@@ -19,7 +19,7 @@ class FaceDetector:
     def __init__(
         self,
         model_name: str = "antelopev2",  # default to SCRFD (better on profiles)
-        det_thresh: float = 0.35,
+        det_thresh: float = 0.30,
         ctx_id: int = 0,
     ):
         """
@@ -444,11 +444,11 @@ class FaceDetector:
         filled: list[tuple[float, float]] = []
         last_focus = 0.5
         last_seen_ts = 0.0
-        no_face_reset_sec = 1.0  # faster reset if нет лиц, чтобы не залипать на руке
+        no_face_reset_sec = 2.0  # держим позицию дольше, потом используем priors/last_focus перед центром
         for ts, focus in timeline_raw:
             if focus is None:
                 if (ts - last_seen_ts) > no_face_reset_sec:
-                    fallback = priors.get("primary") or priors.get("pair") or 0.5
+                    fallback = priors.get("primary") or priors.get("pair") or last_focus or 0.5
                     last_focus = fallback
                 focus = last_focus
             else:
