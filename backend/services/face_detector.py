@@ -19,7 +19,7 @@ class FaceDetector:
     def __init__(
         self,
         model_name: str = "antelopev2",  # default to SCRFD (better on profiles)
-        det_thresh: float = 0.5,
+        det_thresh: float = 0.35,
         ctx_id: int = 0,
     ):
         """
@@ -44,7 +44,8 @@ class FaceDetector:
                 name=self.model_name,
                 providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
             )
-            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(640, 640))
+            # Larger det_size + lower threshold to catch harder poses
+            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(800, 800))
             logger.info("InsightFace initialized successfully")
         except Exception as e:
             logger.error("Failed to initialize InsightFace: %s", e, exc_info=True)
@@ -135,7 +136,7 @@ class FaceDetector:
             # Drop tiny detections (<0.2% area)
             faces = [
                 f for f in faces
-                if f.get("area", 0.0) >= 0.002 * f.get("width", 1.0) * f.get("height", 1.0)
+                if f.get("area", 0.0) >= 0.001 * f.get("width", 1.0) * f.get("height", 1.0)
             ]
             if not faces:
                 continue
@@ -373,6 +374,8 @@ class FaceDetector:
         # Helper to choose focus per detected faces in one frame
         min_bound = 0.15
         max_bound = 0.85
+        # Store last known positions to keep focus near a speaker when faces vanish
+        priors = {"primary": None, "pair": None}
 
         def _focus_for_faces(faces, frame_index: int) -> Optional[float]:
             if not faces:
@@ -380,21 +383,25 @@ class FaceDetector:
             # Drop tiny detections
             faces_f = [
                 f for f in faces
-                if f.get("area", 0.0) >= 0.002 * f.get("width", 1.0) * f.get("height", 1.0)
+                if f.get("area", 0.0) >= 0.001 * f.get("width", 1.0) * f.get("height", 1.0)
             ]
             if not faces_f:
                 return None
 
             if len(faces_f) == 1:
                 f = faces_f[0]
-                return float(max(min_bound, min(max_bound, f["center_x"] / f["width"])))
+                center_clamped = float(max(min_bound, min(max_bound, f["center_x"] / f["width"])))
+                priors["primary"] = center_clamped
+                return center_clamped
 
             frame_width = faces_f[0].get("width", 1.0)
             centers = [f["center_x"] / frame_width for f in faces_f]
             span = max(centers) - min(centers)
 
             if span < 0.35:
-                return float(max(min_bound, min(max_bound, (min(centers) + max(centers)) / 2.0)))
+                center_pair = float(max(min_bound, min(max_bound, (min(centers) + max(centers)) / 2.0)))
+                priors["pair"] = center_pair
+                return center_pair
 
             # span wide: pick primary speaker position if we can infer left/right
             left_pos = min(centers)
@@ -405,8 +412,11 @@ class FaceDetector:
                 if frame_index in primary_frames:
                     # Assume primary speaker is nearer to center (0.5) or pick closer cluster
                     if abs(0.5 - left_pos) < abs(0.5 - right_pos):
-                        return float(max(min_bound, min(max_bound, left_pos)))
-                    return float(max(min_bound, min(max_bound, right_pos)))
+                        focus_primary = float(max(min_bound, min(max_bound, left_pos)))
+                    else:
+                        focus_primary = float(max(min_bound, min(max_bound, right_pos)))
+                    priors["primary"] = focus_primary
+                    return focus_primary
 
             # Fallback: closest to center
             best = min(centers, key=lambda c: abs(c - 0.5))
@@ -430,16 +440,16 @@ class FaceDetector:
 
         capture.release()
 
-        # Fill gaps: carry last known focus, default center, but if долго нет лиц — сбрасываем в центр
+        # Fill gaps: carry last known focus; если лиц долго нет — опираемся на priors (primary/pair), и только затем центр
         filled: list[tuple[float, float]] = []
         last_focus = 0.5
         last_seen_ts = 0.0
-        no_face_reset_sec = 2.0  # keep last focus longer to avoid “рука вместо лица”
+        no_face_reset_sec = 1.0  # faster reset if нет лиц, чтобы не залипать на руке
         for ts, focus in timeline_raw:
             if focus is None:
-                # если нет лиц дольше no_face_reset_sec — мягко держим старый фокус
                 if (ts - last_seen_ts) > no_face_reset_sec:
-                    last_focus = 0.5
+                    fallback = priors.get("primary") or priors.get("pair") or 0.5
+                    last_focus = fallback
                 focus = last_focus
             else:
                 last_focus = focus
