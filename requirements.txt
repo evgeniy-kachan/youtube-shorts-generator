@@ -1,3 +1,17 @@
+# ====================================================================
+# MAIN ENVIRONMENT (venv-host)
+# ====================================================================
+# This environment requires NumPy 1.x for onnxruntime-gpu/insightface
+# 
+# Installation:
+#   python3 -m venv venv-host
+#   source venv-host/bin/activate
+#   pip install -r requirements.txt
+# 
+# NOTE: Speaker diarization uses separate venv-diar environment!
+#       See requirements-diar.txt for diarization dependencies.
+# ====================================================================
+
 # Core Web Framework
 fastapi>=0.104.1
 uvicorn[standard]>=0.24.0
@@ -17,8 +31,8 @@ yt-dlp>=2024.1.0
 torch>=2.1.0
 torchaudio>=2.1.0
 whisperx>=3.1.1
-pyannote.audio>=3.1.1
 torchvision>=0.21.0
+# NOTE: pyannote.audio is in requirements-diar.txt (separate venv)
 
 # LLM Integration (DeepSeek API client)
 httpx>=0.25.2
@@ -28,10 +42,11 @@ huggingface_hub==0.36.0
 ffmpeg-python>=0.2.0
 moviepy>=1.0.3
 pillow>=10.1.0,<12.0
-onnxruntime>=1.18.0
+# IMPORTANT: onnxruntime-gpu requires NumPy<2
+onnxruntime-gpu>=1.18.0
 insightface>=0.7.3
 scenedetect[opencv]>=0.6.2
-# YuNet/ONNX поддерживается сборкой OpenCV 4.11.0.86 (совместима с NumPy 2.x)
+# OpenCV 4.11.0.86 compatible with NumPy 1.x
 opencv-contrib-python==4.11.0.86
 
 # Audio Analysis
@@ -42,6 +57,7 @@ soundfile>=0.12.1
 # Utilities
 pydantic>=2.5.0
 python-dotenv>=1.0.0
-numpy>=2.0.0
+# CRITICAL: NumPy must be <2 for onnxruntime-gpu/insightface compatibility
+numpy>=1.24.0,<2.0.0
 sentence-splitter
 omegaconf
