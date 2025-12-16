@@ -470,7 +470,7 @@ class VideoProcessor:
                 if crop_focus == "face_auto":
                     try:
                         detector = self._get_face_detector()
-                        detector.diagnose_final_crop(working_video, max_samples=12)
+                        detector.diagnose_final_crop(working_video, max_samples=16)
                     except Exception as diag_exc:
                         logger.warning("Post-crop diagnostic failed: %s", diag_exc)
             
@@ -676,7 +676,7 @@ class VideoProcessor:
                     dialogue=dialogue_turns,
                     segment_start=start_time,
                     segment_end=end_time,
-                    sample_period=0.20,  # ещё чаще замеры, чтобы не упускать лица/руки
+                    sample_period=0.15,  # максимум частоты замеров для теста проблемных кадров
                 )
                 if focus_timeline:
                     if len(focus_timeline) == 1:
