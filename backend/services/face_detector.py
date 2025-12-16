@@ -372,8 +372,8 @@ class FaceDetector:
             primary_frames = self._get_speaker_frame_indices(dialogue, primary_speaker, segment_start, frame_count, fps)
 
         # Helper to choose focus per detected faces in one frame
-        min_bound = 0.15
-        max_bound = 0.85
+        min_bound = 0.10
+        max_bound = 0.90
         # Store last known positions to keep focus near a speaker when faces vanish
         priors = {"primary": None, "pair": None}
 
@@ -398,7 +398,7 @@ class FaceDetector:
             centers = [f["center_x"] / frame_width for f in faces_f]
             span = max(centers) - min(centers)
 
-            if span < 0.35:
+            if span < 0.45:
                 center_pair = float(max(min_bound, min(max_bound, (min(centers) + max(centers)) / 2.0)))
                 priors["pair"] = center_pair
                 return center_pair
@@ -444,7 +444,7 @@ class FaceDetector:
         filled: list[tuple[float, float]] = []
         last_focus = 0.5
         last_seen_ts = 0.0
-        no_face_reset_sec = 2.0  # держим позицию дольше, потом используем priors/last_focus перед центром
+        no_face_reset_sec = 3.0  # держим позицию дольше, потом используем priors/last_focus перед центром
         for ts, focus in timeline_raw:
             if focus is None:
                 if (ts - last_seen_ts) > no_face_reset_sec:

@@ -676,7 +676,7 @@ class VideoProcessor:
                     dialogue=dialogue_turns,
                     segment_start=start_time,
                     segment_end=end_time,
-                    sample_period=0.25,  # чаще замеры, чтобы не упускать лица
+                    sample_period=0.20,  # ещё чаще замеры, чтобы не упускать лица/руки
                 )
                 if focus_timeline:
                     if len(focus_timeline) == 1:
