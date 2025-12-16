@@ -470,7 +470,7 @@ class VideoProcessor:
                 if crop_focus == "face_auto":
                     try:
                         detector = self._get_face_detector()
-                        detector.diagnose_final_crop(working_video, max_samples=8)
+                        detector.diagnose_final_crop(working_video, max_samples=12)
                     except Exception as diag_exc:
                         logger.warning("Post-crop diagnostic failed: %s", diag_exc)
             
