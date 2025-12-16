@@ -19,7 +19,7 @@ class FaceDetector:
     def __init__(
         self,
         model_name: str = "antelopev2",  # default to SCRFD (better on profiles)
-        det_thresh: float = 0.25,
+        det_thresh: float = 0.20,
         ctx_id: int = 0,
     ):
         """
@@ -45,7 +45,7 @@ class FaceDetector:
                 providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
             )
             # Larger det_size + lower threshold to catch harder poses
-            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(960, 960))
+            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(1280, 1280))
             logger.info("InsightFace initialized successfully")
         except Exception as e:
             logger.error("Failed to initialize InsightFace: %s", e, exc_info=True)
