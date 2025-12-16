@@ -371,6 +371,9 @@ class FaceDetector:
             primary_frames = self._get_speaker_frame_indices(dialogue, primary_speaker, segment_start, frame_count, fps)
 
         # Helper to choose focus per detected faces in one frame
+        min_bound = 0.15
+        max_bound = 0.85
+
         def _focus_for_faces(faces, frame_index: int) -> Optional[float]:
             if not faces:
                 return None
@@ -384,14 +387,14 @@ class FaceDetector:
 
             if len(faces_f) == 1:
                 f = faces_f[0]
-                return float(max(0.2, min(0.8, f["center_x"] / f["width"])))
+                return float(max(min_bound, min(max_bound, f["center_x"] / f["width"])))
 
             frame_width = faces_f[0].get("width", 1.0)
             centers = [f["center_x"] / frame_width for f in faces_f]
             span = max(centers) - min(centers)
 
             if span < 0.35:
-                return float(max(0.2, min(0.8, (min(centers) + max(centers)) / 2.0)))
+                return float(max(min_bound, min(max_bound, (min(centers) + max(centers)) / 2.0)))
 
             # span wide: pick primary speaker position if we can infer left/right
             left_pos = min(centers)
@@ -402,12 +405,12 @@ class FaceDetector:
                 if frame_index in primary_frames:
                     # Assume primary speaker is nearer to center (0.5) or pick closer cluster
                     if abs(0.5 - left_pos) < abs(0.5 - right_pos):
-                        return float(max(0.2, min(0.8, left_pos)))
-                    return float(max(0.2, min(0.8, right_pos)))
+                        return float(max(min_bound, min(max_bound, left_pos)))
+                    return float(max(min_bound, min(max_bound, right_pos)))
 
             # Fallback: closest to center
             best = min(centers, key=lambda c: abs(c - 0.5))
-            return float(max(0.2, min(0.8, best)))
+            return float(max(min_bound, min(max_bound, best)))
 
         sample_step = max(1, int(sample_period * fps))
         timeline_raw: list[tuple[float, Optional[float]]] = []
@@ -431,10 +434,11 @@ class FaceDetector:
         filled: list[tuple[float, float]] = []
         last_focus = 0.5
         last_seen_ts = 0.0
+        no_face_reset_sec = 2.0  # keep last focus longer to avoid “рука вместо лица”
         for ts, focus in timeline_raw:
             if focus is None:
-                # если нет лиц больше 0.7с — сброс к центру
-                if (ts - last_seen_ts) > 0.7:
+                # если нет лиц дольше no_face_reset_sec — мягко держим старый фокус
+                if (ts - last_seen_ts) > no_face_reset_sec:
                     last_focus = 0.5
                 focus = last_focus
             else:

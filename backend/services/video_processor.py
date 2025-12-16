@@ -466,10 +466,11 @@ class VideoProcessor:
                 )
                 
                 # Diagnostic: check face positions in final cropped video
-                if crop_focus == "face_auto" and auto_center_ratio is not None:
+                # (always run for face_auto, even when using multi-segment timeline)
+                if crop_focus == "face_auto":
                     try:
                         detector = self._get_face_detector()
-                        detector.diagnose_final_crop(working_video, max_samples=3)
+                        detector.diagnose_final_crop(working_video, max_samples=8)
                     except Exception as diag_exc:
                         logger.warning("Post-crop diagnostic failed: %s", diag_exc)
             
