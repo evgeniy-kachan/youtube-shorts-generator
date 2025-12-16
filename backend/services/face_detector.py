@@ -19,7 +19,7 @@ class FaceDetector:
     def __init__(
         self,
         model_name: str = "antelopev2",  # default to SCRFD (better on profiles)
-        det_thresh: float = 0.30,
+        det_thresh: float = 0.25,
         ctx_id: int = 0,
     ):
         """
@@ -45,7 +45,7 @@ class FaceDetector:
                 providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
             )
             # Larger det_size + lower threshold to catch harder poses
-            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(800, 800))
+            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(960, 960))
             logger.info("InsightFace initialized successfully")
         except Exception as e:
             logger.error("Failed to initialize InsightFace: %s", e, exc_info=True)
@@ -136,7 +136,7 @@ class FaceDetector:
             # Drop tiny detections (<0.2% area)
             faces = [
                 f for f in faces
-                if f.get("area", 0.0) >= 0.001 * f.get("width", 1.0) * f.get("height", 1.0)
+                if f.get("area", 0.0) >= 0.0005 * f.get("width", 1.0) * f.get("height", 1.0)
             ]
             if not faces:
                 continue
@@ -383,7 +383,7 @@ class FaceDetector:
             # Drop tiny detections
             faces_f = [
                 f for f in faces
-                if f.get("area", 0.0) >= 0.001 * f.get("width", 1.0) * f.get("height", 1.0)
+                if f.get("area", 0.0) >= 0.0005 * f.get("width", 1.0) * f.get("height", 1.0)
             ]
             if not faces_f:
                 return None
@@ -529,6 +529,102 @@ class FaceDetector:
                 cleaned.append(seg)
 
         logger.info("Built focus timeline: %s", cleaned)
+        return cleaned
+
+    # ------------------------------------------------------------------ #
+    # Vertical focus timeline (y-axis) for better framing of heads       #
+    # ------------------------------------------------------------------ #
+    def build_vertical_focus_timeline(
+        self,
+        video_path: str,
+        sample_period: float = 0.15,
+    ) -> list[dict]:
+        """
+        Build a coarse per-time vertical focus timeline (0..1 from top to bottom).
+        - 1 face: use its vertical center
+        - 2+ faces: use min/max centers averaged (keep both)
+        - 0 faces: keep last
+        """
+        capture = cv2.VideoCapture(video_path)
+        if not capture.isOpened():
+            logger.warning("InsightFace: unable to open video %s for vertical timeline", video_path)
+            return []
+
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        duration = frame_count / fps
+
+        sample_step = max(1, int(sample_period * fps))
+        timeline_raw: list[tuple[float, float | None]] = []
+
+        for frame_idx in range(0, frame_count, sample_step):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                timeline_raw.append((frame_idx / fps, None))
+                continue
+            faces = self._detect_faces(frame)
+            faces = [
+                f for f in faces
+                if f.get("area", 0.0) >= 0.0005 * f.get("width", 1.0) * f.get("height", 1.0)
+            ]
+            if not faces:
+                timeline_raw.append((frame_idx / fps, None))
+                continue
+            frame_h = faces[0].get("height", frame.shape[0])
+            centers_y = [f["center_y"] / frame_h for f in faces]
+            focus_y = (min(centers_y) + max(centers_y)) / 2.0
+            focus_y = float(max(0.10, min(0.90, focus_y)))
+            timeline_raw.append((frame_idx / fps, focus_y))
+
+        capture.release()
+
+        if not timeline_raw:
+            return []
+
+        # Fill gaps: keep last
+        filled: list[tuple[float, float]] = []
+        last = 0.5
+        for ts, val in timeline_raw:
+            if val is None:
+                filled.append((ts, last))
+            else:
+                last = val
+                filled.append((ts, val))
+
+        # Smooth window 3
+        smoothed: list[tuple[float, float]] = []
+        window: list[float] = []
+        for ts, v in filled:
+            window.append(v)
+            if len(window) > 3:
+                window.pop(0)
+            smoothed.append((ts, sum(window) / len(window)))
+
+        # Merge if small change
+        merged: list[dict] = []
+        seg_start = smoothed[0][0]
+        seg_focus = smoothed[0][1]
+        threshold = 0.08
+
+        for i in range(1, len(smoothed)):
+            ts, v = smoothed[i]
+            if abs(v - seg_focus) <= threshold:
+                continue
+            merged.append({"start": seg_start, "end": ts, "focus_y": seg_focus})
+            seg_start = ts
+            seg_focus = v
+        merged.append({"start": seg_start, "end": duration, "focus_y": seg_focus})
+
+        # Filter very short
+        cleaned: list[dict] = []
+        for seg in merged:
+            if cleaned and (seg["end"] - seg["start"]) < 1.2:
+                prev = cleaned[-1]
+                prev["end"] = seg["end"]
+            else:
+                cleaned.append(seg)
+
         return cleaned
     
     def diagnose_final_crop(self, video_path: str, max_samples: int = 3) -> None:

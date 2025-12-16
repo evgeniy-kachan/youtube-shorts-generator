@@ -105,6 +105,28 @@ class VideoProcessor:
         except Exception as exc:
             logger.warning("Focus timeline build failed for %s: %s", video_path, exc)
             return []
+
+    def _build_vertical_focus_timeline(
+        self,
+        video_path: str,
+        sample_period: float = 0.5,
+    ) -> list[dict]:
+        """
+        Build vertical (y-axis) focus timeline (0..1 top to bottom).
+        """
+        try:
+            detector = self._get_face_detector()
+        except Exception as exc:
+            logger.warning("Unable to initialize face detector: %s", exc)
+            return []
+        try:
+            return detector.build_vertical_focus_timeline(
+                video_path=video_path,
+                sample_period=sample_period,
+            )
+        except Exception as exc:
+            logger.warning("Vertical focus timeline build failed for %s: %s", video_path, exc)
+            return []
     
     def __init__(self, output_dir: Path, fonts_dir: Path | None = None):
         self.output_dir = output_dir
@@ -172,6 +194,7 @@ class VideoProcessor:
         crop_focus: str = "center",
         auto_center_ratio: float | None = None,
         focus_timeline: list[dict] | None = None,
+        focus_timeline_y: list[dict] | None = None,
     ) -> str:
         """
         Convert horizontal video to vertical format (9:16) for Reels/Shorts.
@@ -215,6 +238,7 @@ class VideoProcessor:
                     video_path=video_path,
                     output_path=output_path,
                     focus_timeline=focus_timeline,
+                    focus_timeline_y=focus_timeline_y,
                 )
 
             if method == "letterbox":
@@ -318,10 +342,12 @@ class VideoProcessor:
         video_path: str,
         output_path: str,
         focus_timeline: list[dict],
+        focus_timeline_y: list[dict] | None = None,
     ) -> str:
         """
         Multi-segment crop: for each time span apply its own horizontal offset,
-        then concat all segments back. No smoothing; hard cuts when focus jumps.
+        and optional vertical offset, then concat all segments back.
+        No smoothing; hard cuts when focus jumps.
         """
         if not focus_timeline:
             raise ValueError("focus_timeline is empty")
@@ -334,16 +360,20 @@ class VideoProcessor:
 
         target_ratio = self.TARGET_WIDTH / self.TARGET_HEIGHT
         input_ratio = input_width / input_height if input_height else target_ratio
-
-        # Compute scaling params once
-        if input_ratio >= target_ratio:
-            scaled_width = max(self.TARGET_WIDTH, int(round(self.TARGET_HEIGHT * input_ratio)))
-            if scaled_width % 2 != 0:
-                scaled_width += 1
-            margin = max(scaled_width - self.TARGET_WIDTH, 0)
-        else:
+        # Allow vertical margin: scale a bit larger than target to slide window
+        scale_factor = 1.08
+        scaled_height = int(round(self.TARGET_HEIGHT * scale_factor))
+        scaled_width = int(round(scaled_height * input_ratio))
+        if scaled_width < self.TARGET_WIDTH:
             scaled_width = self.TARGET_WIDTH
-            margin = 0
+            scaled_height = int(round(scaled_width / input_ratio))
+        # Ensure even
+        if scaled_width % 2 != 0:
+            scaled_width += 1
+        if scaled_height % 2 != 0:
+            scaled_height += 1
+        margin_x = max(scaled_width - self.TARGET_WIDTH, 0)
+        margin_y = max(scaled_height - self.TARGET_HEIGHT, 0)
 
         # Build filter_complex with trim+scale+crop per segment
         parts = []
@@ -354,15 +384,24 @@ class VideoProcessor:
             focus = float(seg.get("focus", 0.5))
             focus = max(0.0, min(1.0, focus))
 
-            offset = int(round(focus * scaled_width - (self.TARGET_WIDTH / 2)))
-            offset = max(0, min(margin, offset))
+            offset_x = int(round(focus * scaled_width - (self.TARGET_WIDTH / 2)))
+            offset_x = max(0, min(margin_x, offset_x))
+
+            # Vertical focus
+            focus_y = 0.5
+            if focus_timeline_y:
+                seg_y = next((s for s in focus_timeline_y if s["start"] <= start < s["end"]), None)
+                if seg_y:
+                    focus_y = float(seg_y.get("focus_y", 0.5))
+            offset_y = int(round(focus_y * scaled_height - (self.TARGET_HEIGHT / 2)))
+            offset_y = max(0, min(margin_y, offset_y))
 
             label = f"v{idx}"
             labels.append(label)
             parts.append(
                 f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS,"
-                f"scale={scaled_width}:{self.TARGET_HEIGHT},"
-                f"crop={self.TARGET_WIDTH}:{self.TARGET_HEIGHT}:{offset}:0[{label}]"
+                f"scale={scaled_width}:{scaled_height},"
+                f"crop={self.TARGET_WIDTH}:{self.TARGET_HEIGHT}:{offset_x}:{offset_y}[{label}]"
             )
 
         concat = "".join([f"[{l}]" for l in labels]) + f"concat=n={len(labels)}:v=1:a=0[outv]"
@@ -429,6 +468,7 @@ class VideoProcessor:
         crop_focus: str = "center",
         auto_center_ratio: float | None = None,
         focus_timeline: list[dict] | None = None,
+        focus_timeline_y: list[dict] | None = None,
         target_duration: float | None = None,
         background_audio_path: str | None = None,
         background_volume_db: float = -20.0,
@@ -463,6 +503,7 @@ class VideoProcessor:
                     crop_focus=crop_focus,
                     auto_center_ratio=auto_center_ratio,
                     focus_timeline=focus_timeline,
+                    focus_timeline_y=focus_timeline_y,
                 )
                 
                 # Diagnostic: check face positions in final cropped video
@@ -669,6 +710,8 @@ class VideoProcessor:
                     )
                     background_audio_path = None
 
+            focus_timeline_y = None
+
             if method == "center_crop" and effective_crop_focus == "face_auto":
                 # Build timeline (dynamic crops). If timeline has 0 or 1 segment, fall back to single focus.
                 focus_timeline = self._build_focus_timeline(
@@ -677,6 +720,10 @@ class VideoProcessor:
                     segment_start=start_time,
                     segment_end=end_time,
                     sample_period=0.15,  # максимум частоты замеров для теста проблемных кадров
+                )
+                focus_timeline_y = self._build_vertical_focus_timeline(
+                    str(cut_path),
+                    sample_period=0.15,
                 )
                 if focus_timeline:
                     if len(focus_timeline) == 1:
@@ -731,6 +778,7 @@ class VideoProcessor:
                 crop_focus=effective_crop_focus,
                 auto_center_ratio=auto_center_ratio,
                 focus_timeline=focus_timeline,
+                focus_timeline_y=focus_timeline_y,
                 target_duration=duration,
                 background_audio_path=str(background_audio_path) if background_audio_path else None,
                 background_volume_db=-20.0,
