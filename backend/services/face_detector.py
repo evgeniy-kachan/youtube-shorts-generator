@@ -338,67 +338,75 @@ class FaceDetector:
         video_path: str,
         segment_start: float = 0.0,
         segment_end: float | None = None,
-        threshold: float = 35.0,
-        check_interval: int = 3,
     ) -> list[float]:
         """
-        Detect abrupt scene changes (camera cuts) using frame difference.
+        Detect abrupt scene changes (camera cuts) using PySceneDetect.
         
         Args:
             video_path: Path to video file
             segment_start: Start time in seconds
             segment_end: End time in seconds (None = full video)
-            threshold: Mean absolute difference threshold (0-255) for scene cut
-            check_interval: Check every N frames (for speed)
         
         Returns:
             List of timestamps (in seconds) where scene changes occur
         """
-        capture = cv2.VideoCapture(video_path)
-        if not capture.isOpened():
-            logger.warning("Unable to open video %s for scene detection", video_path)
+        try:
+            from scenedetect import detect, ContentDetector, split_video_ffmpeg
+            from scenedetect.frame_timecode import FrameTimecode
+            from scenedetect.video_stream import VideoStream
+        except ImportError:
+            logger.warning("PySceneDetect not installed, scene detection disabled")
             return []
-
-        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
-        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
         
-        if segment_end is None:
-            segment_end = frame_count / fps
-        
-        start_frame = int(segment_start * fps)
-        end_frame = int(segment_end * fps)
-        
-        scene_changes: list[float] = []
-        prev_gray = None
-        
-        for frame_idx in range(start_frame, end_frame, check_interval):
-            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                continue
+        try:
+            # Create video stream
+            video = VideoStream(video_path)
             
-            # Convert to grayscale and resize for speed
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.resize(gray, (160, 90))  # Small size for fast comparison
+            # Get video properties
+            fps = video.frame_rate
+            if segment_end is None:
+                segment_end = video.duration
             
-            if prev_gray is not None:
-                # Calculate mean absolute difference
-                diff = cv2.absdiff(gray, prev_gray)
-                mean_diff = np.mean(diff)
-                
-                if mean_diff > threshold:
-                    timestamp = frame_idx / fps
-                    scene_changes.append(timestamp)
-                    logger.info(
-                        "Scene change detected at %.2fs (frame %d, diff=%.1f)",
-                        timestamp, frame_idx, mean_diff
-                    )
+            # Convert time boundaries to frame numbers
+            start_frame = int(segment_start * fps)
+            end_frame = int(segment_end * fps)
             
-            prev_gray = gray
-        
-        capture.release()
-        logger.info("Detected %d scene changes in [%.1f, %.1f]", len(scene_changes), segment_start, segment_end or 0)
-        return scene_changes
+            # Create start/end timecodes
+            start_tc = FrameTimecode(start_frame, fps)
+            end_tc = FrameTimecode(end_frame, fps)
+            
+            # Detect scenes using ContentDetector (adaptive threshold)
+            # threshold: lower = more sensitive (default 27.0, we use 23.0 for interviews)
+            scene_list = detect(
+                video_path,
+                ContentDetector(threshold=23.0, min_scene_len=15),  # min 0.6s scenes at 25fps
+                start_time=start_tc,
+                end_time=end_tc,
+            )
+            
+            # Extract timestamps of scene changes (start of each new scene)
+            scene_changes = []
+            for i, (start_time, end_time) in enumerate(scene_list):
+                if i > 0:  # Skip first scene start (it's segment_start)
+                    timestamp = start_time.get_seconds()
+                    # Adjust to segment-relative time
+                    relative_ts = timestamp - segment_start
+                    if 0 < relative_ts < (segment_end - segment_start):
+                        scene_changes.append(relative_ts)
+                        logger.info(
+                            "Scene change detected at %.2fs (absolute: %.2fs)",
+                            relative_ts, timestamp
+                        )
+            
+            logger.info(
+                "Detected %d scene changes in [%.1f, %.1f]",
+                len(scene_changes), segment_start, segment_end or 0
+            )
+            return scene_changes
+            
+        except Exception as exc:
+            logger.warning("Scene detection failed for %s: %s", video_path, exc)
+            return []
 
     # ------------------------------------------------------------------ #
     # Dynamic focus timeline (per-frame sampling, no smoothing)
@@ -514,7 +522,7 @@ class FaceDetector:
         filled: list[tuple[float, float]] = []
         last_focus = 0.5
         last_seen_ts = 0.0
-        no_face_reset_sec = 3.0  # держим позицию дольше, потом используем priors/last_focus перед центром
+        no_face_reset_sec = 1.5  # быстрее сброс при пропаже лиц (было 3.0)
         for ts, focus in timeline_raw:
             if focus is None:
                 if (ts - last_seen_ts) > no_face_reset_sec:
@@ -529,40 +537,19 @@ class FaceDetector:
         if not filled:
             return []
 
-        # Гистерезис + лёгкое сглаживание (окно 3) внутри плана.
-        # Чтобы не дёргалось: требуем 2 подряд “новых” точек далеко от текущего плана.
-        stabilized: list[tuple[float, float]] = []
-        current_focus = filled[0][1]
-        pending_focus = None
-        pending_count = 0
-        jump_threshold = 0.15  # что считаем “другим” планом
-
-        for ts, fval in filled:
-            if abs(fval - current_focus) > jump_threshold:
-                # кандидат на новый план
-                if pending_focus is None or abs(fval - pending_focus) > 1e-6:
-                    pending_focus = fval
-                    pending_count = 1
-                else:
-                    pending_count += 1
-                if pending_count >= 2:  # два подряд подтверждения
-                    current_focus = pending_focus
-                    pending_focus = None
-                    pending_count = 0
-            else:
-                # остаёмся в текущем плане
-                pending_focus = None
-                pending_count = 0
-            stabilized.append((ts, current_focus))
-
-        # Лёгкое сглаживание внутри плана (окно 3) без задержки прыжков
+        # Лёгкое сглаживание (окно 3) внутри стабильного плана, БЕЗ гистерезиса.
+        # Instant switch при резких изменениях (scene changes), но усредняем мелкие колебания.
         smoothed: list[tuple[float, float]] = []
         window: list[float] = []
-        for ts, fval in stabilized:
+        jump_threshold = 0.15  # что считаем "резким скачком" (новый план)
+
+        for ts, fval in filled:
+            # Если резкий скачок → сбрасываем окно и переключаемся МГНОВЕННО
             if window and abs(fval - window[-1]) > jump_threshold:
                 window = [fval]
                 smoothed.append((ts, fval))
                 continue
+            # Иначе добавляем в окно и усредняем (убирает шум детектора)
             window.append(fval)
             if len(window) > 3:
                 window.pop(0)

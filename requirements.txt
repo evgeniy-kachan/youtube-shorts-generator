@@ -30,6 +30,7 @@ moviepy>=1.0.3
 pillow>=10.1.0,<12.0
 onnxruntime>=1.18.0
 insightface>=0.7.3
+scenedetect[opencv]>=0.6.2
 # YuNet/ONNX поддерживается сборкой OpenCV 4.11.0.86 (совместима с NumPy 2.x)
 opencv-contrib-python==4.11.0.86
 
