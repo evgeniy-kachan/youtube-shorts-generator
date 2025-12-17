@@ -1,15 +1,15 @@
 # ASR (venv-asr, NumPy>=2)
-# WhisperX + torch 2.8 + pyannote for VAD
+# WhisperX + torch 2.5.1 + pyannote for VAD
 
 numpy>=2.0.2,<2.1.0
-torch==2.8.0+cu121
-torchaudio==2.8.0+cu121
+torch==2.5.1+cu121
+torchaudio==2.5.1+cu121
 
-# WhisperX (latest)
-whisperx>=3.7.4
+# WhisperX (compatible with torch 2.5.1)
+whisperx==3.1.1
 
-# VAD dependencies (required by whisperx)
-pyannote.audio>=3.3.2,<4.0
+# VAD dependencies (required by whisperx 3.1.1)
+pyannote.audio>=3.1.1,<4.0
 
 # Utilities
 huggingface_hub>=0.36.0
