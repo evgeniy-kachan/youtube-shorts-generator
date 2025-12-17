@@ -1,22 +1,11 @@
 # ====================================================================
 # DIARIZATION ENVIRONMENT (venv-diar)
 # ====================================================================
-# This environment requires NumPy 2.x for pyannote.audio
-# 
-# Installation:
-#   python3 -m venv venv-diar
-#   source venv-diar/bin/activate
-#   pip install -r requirements-diar.txt
-# ====================================================================
+# Uses NumPy 1.26.4 for consistency with other envs and stability.
 
-# Core dependencies for speaker diarization
-numpy>=2.0.0
-pyannote.audio>=3.1.1
+numpy==1.26.4
+torch==2.5.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121
+torchaudio==2.5.1+cu121 --extra-index-url https://download.pytorch.org/whl/cu121
 
-# Required for model downloads
+pyannote.audio==3.1.1
 huggingface_hub>=0.36.0
-
-# Audio processing
-torch>=2.1.0
-torchaudio>=2.1.0
-
