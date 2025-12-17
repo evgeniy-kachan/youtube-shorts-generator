@@ -26,13 +26,13 @@ watchfiles
 # YouTube Download
 yt-dlp>=2024.1.0
 
-# Transcription (Whisper / WhisperX)
+# Transcription (Torch for general use, WhisperX moved to venv-asr)
 # NOTE: torch >=2.1 required due to security vulnerability
 torch>=2.1.0
 torchaudio>=2.1.0
-whisperx>=3.1.1
 torchvision>=0.21.0
-# NOTE: pyannote.audio is in requirements-diar.txt (separate venv)
+# NOTE: whisperx moved to requirements-asr.txt (venv-asr, NumPy 2.x)
+# NOTE: pyannote.audio is in requirements-diar.txt (venv-diar, NumPy 2.x)
 
 # LLM Integration (DeepSeek API client)
 httpx>=0.25.2
