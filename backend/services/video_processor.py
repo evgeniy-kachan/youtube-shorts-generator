@@ -7,7 +7,7 @@ import subprocess
 import uuid
 
 from backend.services.face_detector import FaceDetector
-from backend.services.diarization_runner import run_external_diarization
+from backend.services.diarization_runner import get_diarization_runner
 
 logger = logging.getLogger(__name__)
 
@@ -672,12 +672,8 @@ class VideoProcessor:
 
             # Optional external diarization (separate venv) if no dialogue provided
             if not dialogue_turns and os.getenv("EXTERNAL_DIARIZATION_ENABLED", "0") == "1":
-                diar_segments = run_external_diarization(
-                    input_path=str(cut_path),
-                    diar_python=os.getenv("EXTERNAL_DIAR_PY"),
-                    diar_script=os.getenv("EXTERNAL_DIAR_SCRIPT"),
-                    hf_token=os.getenv("HUGGINGFACE_TOKEN"),
-                )
+                diar_runner = get_diarization_runner()
+                diar_segments = diar_runner.run(input_path=str(cut_path))
                 dialogue_turns = [
                     {
                         "start": seg["start"],

@@ -94,11 +94,8 @@ class TranscriptionService:
             if self.enable_diarization and self.diarization_runner:
                 try:
                     logger.info("Running external diarization for %s", audio_path)
-                    diar_result = self.diarization_runner.diarize(
-                        audio_path=audio_path,
-                        min_speakers=None,
-                        max_speakers=None,
-                    )
+                    diar_result = self.diarization_runner.run(input_path=audio_path)
+                    
                     # Build speaker map: {(start, end): speaker}
                     for seg in diar_result:
                         speaker_map[(seg["start"], seg["end"])] = seg["speaker"]
