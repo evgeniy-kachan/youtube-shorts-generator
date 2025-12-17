@@ -1,16 +1,21 @@
-# ASR (venv-asr, NumPy>=2)
+# ASR (venv-asr, NumPy 1.26)
 # WhisperX + torch 2.5.1 + pyannote for VAD
+# NOTE: Uses NumPy 1.26 like venv-host, but isolated for whisperx dependencies
 
-numpy>=2.0.2,<2.1.0
+numpy==1.26.4
 torch==2.5.1+cu121
 torchaudio==2.5.1+cu121
 
 # WhisperX (compatible with torch 2.5.1)
 whisperx==3.1.1
 
-# VAD dependencies (required by whisperx 3.1.1)
-pyannote.audio>=3.1.1,<4.0
+# VAD dependencies (required by whisperx 3.1.1, needs NumPy<2)
+pyannote.audio==3.1.1
+pyannote.core==4.5
+pyannote.database==4.1.3
+pyannote.metrics==3.2.1
 
 # Utilities
 huggingface_hub>=0.36.0
+transformers>=4.0.0
 
