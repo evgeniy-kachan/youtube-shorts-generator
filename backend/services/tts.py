@@ -12,6 +12,7 @@ import ffmpeg
 import httpx
 import torch
 import torchaudio
+import soundfile as sf
 from pydub import AudioSegment
 from sentence_splitter import SentenceSplitter
 
@@ -824,12 +825,12 @@ class TTSService(BaseTTSService):
             output_path = Path(output_path)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Force WAV via soundfile backend to avoid torchcodec dependency
-            torchaudio.save(
-                str(output_path),
-                audio.unsqueeze(0),
-                self.sample_rate,
-                format="wav",
+            # Save via soundfile to avoid torchcodec/ffmpeg deps in torchaudio.save
+            sf.write(
+                file=str(output_path),
+                data=audio.squeeze(0).cpu().numpy().T,
+                samplerate=self.sample_rate,
+                subtype="PCM_16",
             )
             
             logger.info(f"Audio saved to: {output_path}")
