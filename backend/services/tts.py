@@ -824,10 +824,12 @@ class TTSService(BaseTTSService):
             output_path = Path(output_path)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
+            # Force WAV via soundfile backend to avoid torchcodec dependency
             torchaudio.save(
                 str(output_path),
                 audio.unsqueeze(0),
-                self.sample_rate
+                self.sample_rate,
+                format="wav",
             )
             
             logger.info(f"Audio saved to: {output_path}")
