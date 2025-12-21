@@ -351,21 +351,24 @@ class FaceDetector:
             List of timestamps (in seconds) where scene changes occur
         """
         try:
-            from scenedetect import detect, ContentDetector, split_video_ffmpeg
+            from scenedetect import detect, ContentDetector
             from scenedetect.frame_timecode import FrameTimecode
-            from scenedetect.video_stream import VideoStream
         except ImportError:
             logger.warning("PySceneDetect not installed, scene detection disabled")
             return []
         
         try:
-            # Create video stream
-            video = VideoStream(video_path)
-            
-            # Get video properties
-            fps = video.frame_rate
+            # Use OpenCV to get fps/duration (PySceneDetect high-level API no longer exposes VideoStream)
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                raise OSError("unable to open video for scene detection")
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+            duration = frame_count / fps
+            cap.release()
+
             if segment_end is None:
-                segment_end = video.duration
+                segment_end = duration
             
             # Convert time boundaries to frame numbers
             start_frame = int(segment_start * fps)
@@ -376,7 +379,7 @@ class FaceDetector:
             end_tc = FrameTimecode(end_frame, fps)
             
             # Detect scenes using ContentDetector (adaptive threshold)
-            # threshold: lower = more sensitive (default 27.0, we use 23.0 for interviews)
+            # threshold: lower = more sensitive (default 27.0, мы используем 23.0 для интервью)
             scene_list = detect(
                 video_path,
                 ContentDetector(threshold=23.0, min_scene_len=15),  # min 0.6s scenes at 25fps
