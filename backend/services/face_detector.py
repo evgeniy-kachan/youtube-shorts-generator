@@ -379,10 +379,10 @@ class FaceDetector:
             end_tc = FrameTimecode(end_frame, fps)
             
             # Detect scenes using ContentDetector (adaptive threshold)
-            # threshold: lower = more sensitive (default 27.0, мы используем 23.0 для интервью)
+            # threshold: lower = more sensitive (default 27.0, мы используем 24.0 для интервью)
             scene_list = detect(
                 video_path,
-                ContentDetector(threshold=23.0, min_scene_len=15),  # min 0.6s scenes at 25fps
+                ContentDetector(threshold=24.0, min_scene_len=18),  # чуть менее чувствительно, минимум ~0.7s при 25fps
                 start_time=start_tc,
                 end_time=end_tc,
             )
@@ -453,8 +453,8 @@ class FaceDetector:
             primary_frames = self._get_speaker_frame_indices(dialogue, primary_speaker, segment_start, frame_count, fps)
 
         # Helper to choose focus per detected faces in one frame
-        min_bound = 0.10
-        max_bound = 0.90
+        min_bound = 0.15
+        max_bound = 0.85
         # Store last known positions to keep focus near a speaker when faces vanish
         priors = {"primary": None, "pair": None}
 
@@ -544,7 +544,7 @@ class FaceDetector:
         # Instant switch при резких изменениях (scene changes), но усредняем мелкие колебания.
         smoothed: list[tuple[float, float]] = []
         window: list[float] = []
-        jump_threshold = 0.15  # что считаем "резким скачком" (новый план)
+        jump_threshold = 0.10  # что считаем "резким скачком" (новый план)
 
         for ts, fval in filled:
             # Если резкий скачок → сбрасываем окно и переключаемся МГНОВЕННО
@@ -553,9 +553,9 @@ class FaceDetector:
                 smoothed.append((ts, fval))
                 continue
             # Иначе добавляем в окно и усредняем (убирает шум детектора)
-            window.append(fval)
-            if len(window) > 3:
-                window.pop(0)
+                window.append(fval)
+                if len(window) > 5:
+                    window.pop(0)
             smoothed.append((ts, sum(window) / len(window)))
 
         # Merge into segments if focus change is small (< 0.10)
