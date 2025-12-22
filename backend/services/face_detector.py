@@ -363,7 +363,11 @@ class FaceDetector:
             if not cap.isOpened():
                 raise OSError("unable to open video for scene detection")
             fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+            if fps <= 1e-3:
+                fps = 25.0
             frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+            if frame_count <= 0:
+                frame_count = 1
             duration = frame_count / fps
             cap.release()
 
@@ -379,10 +383,10 @@ class FaceDetector:
             end_tc = FrameTimecode(end_frame, fps)
             
             # Detect scenes using ContentDetector (adaptive threshold)
-            # threshold: lower = more sensitive (default 27.0, мы используем 24.0 для интервью)
+            # threshold: lower = more sensitive (default 27.0, оставляем 23.0 для чувствительности)
             scene_list = detect(
                 video_path,
-                ContentDetector(threshold=24.0, min_scene_len=18),  # чуть менее чувствительно, минимум ~0.7s при 25fps
+                ContentDetector(threshold=23.0, min_scene_len=15),  # минимум ~0.6s при 25fps
                 start_time=start_tc,
                 end_time=end_tc,
             )
@@ -441,7 +445,11 @@ class FaceDetector:
             return []
 
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        if frame_count <= 0:
+            frame_count = 1
         fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        if fps <= 1e-3:
+            fps = 25.0
         duration = frame_count / fps
 
         # Primary speaker for disambiguation
@@ -453,8 +461,8 @@ class FaceDetector:
             primary_frames = self._get_speaker_frame_indices(dialogue, primary_speaker, segment_start, frame_count, fps)
 
         # Helper to choose focus per detected faces in one frame
-        min_bound = 0.15
-        max_bound = 0.85
+        min_bound = 0.12
+        max_bound = 0.88
         # Store last known positions to keep focus near a speaker when faces vanish
         priors = {"primary": None, "pair": None}
 
