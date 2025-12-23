@@ -365,19 +365,34 @@ class FaceDetector:
         
         if multi_face_data:
             # We have frames showing both speakers far apart
-            # Average their positions across all multi-face frames
-            left_positions = [left for left, right in multi_face_data]
-            right_positions = [right for left, right in multi_face_data]
-            left_speaker_pos = sum(left_positions) / len(left_positions)
-            right_speaker_pos = sum(right_positions) / len(right_positions)
-            two_speaker_mode = True
+            # But only trust this if we have enough multi-face samples
+            # compared to single-face samples (at least 30% of total)
+            total_samples = len(multi_face_data) + len(single_face_data)
+            multi_face_ratio = len(multi_face_data) / max(total_samples, 1)
             
-            logger.info(
-                "Detected two-speaker setup from %d multi-face frames: left=%.3f, right=%.3f",
-                len(multi_face_data),
-                left_speaker_pos,
-                right_speaker_pos,
-            )
+            if multi_face_ratio >= 0.3 or len(multi_face_data) >= 2:
+                # Enough evidence of two speakers
+                left_positions = [left for left, right in multi_face_data]
+                right_positions = [right for left, right in multi_face_data]
+                left_speaker_pos = sum(left_positions) / len(left_positions)
+                right_speaker_pos = sum(right_positions) / len(right_positions)
+                two_speaker_mode = True
+                
+                logger.info(
+                    "Detected two-speaker setup from %d multi-face frames (%.0f%% of samples): left=%.3f, right=%.3f",
+                    len(multi_face_data),
+                    multi_face_ratio * 100,
+                    left_speaker_pos,
+                    right_speaker_pos,
+                )
+            else:
+                # Not enough multi-face frames - single-face data is more reliable
+                # Use weighted centers from single-face frames instead
+                logger.info(
+                    "Only %d multi-face frame(s) (%.0f%% of samples) - not enough for two-speaker mode, using single-face data",
+                    len(multi_face_data),
+                    multi_face_ratio * 100,
+                )
         elif len(single_face_data) >= 3:
             # Fallback: check if single-face positions span across frame
             single_positions = [pos for idx, pos in single_face_data]
@@ -402,25 +417,25 @@ class FaceDetector:
                     )
         
         # If two-speaker mode, determine primary speaker and focus on them
+        # But also consider single-face weighted centers to avoid extreme positions
         if two_speaker_mode and left_speaker_pos is not None and right_speaker_pos is not None:
             primary_speaker = self._get_primary_speaker(dialogue, segment_start, segment_end)
             
+            # Calculate average position from single-face frames (if any)
+            single_face_avg = None
+            if weighted_centers:
+                num = sum(c * w for c, w in weighted_centers)
+                den = sum(w for _, w in weighted_centers)
+                if den > 0:
+                    single_face_avg = num / den
+            
             if primary_speaker and dialogue:
                 # Calculate which position (left or right) corresponds to primary speaker
-                # Heuristic: match single-face frames to primary speaker's speech intervals
                 primary_interval_frames = self._get_speaker_frame_indices(
                     dialogue, primary_speaker, segment_start, frame_count, fps
                 )
                 
-                # Count which cluster (left/right) has more overlap with primary speaker frames
-                midpoint = (left_speaker_pos + right_speaker_pos) / 2.0
-                left_cluster_indices = [
-                    idx for idx in sample_indices 
-                    if idx in primary_interval_frames
-                ]
-                
                 # Determine primary speaker position by comparing to left/right
-                # Use single-face positions that occurred during primary speaker's speech
                 primary_single_faces = []
                 for frame_idx, pos in single_face_data:
                     if frame_idx in primary_interval_frames:
@@ -432,30 +447,50 @@ class FaceDetector:
                     # Is primary speaker closer to left or right position?
                     if abs(avg_primary_pos - left_speaker_pos) < abs(avg_primary_pos - right_speaker_pos):
                         focus = left_speaker_pos
+                        side = "LEFT"
+                    else:
+                        focus = right_speaker_pos
+                        side = "RIGHT"
+                    
+                    # Blend with single-face average to avoid extreme positions
+                    # If we have many single-face samples, trust them more
+                    if single_face_avg is not None and len(weighted_centers) >= 2:
+                        blend_weight = min(0.4, len(weighted_centers) / 10.0)  # Up to 40% blend
+                        focus = (1 - blend_weight) * focus + blend_weight * single_face_avg
                         logger.info(
-                            "Primary speaker '%s' (%.0f%% speech) identified on LEFT (%.3f), focusing there",
+                            "Primary speaker '%s' on %s (%.3f), blended %.0f%% with single-face avg (%.3f) -> focus=%.3f",
                             primary_speaker,
-                            self._get_speaker_percentage(dialogue, primary_speaker, segment_start, segment_end),
+                            side,
+                            left_speaker_pos if side == "LEFT" else right_speaker_pos,
+                            blend_weight * 100,
+                            single_face_avg,
                             focus,
                         )
                     else:
-                        focus = right_speaker_pos
                         logger.info(
-                            "Primary speaker '%s' (%.0f%% speech) identified on RIGHT (%.3f), focusing there",
+                            "Primary speaker '%s' (%.0f%% speech) identified on %s (%.3f), focusing there",
                             primary_speaker,
                             self._get_speaker_percentage(dialogue, primary_speaker, segment_start, segment_end),
+                            side,
                             focus,
                         )
                     
                     focus = float(max(0.2, min(0.8, focus)))
-                    # Return focus and two-speaker positions
                     return focus, (left_speaker_pos, right_speaker_pos)
             
-            # Fallback: use center between both speakers
+            # Fallback: use center between both speakers, blended with single-face avg
             focus = (left_speaker_pos + right_speaker_pos) / 2.0
-            logger.info("Unable to identify primary speaker, using center=%.3f", focus)
+            if single_face_avg is not None:
+                focus = 0.5 * focus + 0.5 * single_face_avg
+                logger.info(
+                    "No primary speaker, blending center (%.3f) with single-face avg (%.3f) -> focus=%.3f",
+                    (left_speaker_pos + right_speaker_pos) / 2.0,
+                    single_face_avg,
+                    focus,
+                )
+            else:
+                logger.info("Unable to identify primary speaker, using center=%.3f", focus)
             focus = float(max(0.2, min(0.8, focus)))
-            # Return focus and two-speaker positions
             return focus, (left_speaker_pos, right_speaker_pos)
 
         # Normal weighted average calculation
@@ -757,9 +792,9 @@ class FaceDetector:
                 smoothed.append((ts, fval))
                 continue
             # Иначе добавляем в окно и усредняем (убирает шум детектора)
-                window.append(fval)
-                if len(window) > 5:
-                    window.pop(0)
+            window.append(fval)
+            if len(window) > 5:
+                window.pop(0)
             smoothed.append((ts, sum(window) / len(window)))
 
         # Merge into segments if focus change is small (< 0.10)
