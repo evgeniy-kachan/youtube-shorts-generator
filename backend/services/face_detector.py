@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional, Sequence
 import math
@@ -33,6 +34,8 @@ class FaceDetector:
         self.det_thresh = det_thresh
         self.ctx_id = ctx_id
         self._detector = None
+        self.enable_tracking = os.getenv("FACE_TRACKING", "0") == "1"
+        self._tracker: Optional["SimpleTracker"] = None
         self._init_detector()
 
     def _init_detector(self):
@@ -51,6 +54,122 @@ class FaceDetector:
         except Exception as e:
             logger.error("Failed to initialize InsightFace: %s", e, exc_info=True)
             raise RuntimeError(f"InsightFace initialization failed: {e}") from e
+
+
+class SimpleTracker:
+    """
+    Minimal IoU-based tracker to stabilize face positions across frames.
+    No velocities, just IoU matching with light smoothing on centers.
+    """
+
+    def __init__(self, max_age: int = 10, iou_thresh: float = 0.2):
+        self.max_age = max_age
+        self.iou_thresh = iou_thresh
+        self.tracks: list[dict] = []
+        self.next_id = 1
+
+    @staticmethod
+    def _iou(b1, b2) -> float:
+        x1, y1, x2, y2 = b1
+        a1, b1_, a2, b2_ = b2
+        inter_x1 = max(x1, a1)
+        inter_y1 = max(y1, b1_)
+        inter_x2 = min(x2, a2)
+        inter_y2 = min(y2, b2_)
+        if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+            return 0.0
+        inter = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+        area1 = (x2 - x1) * (y2 - y1)
+        area2 = (a2 - a1) * (b2_ - b1_)
+        union = area1 + area2 - inter
+        return inter / union if union > 0 else 0.0
+
+    def reset(self):
+        self.tracks.clear()
+        self.next_id = 1
+
+    def update(self, faces: Sequence[dict]) -> list[dict]:
+        # Age existing tracks
+        for t in self.tracks:
+            t["age"] += 1
+
+        if not faces:
+            # Drop old
+            self.tracks = [t for t in self.tracks if t["age"] <= self.max_age]
+            return []
+
+        # Prepare detections
+        det_boxes = []
+        for f in faces:
+            x1 = f["x"]
+            y1 = f["y"]
+            x2 = f["x"] + f["w"]
+            y2 = f["y"] + f["h"]
+            det_boxes.append((x1, y1, x2, y2))
+
+        assigned_tracks = set()
+        assigned_dets = set()
+
+        # Greedy matching by IoU
+        for det_idx, box in enumerate(det_boxes):
+            best_iou = self.iou_thresh
+            best_track = None
+            for ti, t in enumerate(self.tracks):
+                if ti in assigned_tracks:
+                    continue
+                iou = self._iou(box, t["bbox"])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_track = ti
+            if best_track is not None:
+                # Update track with smoothing
+                t = self.tracks[best_track]
+                t["bbox"] = box
+                t["age"] = 0
+                # Smooth center_x
+                det_cx = (box[0] + box[2]) / 2.0
+                smoothed_cx = 0.6 * det_cx + 0.4 * t["center_x"]
+                t["center_x"] = smoothed_cx
+                assigned_tracks.add(best_track)
+                assigned_dets.add(det_idx)
+
+        # New tracks for unassigned detections
+        for det_idx, box in enumerate(det_boxes):
+            if det_idx in assigned_dets:
+                continue
+            det_cx = (box[0] + box[2]) / 2.0
+            self.tracks.append(
+                {
+                    "id": self.next_id,
+                    "bbox": box,
+                    "center_x": det_cx,
+                    "age": 0,
+                }
+            )
+            self.next_id += 1
+
+        # Drop stale
+        self.tracks = [t for t in self.tracks if t["age"] <= self.max_age]
+
+        # Return faces with smoothed center_x if matched
+        out = []
+        for det_idx, f in enumerate(faces):
+            # Find matching track by IoU again (cheap, small N)
+            box = det_boxes[det_idx]
+            best_track = None
+            best_iou = self.iou_thresh
+            for t in self.tracks:
+                iou = self._iou(box, t["bbox"])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_track = t
+            if best_track:
+                f = dict(f)
+                f["center_x"] = best_track["center_x"]
+                f["track_id"] = best_track["id"]
+            out.append(f)
+
+        return out
 
     def _detect_faces(self, frame: np.ndarray) -> Sequence[dict]:
         """Detect faces in frame using InsightFace."""
@@ -445,6 +564,14 @@ class FaceDetector:
             logger.warning("InsightFace: unable to open video %s for timeline", video_path)
             return []
 
+        tracker: Optional["SimpleTracker"] = None
+        if self.enable_tracking:
+            if self._tracker is None:
+                self._tracker = SimpleTracker()
+            else:
+                self._tracker.reset()
+            tracker = self._tracker
+
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
         if frame_count <= 0:
             frame_count = 1
@@ -500,15 +627,19 @@ class FaceDetector:
             # span wide: pick primary speaker position if we can infer left/right
             left_pos = min(centers)
             right_pos = max(centers)
+            mid_pos = (left_pos + right_pos) / 2.0
 
             if primary_speaker:
                 # Heuristic: if current frame is inside primary speaker speech, decide closest cluster to center
                 if frame_index in primary_frames:
                     # Assume primary speaker is nearer to center (0.5) or pick closer cluster
                     if abs(0.5 - left_pos) < abs(0.5 - right_pos):
-                        focus_primary = float(max(min_bound, min(max_bound, left_pos)))
+                        primary_pos = left_pos
                     else:
-                        focus_primary = float(max(min_bound, min(max_bound, right_pos)))
+                        primary_pos = right_pos
+                    # Blend to midpoint to avoid pushing crop to the extreme edge
+                    blended = 0.65 * primary_pos + 0.35 * mid_pos
+                    focus_primary = float(max(min_bound, min(max_bound, blended)))
                     priors["primary"] = focus_primary
                     return focus_primary
 
@@ -527,6 +658,8 @@ class FaceDetector:
                 timeline_raw.append((frame_idx / fps, None))
                 continue
             faces = self._detect_faces(frame)
+            if tracker:
+                faces = tracker.update(faces)
             focus_val = _focus_for_faces(faces, frame_idx)
             timeline_raw.append((frame_idx / fps, focus_val))
             if focus_val is not None:

@@ -272,6 +272,8 @@ class VideoProcessor:
                     if auto_center_ratio is not None and 0.0 <= auto_center_ratio <= 1.0:
                         desired_center = scaled_width * auto_center_ratio
                         offset_x = int(round(desired_center - (self.TARGET_WIDTH / 2)))
+                        # Смягчаем смещение, чтобы не прижиматься к правому/левому краю
+                        offset_x = int(round(offset_x * 0.7))
                         offset_x = max(0, min(margin, offset_x))
                         
                         # Calculate where faces will appear in final 1080px wide crop
