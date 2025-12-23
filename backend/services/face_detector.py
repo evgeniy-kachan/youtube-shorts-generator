@@ -208,9 +208,9 @@ class FaceDetector:
         dialogue: list[dict] | None = None,
         segment_start: float = 0.0,
         segment_end: float | None = None,
-    ) -> Optional[float]:
+    ) -> tuple[Optional[float], Optional[tuple[float, float]]]:
         """
-        Return averaged face center ratio (0..1) for the clip.
+        Return averaged face center ratio (0..1) for the clip and two-speaker positions if detected.
 
         Args:
             video_path: path to the already cut clip (few dozen seconds max)
@@ -218,6 +218,11 @@ class FaceDetector:
             dialogue: list of dialogue turns with speaker, start, end times
             segment_start: absolute start time of the segment in the original video
             segment_end: absolute end time of the segment (for primary speaker detection)
+        
+        Returns:
+            Tuple of (focus_ratio, two_speaker_positions)
+            - focus_ratio: 0..1 horizontal focus position
+            - two_speaker_positions: (left_pos, right_pos) if two speakers detected, else None
         
         Strategy:
         - Sample frames from all speakers proportionally
@@ -229,7 +234,7 @@ class FaceDetector:
         capture = cv2.VideoCapture(video_path)
         if not capture.isOpened():
             logger.warning("InsightFace: unable to open video %s for face detection", video_path)
-            return None
+            return None, None
 
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
         fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
@@ -319,7 +324,7 @@ class FaceDetector:
 
         if not weighted_centers:
             logger.info("InsightFace: no faces found in %s", video_path)
-            return None
+            return None, None
 
         # Check if we have two speakers on different positions
         # Use multi-face data (wide span frames) to identify left/right speaker positions
@@ -412,19 +417,21 @@ class FaceDetector:
                         )
                     
                     focus = float(max(0.2, min(0.8, focus)))
-                    return focus
+                    # Return focus and two-speaker positions
+                    return focus, (left_speaker_pos, right_speaker_pos)
             
             # Fallback: use center between both speakers
             focus = (left_speaker_pos + right_speaker_pos) / 2.0
             logger.info("Unable to identify primary speaker, using center=%.3f", focus)
             focus = float(max(0.2, min(0.8, focus)))
-            return focus
+            # Return focus and two-speaker positions
+            return focus, (left_speaker_pos, right_speaker_pos)
 
         # Normal weighted average calculation
         numerator = sum(center * weight for center, weight in weighted_centers)
         denominator = sum(weight for _, weight in weighted_centers)
         if denominator <= 0:
-            return None
+            return None, None
 
         focus_raw = numerator / denominator
         
@@ -435,7 +442,7 @@ class FaceDetector:
                 "fallback to center crop 0.5",
                 focus_raw,
             )
-            return 0.5
+            return 0.5, None
 
         focus = float(max(0.0, min(1.0, focus_raw)))
         # Clamp extreme values to avoid hard-left/right crops when detections are uncertain
@@ -448,7 +455,7 @@ class FaceDetector:
             len(weighted_centers),
         )
         logger.info("InsightFace: estimated horizontal focus %.3f for %s", focus, video_path)
-        return focus
+        return focus, None
 
     # ------------------------------------------------------------------ #
     # Scene detection helper for dynamic timeline splitting
@@ -578,7 +585,12 @@ class FaceDetector:
         fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
         if (not math.isfinite(fps)) or fps <= 1e-3:
             fps = 25.0
-        duration = frame_count / fps if fps > 1e-3 else frame_count / 25.0
+        # Защита от division by zero
+        if fps <= 1e-3:
+            fps = 25.0
+        if frame_count <= 0:
+            frame_count = 1
+        duration = frame_count / fps
 
         # Primary speaker for disambiguation
         primary_speaker = self._get_primary_speaker(dialogue, segment_start, segment_end)

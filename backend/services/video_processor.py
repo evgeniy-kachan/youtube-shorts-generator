@@ -57,25 +57,33 @@ class VideoProcessor:
         dialogue: list[dict] | None = None,
         segment_start: float = 0.0,
         segment_end: float | None = None,
-    ) -> float | None:
+    ) -> tuple[float | None, tuple[float, float] | None]:
+        """
+        Estimate face focus and detect two-speaker setup.
+        
+        Returns:
+            Tuple of (focus_ratio, two_speaker_positions)
+            - focus_ratio: 0..1 horizontal focus position
+            - two_speaker_positions: (left_pos, right_pos) if two speakers detected, else None
+        """
         try:
             detector = self._get_face_detector()
         except Exception as exc:
             logger.warning("Unable to initialize face detector: %s", exc)
-            return None
+            return None, None
 
         try:
-            focus = detector.estimate_horizontal_focus(
+            focus, two_speaker_positions = detector.estimate_horizontal_focus(
                 video_path,
                 max_samples=max_samples,
                 dialogue=dialogue,
                 segment_start=segment_start,
                 segment_end=segment_end,
             )
-            return focus
+            return focus, two_speaker_positions
         except Exception as exc:
             logger.warning("Face focus estimation failed for %s: %s", video_path, exc)
-            return None
+            return None, None
 
     def _build_focus_timeline(
         self,
@@ -272,8 +280,6 @@ class VideoProcessor:
                     if auto_center_ratio is not None and 0.0 <= auto_center_ratio <= 1.0:
                         desired_center = scaled_width * auto_center_ratio
                         offset_x = int(round(desired_center - (self.TARGET_WIDTH / 2)))
-                        # Смягчаем смещение, чтобы не прижиматься к правому/левому краю
-                        offset_x = int(round(offset_x * 0.7))
                         offset_x = max(0, min(margin, offset_x))
                         
                         # Calculate where faces will appear in final 1080px wide crop
@@ -752,12 +758,24 @@ class VideoProcessor:
                         logger.info("Using multi-segment face timeline (%d segments)", len(focus_timeline))
                 else:
                     # Fallback: single focus estimation
-                    auto_center_ratio = self._estimate_face_focus(
+                    auto_center_ratio, two_speaker_positions = self._estimate_face_focus(
                         str(cut_path),
-                        dialogue=dialogue,
+                        dialogue=dialogue_turns,
                         segment_start=start_time,
                         segment_end=end_time,
                     )
+                    
+                    # If two speakers detected, center between them instead of focusing on primary
+                    if two_speaker_positions is not None:
+                        left_pos, right_pos = two_speaker_positions
+                        auto_center_ratio = (left_pos + right_pos) / 2.0
+                        logger.info(
+                            "Two-speaker setup detected: centering between left=%.3f and right=%.3f -> focus=%.3f",
+                            left_pos,
+                            right_pos,
+                            auto_center_ratio,
+                        )
+                    
                     if auto_center_ratio is None:
                         effective_crop_focus = "center"
                         logger.info(
