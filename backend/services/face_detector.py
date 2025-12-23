@@ -477,14 +477,17 @@ class FaceDetector:
             if not faces_f:
                 return None
 
+            # Защита от нулевой ширины кадра/детекции
+            frame_width = max(1e-3, faces_f[0].get("width", 1.0))
+
             if len(faces_f) == 1:
                 f = faces_f[0]
-                center_clamped = float(max(min_bound, min(max_bound, f["center_x"] / f["width"])))
+                denom = max(1e-3, f.get("width", frame_width))
+                center_clamped = float(max(min_bound, min(max_bound, f["center_x"] / denom)))
                 priors["primary"] = center_clamped
                 return center_clamped
 
-            frame_width = faces_f[0].get("width", 1.0)
-            centers = [f["center_x"] / frame_width for f in faces_f]
+            centers = [f["center_x"] / max(1e-3, f.get("width", frame_width)) for f in faces_f]
             span = max(centers) - min(centers)
 
             if span < 0.45:
