@@ -171,6 +171,9 @@ class FaceDetector:
             logger.error("Failed to initialize InsightFace: %s", e, exc_info=True)
             raise RuntimeError(f"InsightFace initialization failed: {e}") from e
 
+    # Minimum face width in pixels to filter out noise detections
+    MIN_FACE_WIDTH_PX = 40
+
     def _detect_faces(self, frame: np.ndarray) -> Sequence[dict]:
         """Detect faces in frame using InsightFace."""
         if self._detector is None:
@@ -184,6 +187,10 @@ class FaceDetector:
                 x1, y1, x2, y2 = bbox
                 w = x2 - x1
                 h = y2 - y1
+                # Filter out tiny detections (noise)
+                if w < self.MIN_FACE_WIDTH_PX:
+                    logger.debug("Skipping tiny face detection: w=%d < %d", w, self.MIN_FACE_WIDTH_PX)
+                    continue
                 detections.append({
                     "x": float(x1),
                     "y": float(y1),
@@ -283,35 +290,59 @@ class FaceDetector:
 
             # Logic:
             # - Single face: use its center, track for primary speaker identification
-            # - Multiple faces, span < 0.40: center between extremes (show both)
-            # - Multiple faces, span >= 0.40: track positions for later primary speaker detection
+            # - Multiple faces: check size ratio first
+            #   - If one face is 3x+ larger: treat as single face (the larger one is main subject)
+            #   - If similar sizes and span < 0.40: center between extremes (show both)
+            #   - If similar sizes and span >= 0.40: track positions for primary speaker detection
             if len(faces) >= 2:
                 frame_width = faces[0].get("width", 1.0)
-                centers = [f["center_x"] / frame_width for f in faces]
-                span = max(centers) - min(centers)
-
-                if span < 0.40:
-                    # Faces are close enough to show both
-                    center_ratio = (min(centers) + max(centers)) / 2.0
-                    weight = sum(f["score"] * f["area"] for f in faces)
-                    logger.info(
-                        "  Multi-face (span=%.3f < 0.40): show both, center=%.3f, weight=%.0f",
-                        span,
-                        center_ratio,
-                        weight,
-                    )
+                
+                # Sort faces by area (largest first)
+                faces_sorted = sorted(faces, key=lambda f: f["area"], reverse=True)
+                largest_face = faces_sorted[0]
+                second_face = faces_sorted[1]
+                
+                # Check if largest face is significantly bigger (3x+ area)
+                size_ratio = largest_face["area"] / max(second_face["area"], 1.0)
+                
+                if size_ratio >= 3.0:
+                    # Largest face is dominant - focus on it, ignore smaller ones
+                    center_ratio = largest_face["center_x"] / frame_width
+                    weight = largest_face["score"] * largest_face["area"]
+                    single_face_data.append((index, center_ratio))
                     weighted_centers.append((center_ratio, weight))
-                else:
-                    # Faces too far apart - track both positions for primary speaker detection
-                    left_pos = min(centers)
-                    right_pos = max(centers)
-                    multi_face_data.append((left_pos, right_pos))
                     logger.info(
-                        "  Multi-face (span=%.3f >= 0.40): track positions left=%.3f right=%.3f",
-                        span,
-                        left_pos,
-                        right_pos,
+                        "  Multi-face but one dominant (size_ratio=%.1fx): focus on largest at %.3f",
+                        size_ratio,
+                        center_ratio,
                     )
+                else:
+                    # Similar sized faces - use position-based logic
+                    centers = [f["center_x"] / frame_width for f in faces]
+                    span = max(centers) - min(centers)
+
+                    if span < 0.40:
+                        # Faces are close enough to show both
+                        center_ratio = (min(centers) + max(centers)) / 2.0
+                        weight = sum(f["score"] * f["area"] for f in faces)
+                        logger.info(
+                            "  Multi-face (span=%.3f < 0.40): show both, center=%.3f, weight=%.0f",
+                            span,
+                            center_ratio,
+                            weight,
+                        )
+                        weighted_centers.append((center_ratio, weight))
+                    else:
+                        # Faces too far apart - track both positions for primary speaker detection
+                        left_pos = min(centers)
+                        right_pos = max(centers)
+                        multi_face_data.append((left_pos, right_pos))
+                        logger.info(
+                            "  Multi-face (span=%.3f >= 0.40): track positions left=%.3f right=%.3f",
+                            span,
+                            left_pos,
+                            right_pos,
+                        )
             else:
                 # Single face - track for identifying primary speaker position
                 best_face = max(faces, key=lambda f: f["score"] * f["area"])
@@ -610,10 +641,11 @@ class FaceDetector:
         def _focus_for_faces(faces, frame_index: int) -> Optional[float]:
             if not faces:
                 return None
-            # Drop tiny detections
+            # Drop tiny detections (already filtered in _detect_faces, but double-check)
             faces_f = [
                 f for f in faces
                 if f.get("area", 0.0) >= 0.0005 * f.get("width", 1.0) * f.get("height", 1.0)
+                and f.get("w", 0.0) >= self.MIN_FACE_WIDTH_PX
             ]
             if not faces_f:
                 return None
@@ -626,6 +658,20 @@ class FaceDetector:
                 denom = max(1e-3, f.get("width", frame_width))
                 center_clamped = float(max(min_bound, min(max_bound, f["center_x"] / denom)))
                 priors["primary"] = center_clamped
+                return center_clamped
+
+            # Multiple faces: check if one is much larger (3x+ area)
+            faces_sorted = sorted(faces_f, key=lambda f: f["area"], reverse=True)
+            largest = faces_sorted[0]
+            second = faces_sorted[1]
+            size_ratio = largest["area"] / max(second["area"], 1.0)
+            
+            if size_ratio >= 3.0:
+                # One face is dominant - focus on it
+                denom = max(1e-3, largest.get("width", frame_width))
+                center_clamped = float(max(min_bound, min(max_bound, largest["center_x"] / denom)))
+                priors["primary"] = center_clamped
+                logger.debug("Frame %d: dominant face (%.1fx larger), focus=%.3f", frame_index, size_ratio, center_clamped)
                 return center_clamped
 
             centers = [f["center_x"] / max(1e-3, f.get("width", frame_width)) for f in faces_f]
@@ -816,13 +862,23 @@ class FaceDetector:
                 timeline_raw.append((frame_idx / fps, None))
                 continue
             faces = self._detect_faces(frame)
+            # Filter tiny detections (already done in _detect_faces but double-check)
             faces = [
                 f for f in faces
                 if f.get("area", 0.0) >= 0.0005 * f.get("width", 1.0) * f.get("height", 1.0)
+                and f.get("w", 0.0) >= self.MIN_FACE_WIDTH_PX
             ]
             if not faces:
                 timeline_raw.append((frame_idx / fps, None))
                 continue
+            
+            # If one face is much larger, use only that one for vertical focus
+            if len(faces) >= 2:
+                faces_sorted = sorted(faces, key=lambda f: f["area"], reverse=True)
+                size_ratio = faces_sorted[0]["area"] / max(faces_sorted[1]["area"], 1.0)
+                if size_ratio >= 3.0:
+                    faces = [faces_sorted[0]]  # Use only the dominant face
+            
             frame_h = faces[0].get("height", frame.shape[0])
             centers_y = [f["center_y"] / frame_h for f in faces]
             focus_y = (min(centers_y) + max(centers_y)) / 2.0

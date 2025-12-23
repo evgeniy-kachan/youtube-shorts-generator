@@ -765,15 +765,18 @@ class VideoProcessor:
                         segment_end=end_time,
                     )
                     
-                    # If two speakers detected, center between them instead of focusing on primary
+                    # Log two-speaker detection but DON'T override auto_center_ratio
+                    # The focus calculation in estimate_horizontal_focus already handles:
+                    # - Primary speaker detection
+                    # - Dominant face prioritization (3x+ size ratio)
+                    # - Smart blending for wide speaker spans
                     if two_speaker_positions is not None:
                         left_pos, right_pos = two_speaker_positions
-                        auto_center_ratio = (left_pos + right_pos) / 2.0
                         logger.info(
-                            "Two-speaker setup detected: centering between left=%.3f and right=%.3f -> focus=%.3f",
+                            "Two-speaker setup detected: left=%.3f, right=%.3f, using smart focus=%.3f",
                             left_pos,
                             right_pos,
-                            auto_center_ratio,
+                            auto_center_ratio if auto_center_ratio else 0.5,
                         )
                     
                     if auto_center_ratio is None:
