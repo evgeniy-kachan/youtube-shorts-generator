@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Optional, Sequence
+import math
 
 import cv2
 import numpy as np
@@ -363,12 +364,12 @@ class FaceDetector:
             if not cap.isOpened():
                 raise OSError("unable to open video for scene detection")
             fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-            if fps <= 1e-3:
+            if (not math.isfinite(fps)) or fps <= 1e-3:
                 fps = 25.0
             frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
             if frame_count <= 0:
                 frame_count = 1
-            duration = frame_count / fps
+            duration = frame_count / fps if fps > 1e-3 else frame_count / 25.0
             cap.release()
 
             if segment_end is None:
@@ -448,9 +449,9 @@ class FaceDetector:
         if frame_count <= 0:
             frame_count = 1
         fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
-        if fps <= 1e-3:
+        if (not math.isfinite(fps)) or fps <= 1e-3:
             fps = 25.0
-        duration = frame_count / fps
+        duration = frame_count / fps if fps > 1e-3 else frame_count / 25.0
 
         # Primary speaker for disambiguation
         primary_speaker = self._get_primary_speaker(dialogue, segment_start, segment_end)
@@ -461,8 +462,9 @@ class FaceDetector:
             primary_frames = self._get_speaker_frame_indices(dialogue, primary_speaker, segment_start, frame_count, fps)
 
         # Helper to choose focus per detected faces in one frame
-        min_bound = 0.12
-        max_bound = 0.88
+        # Держим запас от краёв, чтобы не резать лица в вертикальном кропе
+        min_bound = 0.20
+        max_bound = 0.80
         # Store last known positions to keep focus near a speaker when faces vanish
         priors = {"primary": None, "pair": None}
 

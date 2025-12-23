@@ -386,7 +386,8 @@ class VideoProcessor:
             start = max(0.0, float(seg.get("start", 0.0)))
             end = float(seg.get("end", start))
             focus = float(seg.get("focus", 0.5))
-            focus = max(0.0, min(1.0, focus))
+            # Ставим мягкие границы, чтобы кроп не уезжал в край и не резал второе лицо
+            focus = max(0.20, min(0.80, focus))
 
             offset_x = int(round(focus * scaled_width - (self.TARGET_WIDTH / 2)))
             offset_x = max(0, min(margin_x, offset_x))
