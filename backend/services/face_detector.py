@@ -13,49 +13,6 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-class FaceDetector:
-    """
-    Face detector using InsightFace for horizontal face focus estimation.
-    """
-
-    def __init__(
-        self,
-        model_name: str = "antelopev2",  # default to SCRFD (better on profiles)
-        det_thresh: float = 0.20,
-        ctx_id: int = 0,
-    ):
-        """
-        Args:
-            model_name: InsightFace model pack name (scrfd_*, buffalo_s, etc.)
-            det_thresh: Detection threshold (0.0-1.0)
-            ctx_id: Context ID: 0 for GPU, -1 for CPU
-        """
-        self.model_name = model_name
-        self.det_thresh = det_thresh
-        self.ctx_id = ctx_id
-        self._detector = None
-        self.enable_tracking = os.getenv("FACE_TRACKING", "0") == "1"
-        self._tracker: Optional["SimpleTracker"] = None
-        self._init_detector()
-
-    def _init_detector(self):
-        """Initialize InsightFace detector (lazy load)."""
-        try:
-            from insightface.app import FaceAnalysis
-            
-            logger.info("Initializing InsightFace with model=%s, ctx_id=%d", self.model_name, self.ctx_id)
-            self._detector = FaceAnalysis(
-                name=self.model_name,
-                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-            )
-            # Larger det_size + lower threshold to catch harder poses
-            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(1280, 1280))
-            logger.info("InsightFace initialized successfully")
-        except Exception as e:
-            logger.error("Failed to initialize InsightFace: %s", e, exc_info=True)
-            raise RuntimeError(f"InsightFace initialization failed: {e}") from e
-
-
 class SimpleTracker:
     """
     Minimal IoU-based tracker to stabilize face positions across frames.
@@ -170,6 +127,49 @@ class SimpleTracker:
             out.append(f)
 
         return out
+
+
+class FaceDetector:
+    """
+    Face detector using InsightFace for horizontal face focus estimation.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "antelopev2",  # default to SCRFD (better on profiles)
+        det_thresh: float = 0.20,
+        ctx_id: int = 0,
+    ):
+        """
+        Args:
+            model_name: InsightFace model pack name (scrfd_*, buffalo_s, etc.)
+            det_thresh: Detection threshold (0.0-1.0)
+            ctx_id: Context ID: 0 for GPU, -1 for CPU
+        """
+        self.model_name = model_name
+        self.det_thresh = det_thresh
+        self.ctx_id = ctx_id
+        self._detector = None
+        self.enable_tracking = os.getenv("FACE_TRACKING", "0") == "1"
+        self._tracker: Optional["SimpleTracker"] = None
+        self._init_detector()
+
+    def _init_detector(self):
+        """Initialize InsightFace detector (lazy load)."""
+        try:
+            from insightface.app import FaceAnalysis
+            
+            logger.info("Initializing InsightFace with model=%s, ctx_id=%d", self.model_name, self.ctx_id)
+            self._detector = FaceAnalysis(
+                name=self.model_name,
+                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+            )
+            # Larger det_size + lower threshold to catch harder poses
+            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(1280, 1280))
+            logger.info("InsightFace initialized successfully")
+        except Exception as e:
+            logger.error("Failed to initialize InsightFace: %s", e, exc_info=True)
+            raise RuntimeError(f"InsightFace initialization failed: {e}") from e
 
     def _detect_faces(self, frame: np.ndarray) -> Sequence[dict]:
         """Detect faces in frame using InsightFace."""
