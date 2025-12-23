@@ -799,7 +799,11 @@ class FaceDetector:
             return []
 
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        if frame_count <= 0:
+            frame_count = 1
         fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        if (not math.isfinite(fps)) or fps <= 1e-3:
+            fps = 25.0
         duration = frame_count / fps
 
         sample_step = max(1, int(sample_period * fps))
