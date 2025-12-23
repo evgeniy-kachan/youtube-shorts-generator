@@ -779,11 +779,11 @@ class FaceDetector:
         if not filled:
             return []
 
-        # Лёгкое сглаживание (окно 3) внутри стабильного плана, БЕЗ гистерезиса.
+        # Лёгкое сглаживание (окно 5) внутри стабильного плана, БЕЗ гистерезиса.
         # Instant switch при резких изменениях (scene changes), но усредняем мелкие колебания.
         smoothed: list[tuple[float, float]] = []
         window: list[float] = []
-        jump_threshold = 0.10  # что считаем "резким скачком" (новый план)
+        jump_threshold = 0.20  # что считаем "резким скачком" (новый план) — выше = меньше дёрганий
 
         for ts, fval in filled:
             # Если резкий скачок → сбрасываем окно и переключаемся МГНОВЕННО
@@ -793,15 +793,16 @@ class FaceDetector:
                 continue
             # Иначе добавляем в окно и усредняем (убирает шум детектора)
             window.append(fval)
-            if len(window) > 5:
+            if len(window) > 7:  # Окно 7 для более плавного сглаживания
                 window.pop(0)
             smoothed.append((ts, sum(window) / len(window)))
 
-        # Merge into segments if focus change is small (< 0.10)
+        # Merge into segments if focus change is small (< 0.15)
+        # Higher threshold = fewer segments = less jerky camera
         merged: list[dict] = []
         seg_start = smoothed[0][0]
         seg_focus = smoothed[0][1]
-        threshold = 0.10
+        threshold = 0.15
 
         for i in range(1, len(smoothed)):
             ts, fval = smoothed[i]
@@ -843,10 +844,11 @@ class FaceDetector:
             
             merged = split_segments
 
-        # Filter extremely short segments (<1.2s) by merging with previous
+        # Filter extremely short segments (<2.5s) by merging with previous
+        # Longer minimum = more stable camera, fewer micro-segments
         cleaned: list[dict] = []
         for seg in merged:
-            if cleaned and (seg["end"] - seg["start"]) < 1.2:
+            if cleaned and (seg["end"] - seg["start"]) < 2.5:
                 # merge into previous
                 prev = cleaned[-1]
                 new_end = seg["end"]
