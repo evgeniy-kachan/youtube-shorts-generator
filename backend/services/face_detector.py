@@ -609,7 +609,7 @@ class FaceDetector:
             return []
 
     # ------------------------------------------------------------------ #
-    # Static-camera focus timeline (scene-based, 5 samples per scene)
+    # Speaker-aware focus timeline (follows the speaking person)
     # ------------------------------------------------------------------ #
     def build_focus_timeline(
         self,
@@ -620,16 +620,15 @@ class FaceDetector:
         sample_period: float = 0.33,  # ignored in new approach
     ) -> list[dict]:
         """
-        Build focus timeline for STATIC camera videos.
+        Build focus timeline that FOLLOWS THE SPEAKING PERSON.
         
-        NEW APPROACH (optimized for static cameras):
-        1. Detect scene changes (camera cuts) using PySceneDetect
-        2. For each scene, sample 5 frames at the START
-        3. Average face positions from those 5 frames
-        4. Use that fixed focus for the ENTIRE scene
-        5. No smoothing needed - camera is static within each scene
+        SPEAKER-AWARE APPROACH:
+        1. Use diarization data (dialogue) to find speaker segments
+        2. Group consecutive segments by speaker
+        3. For each speaker group, sample 2 frames to find their position
+        4. Focus follows whoever is speaking
         
-        This eliminates jitter caused by per-frame detection noise.
+        Falls back to scene-based sampling if no dialogue data.
         """
         capture = cv2.VideoCapture(video_path)
         if not capture.isOpened():
@@ -644,18 +643,6 @@ class FaceDetector:
             fps = 25.0
         duration = frame_count / fps
 
-        # Step 1: Detect scene changes
-        scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
-        
-        # Build scene boundaries: [0, scene1, scene2, ..., duration]
-        scene_boundaries = [0.0] + scene_changes + [duration]
-        
-        logger.info(
-            "Scene-based focus: %d scenes detected, boundaries: %s",
-            len(scene_boundaries) - 1,
-            [f"{t:.2f}s" for t in scene_boundaries],
-        )
-
         # Helper to compute focus from faces
         min_bound = 0.20
         max_bound = 0.80
@@ -663,7 +650,6 @@ class FaceDetector:
         def _focus_for_faces(faces: list) -> Optional[float]:
             if not faces:
                 return None
-            # Filter tiny detections
             faces_f = [
                 f for f in faces
                 if f.get("area", 0.0) >= 0.0005 * f.get("width", 1.0) * f.get("height", 1.0)
@@ -692,70 +678,218 @@ class FaceDetector:
             center_avg = (min(centers) + max(centers)) / 2.0
             return float(max(min_bound, min(max_bound, center_avg)))
 
-        # Step 2: For each scene, sample 5 frames at the start and average focus
-        SAMPLES_PER_SCENE = 5
-        SAMPLE_SPACING_SEC = 0.2  # 200ms between samples
-        
-        segments: list[dict] = []
-        last_valid_focus = 0.5  # fallback
+        def _sample_focus_at_time(t: float) -> Optional[float]:
+            """Sample face focus at a specific time."""
+            frame_idx = int(t * fps)
+            if frame_idx >= frame_count:
+                return None
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                return None
+            faces = self._detect_faces(frame)
+            return _focus_for_faces(faces)
 
-        for i in range(len(scene_boundaries) - 1):
-            scene_start = scene_boundaries[i]
-            scene_end = scene_boundaries[i + 1]
+        # ============================================================
+        # SPEAKER-AWARE MODE: Use diarization to follow the speaker
+        # ============================================================
+        if dialogue and len(dialogue) >= 2:
+            logger.info("Using SPEAKER-AWARE focus (diarization data available)")
             
-            # Sample 5 frames starting from scene_start
-            focus_values: list[float] = []
+            # Pre-calculate speech duration for each speaker (for overlap handling)
+            def _get_speaker_duration_after(time_point: float) -> dict[str, float]:
+                """Calculate total speech duration for each speaker AFTER a given time."""
+                durations: dict[str, float] = {}
+                for seg in dialogue:
+                    seg_start = seg.get("start", 0.0) - segment_start
+                    seg_end = seg.get("end", 0.0) - segment_start
+                    if seg_end <= time_point:
+                        continue  # This segment is before our time point
+                    speaker = seg.get("speaker", "unknown")
+                    # Only count the part after time_point
+                    effective_start = max(seg_start, time_point)
+                    effective_duration = max(0.0, seg_end - effective_start)
+                    durations[speaker] = durations.get(speaker, 0.0) + effective_duration
+                return durations
             
-            for sample_idx in range(SAMPLES_PER_SCENE):
-                sample_time = scene_start + sample_idx * SAMPLE_SPACING_SEC
-                if sample_time >= scene_end:
-                    break
-                    
-                frame_idx = int(sample_time * fps)
-                if frame_idx >= frame_count:
-                    break
-                    
-                capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                ok, frame = capture.read()
-                if not ok or frame is None:
-                    continue
-                    
-                faces = self._detect_faces(frame)
-                focus_val = _focus_for_faces(faces)
+            # Group consecutive dialogue segments by speaker
+            speaker_groups: list[dict] = []
+            current_speaker = None
+            group_start = 0.0
+            
+            for seg in dialogue:
+                speaker = seg.get("speaker", "unknown")
+                seg_start = seg.get("start", 0.0) - segment_start  # relative to clip
+                seg_end = seg.get("end", 0.0) - segment_start
                 
-                if focus_val is not None:
-                    focus_values.append(focus_val)
-                    logger.debug(
-                        "Scene %d, sample %d (t=%.2fs): focus=%.3f",
-                        i, sample_idx, sample_time, focus_val
+                # Clamp to clip boundaries
+                seg_start = max(0.0, seg_start)
+                seg_end = min(duration, seg_end)
+                
+                if seg_start >= seg_end:
+                    continue
+                
+                if speaker != current_speaker:
+                    # New speaker - close previous group
+                    if current_speaker is not None and group_start < seg_start:
+                        speaker_groups.append({
+                            "speaker": current_speaker,
+                            "start": group_start,
+                            "end": seg_start,
+                        })
+                    current_speaker = speaker
+                    group_start = seg_start
+            
+            # Close last group
+            if current_speaker is not None:
+                speaker_groups.append({
+                    "speaker": current_speaker,
+                    "start": group_start,
+                    "end": duration,
+                })
+            
+            logger.info(
+                "Found %d speaker groups: %s",
+                len(speaker_groups),
+                [(g["speaker"], f"{g['start']:.1f}-{g['end']:.1f}s") for g in speaker_groups]
+            )
+            
+            # Build speaker position cache: sample each speaker once to find their position
+            speaker_positions: dict[str, float] = {}
+            
+            for group in speaker_groups:
+                speaker = group["speaker"]
+                if speaker in speaker_positions:
+                    continue  # Already sampled this speaker
+                
+                # Sample 2 frames in the middle of this speaker's segment
+                mid_time = (group["start"] + group["end"]) / 2.0
+                focus1 = _sample_focus_at_time(mid_time)
+                focus2 = _sample_focus_at_time(mid_time + 0.3)
+                
+                samples = [f for f in [focus1, focus2] if f is not None]
+                if samples:
+                    speaker_positions[speaker] = sum(samples) / len(samples)
+                    logger.info(
+                        "Speaker '%s' position: %.3f (sampled at t=%.1fs)",
+                        speaker, speaker_positions[speaker], mid_time
                     )
             
-            # Calculate average focus for this scene
+            # Handle short segments (likely overlaps): keep focus on dominant speaker
+            MIN_SEGMENT_DURATION = 1.5  # Segments shorter than 1.5s are likely overlaps
+            
+            # Find the dominant speaker (most total speech)
+            total_durations = _get_speaker_duration_after(0.0)
+            dominant_speaker = max(total_durations, key=total_durations.get) if total_durations else None
+            
+            logger.info(
+                "Speaker durations: %s, dominant: %s",
+                {k: f"{v:.1f}s" for k, v in total_durations.items()},
+                dominant_speaker
+            )
+            
+            # Build focus timeline from speaker groups
+            # Short segments (overlaps) → keep focus on speaker with MORE text after
+            segments: list[dict] = []
+            last_focus = 0.5
+            last_speaker = None
+            
+            for i, group in enumerate(speaker_groups):
+                speaker = group["speaker"]
+                seg_duration = group["end"] - group["start"]
+                
+                # Check if this is a short segment (likely overlap/interruption)
+                if seg_duration < MIN_SEGMENT_DURATION:
+                    # Look ahead: who speaks more after this segment?
+                    future_durations = _get_speaker_duration_after(group["end"])
+                    
+                    # If the previous speaker has more upcoming speech, keep focus on them
+                    if last_speaker and future_durations.get(last_speaker, 0) >= future_durations.get(speaker, 0):
+                        logger.info(
+                            "Short segment [%.2f-%.2f] (%.1fs): '%s' interrupted, keeping focus on '%s'",
+                            group["start"], group["end"], seg_duration, speaker, last_speaker
+                        )
+                        # Extend previous segment instead of creating new one
+                        if segments:
+                            segments[-1]["end"] = group["end"]
+                        continue
+                    else:
+                        logger.info(
+                            "Short segment [%.2f-%.2f] (%.1fs): '%s' becomes dominant after",
+                            group["start"], group["end"], seg_duration, speaker
+                        )
+                
+                # Normal segment - use speaker's position
+                focus = speaker_positions.get(speaker, last_focus)
+                
+                segments.append({
+                    "start": group["start"],
+                    "end": group["end"],
+                    "focus": focus,
+                })
+                last_focus = focus
+                last_speaker = speaker
+                
+                logger.info(
+                    "Segment [%.2f-%.2f]: speaker '%s' -> focus=%.3f",
+                    group["start"], group["end"], speaker, focus
+                )
+            
+            capture.release()
+            
+            if segments:
+                logger.info("Built SPEAKER-AWARE focus timeline: %d segments", len(segments))
+                return segments
+        
+        # ============================================================
+        # FALLBACK: Scene-based sampling (no diarization data)
+        # ============================================================
+        logger.info("Using SCENE-BASED focus (no diarization data)")
+        
+        scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
+        scene_boundaries = [0.0] + scene_changes + [duration]
+        
+        logger.info(
+            "Scene-based focus: %d scenes, boundaries: %s",
+            len(scene_boundaries) - 1,
+            [f"{t:.2f}s" for t in scene_boundaries],
+        )
+        
+        segments: list[dict] = []
+        last_valid_focus = 0.5
+
+        for i in range(len(scene_boundaries) - 1):
+            scene_start_t = scene_boundaries[i]
+            scene_end_t = scene_boundaries[i + 1]
+            scene_dur = scene_end_t - scene_start_t
+            
+            # Sample 5 frames spread across scene
+            focus_values: list[float] = []
+            for sample_idx in range(5):
+                offset_ratio = 0.1 + (sample_idx / 4.0) * 0.8
+                sample_time = scene_start_t + offset_ratio * scene_dur
+                focus_val = _sample_focus_at_time(sample_time)
+                if focus_val is not None:
+                    focus_values.append(focus_val)
+            
             if focus_values:
                 scene_focus = sum(focus_values) / len(focus_values)
                 last_valid_focus = scene_focus
             else:
-                # No faces detected - use last known focus
                 scene_focus = last_valid_focus
             
             segments.append({
-                "start": scene_start,
-                "end": scene_end,
+                "start": scene_start_t,
+                "end": scene_end_t,
                 "focus": scene_focus,
             })
             
             logger.info(
                 "Scene %d [%.2f-%.2f]: %d samples -> focus=%.3f",
-                i, scene_start, scene_end, len(focus_values), scene_focus
+                i, scene_start_t, scene_end_t, len(focus_values), scene_focus
             )
 
         capture.release()
-
-        if not segments:
-            return []
-
-        # No smoothing needed - each scene has a fixed focus
-        # No merging needed - scenes are already the correct segments
         
         logger.info("Built scene-based focus timeline: %d segments", len(segments))
         return segments
