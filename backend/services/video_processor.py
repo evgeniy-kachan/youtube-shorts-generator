@@ -733,6 +733,14 @@ class VideoProcessor:
             focus_timeline_y = None
 
             if method == "center_crop" and effective_crop_focus == "face_auto":
+                # === DIAGNOSTIC: what dialogue_turns are we passing? ===
+                logger.info(
+                    "DIAGNOSTIC: dialogue_turns passed to focus_timeline: len=%d, turns=%s",
+                    len(dialogue_turns) if dialogue_turns else 0,
+                    [(t.get("speaker"), f"{t.get('start'):.1f}-{t.get('end'):.1f}") for t in (dialogue_turns or [])[:5]],
+                )
+                # === END DIAGNOSTIC ===
+                
                 # Build timeline (dynamic crops). If timeline has 0 or 1 segment, fall back to single focus.
                 focus_timeline = self._build_focus_timeline(
                     str(cut_path),

@@ -630,6 +630,25 @@ class FaceDetector:
         
         Falls back to scene-based sampling if no dialogue data.
         """
+        # === DIAGNOSTIC LOGGING ===
+        dialogue_len = len(dialogue) if dialogue else 0
+        dialogue_preview = []
+        if dialogue and len(dialogue) > 0:
+            for i, turn in enumerate(dialogue[:3]):  # first 3 turns
+                dialogue_preview.append({
+                    "speaker": turn.get("speaker"),
+                    "start": turn.get("start"),
+                    "end": turn.get("end"),
+                })
+        logger.info(
+            "build_focus_timeline called: dialogue_len=%d, segment_start=%.2f, segment_end=%s, preview=%s",
+            dialogue_len,
+            segment_start,
+            segment_end,
+            dialogue_preview,
+        )
+        # === END DIAGNOSTIC ===
+        
         capture = cv2.VideoCapture(video_path)
         if not capture.isOpened():
             logger.warning("InsightFace: unable to open video %s for timeline", video_path)
@@ -754,26 +773,68 @@ class FaceDetector:
                 [(g["speaker"], f"{g['start']:.1f}-{g['end']:.1f}s") for g in speaker_groups]
             )
             
-            # Build speaker position cache: sample each speaker once to find their position
+            # Build speaker position cache: try multiple samples to find each speaker's position
             speaker_positions: dict[str, float] = {}
             
+            # Collect ALL segments for each speaker (to sample from multiple places)
+            speaker_all_segments: dict[str, list[tuple[float, float]]] = {}
             for group in speaker_groups:
                 speaker = group["speaker"]
-                if speaker in speaker_positions:
-                    continue  # Already sampled this speaker
+                if speaker not in speaker_all_segments:
+                    speaker_all_segments[speaker] = []
+                speaker_all_segments[speaker].append((group["start"], group["end"]))
+            
+            # For each speaker, try up to 10 samples across all their segments
+            MAX_SAMPLES_PER_SPEAKER = 10
+            SAMPLE_OFFSETS = [0.1, 0.3, 0.5, 0.7, 0.9]  # Sample at different points
+            
+            for speaker, segs in speaker_all_segments.items():
+                samples_found: list[float] = []
                 
-                # Sample 2 frames in the middle of this speaker's segment
-                mid_time = (group["start"] + group["end"]) / 2.0
-                focus1 = _sample_focus_at_time(mid_time)
-                focus2 = _sample_focus_at_time(mid_time + 0.3)
+                for seg_start, seg_end in segs:
+                    if len(samples_found) >= MAX_SAMPLES_PER_SPEAKER:
+                        break
+                    seg_dur = seg_end - seg_start
+                    
+                    for offset in SAMPLE_OFFSETS:
+                        if len(samples_found) >= MAX_SAMPLES_PER_SPEAKER:
+                            break
+                        sample_time = seg_start + offset * seg_dur
+                        focus_val = _sample_focus_at_time(sample_time)
+                        if focus_val is not None:
+                            samples_found.append(focus_val)
+                            logger.debug(
+                                "Speaker '%s': sample at t=%.2fs -> focus=%.3f",
+                                speaker, sample_time, focus_val
+                            )
                 
-                samples = [f for f in [focus1, focus2] if f is not None]
-                if samples:
-                    speaker_positions[speaker] = sum(samples) / len(samples)
+                if samples_found:
+                    speaker_positions[speaker] = sum(samples_found) / len(samples_found)
                     logger.info(
-                        "Speaker '%s' position: %.3f (sampled at t=%.1fs)",
-                        speaker, speaker_positions[speaker], mid_time
+                        "Speaker '%s' position: %.3f (from %d samples)",
+                        speaker, speaker_positions[speaker], len(samples_found)
                     )
+                else:
+                    logger.warning("Speaker '%s': NO face detected in any sample!", speaker)
+            
+            # FALLBACK: If a speaker has no position, infer from OPPOSITE side of known speakers
+            known_positions = list(speaker_positions.values())
+            if known_positions:
+                known_avg = sum(known_positions) / len(known_positions)
+                
+                for speaker in speaker_all_segments.keys():
+                    if speaker not in speaker_positions:
+                        # Infer: if known speakers are on left, this one is probably on right
+                        if known_avg < 0.50:
+                            inferred_pos = 0.75  # Right side
+                        else:
+                            inferred_pos = 0.30  # Left side
+                        
+                        speaker_positions[speaker] = inferred_pos
+                        logger.info(
+                            "Speaker '%s': INFERRED position %.3f (opposite of known avg %.3f)",
+                            speaker, inferred_pos, known_avg
+                        )
             
             # Handle short segments (likely overlaps): keep focus on dominant speaker
             MIN_SEGMENT_DURATION = 1.5  # Segments shorter than 1.5s are likely overlaps
@@ -873,10 +934,51 @@ class FaceDetector:
                     focus_values.append(focus_val)
             
             if focus_values:
-                scene_focus = sum(focus_values) / len(focus_values)
+                # SMART AVERAGING: Don't average to "nobody" in the center!
+                min_pos = min(focus_values)
+                max_pos = max(focus_values)
+                spread = max_pos - min_pos
+                
+                if spread > 0.25:
+                    # Two-speaker setup detected (positions spread > 25%)
+                    # DON'T average to center where nobody is!
+                    # Instead: use the MOST COMMON position (mode-like)
+                    
+                    # Split into left (<0.55) and right (>=0.55) clusters
+                    left_cluster = [v for v in focus_values if v < 0.55]
+                    right_cluster = [v for v in focus_values if v >= 0.55]
+                    
+                    if left_cluster and right_cluster:
+                        # Both speakers present - center between their AVERAGE positions
+                        left_avg = sum(left_cluster) / len(left_cluster)
+                        right_avg = sum(right_cluster) / len(right_cluster)
+                        # Find center that shows both (weighted by frequency)
+                        left_weight = len(left_cluster)
+                        right_weight = len(right_cluster)
+                        scene_focus = (left_avg * left_weight + right_avg * right_weight) / (left_weight + right_weight)
+                        logger.info(
+                            "Scene %d: TWO-SPEAKER setup (spread=%.2f), left=%.2f (%d), right=%.2f (%d) -> focus=%.3f",
+                            i, spread, left_avg, left_weight, right_avg, right_weight, scene_focus
+                        )
+                    elif left_cluster:
+                        # Only left speaker
+                        scene_focus = sum(left_cluster) / len(left_cluster)
+                        logger.info("Scene %d: LEFT speaker only -> focus=%.3f", i, scene_focus)
+                    else:
+                        # Only right speaker
+                        scene_focus = sum(right_cluster) / len(right_cluster)
+                        logger.info("Scene %d: RIGHT speaker only -> focus=%.3f", i, scene_focus)
+                else:
+                    # Single speaker or tight cluster - simple average is OK
+                    scene_focus = sum(focus_values) / len(focus_values)
+                    logger.info("Scene %d: single cluster (spread=%.2f) -> focus=%.3f", i, spread, scene_focus)
+                
+                # CLAMP to safe bounds (0.20-0.80) to ensure crop stays within 1080x1920
+                scene_focus = max(min_bound, min(max_bound, scene_focus))
                 last_valid_focus = scene_focus
             else:
                 scene_focus = last_valid_focus
+                logger.info("Scene %d: no faces -> fallback focus=%.3f", i, scene_focus)
             
             segments.append({
                 "start": scene_start_t,
