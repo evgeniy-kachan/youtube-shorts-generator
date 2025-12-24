@@ -609,7 +609,7 @@ class FaceDetector:
             return []
 
     # ------------------------------------------------------------------ #
-    # Dynamic focus timeline (per-frame sampling, no smoothing)
+    # Static-camera focus timeline (scene-based, 5 samples per scene)
     # ------------------------------------------------------------------ #
     def build_focus_timeline(
         self,
@@ -617,33 +617,24 @@ class FaceDetector:
         dialogue: list[dict] | None = None,
         segment_start: float = 0.0,
         segment_end: float | None = None,
-        sample_period: float = 0.33,
+        sample_period: float = 0.33,  # ignored in new approach
     ) -> list[dict]:
         """
-        Build a coarse per-time focus timeline for dynamic cropping.
-
-        - Samples frames every `sample_period` seconds (no smoothing).
-        - For each sample, picks focus using the same rules:
-          * 1 face  -> center on that face
-          * 2 faces, span < 0.35 -> center between faces (show both)
-          * 2+ faces, span >= 0.35 -> focus on primary speaker if known,
-            otherwise closest to center
-          * 0 faces -> fallback to last focus (or center 0.5)
-        - Returns a list of segments {start, end, focus} where focus stays
-          approximately stable (merged if delta < 0.05).
+        Build focus timeline for STATIC camera videos.
+        
+        NEW APPROACH (optimized for static cameras):
+        1. Detect scene changes (camera cuts) using PySceneDetect
+        2. For each scene, sample 5 frames at the START
+        3. Average face positions from those 5 frames
+        4. Use that fixed focus for the ENTIRE scene
+        5. No smoothing needed - camera is static within each scene
+        
+        This eliminates jitter caused by per-frame detection noise.
         """
         capture = cv2.VideoCapture(video_path)
         if not capture.isOpened():
             logger.warning("InsightFace: unable to open video %s for timeline", video_path)
             return []
-
-        tracker: Optional["SimpleTracker"] = None
-        if self.enable_tracking:
-            if self._tracker is None:
-                self._tracker = SimpleTracker()
-            else:
-                self._tracker.reset()
-            tracker = self._tracker
 
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
         if frame_count <= 0:
@@ -651,32 +642,28 @@ class FaceDetector:
         fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
         if (not math.isfinite(fps)) or fps <= 1e-3:
             fps = 25.0
-        # Защита от division by zero
-        if fps <= 1e-3:
-            fps = 25.0
-        if frame_count <= 0:
-            frame_count = 1
         duration = frame_count / fps
 
-        # Primary speaker for disambiguation
-        primary_speaker = self._get_primary_speaker(dialogue, segment_start, segment_end)
+        # Step 1: Detect scene changes
+        scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
+        
+        # Build scene boundaries: [0, scene1, scene2, ..., duration]
+        scene_boundaries = [0.0] + scene_changes + [duration]
+        
+        logger.info(
+            "Scene-based focus: %d scenes detected, boundaries: %s",
+            len(scene_boundaries) - 1,
+            [f"{t:.2f}s" for t in scene_boundaries],
+        )
 
-        # Precompute speaker time windows in frames (for mapping primary to position)
-        primary_frames: set[int] = set()
-        if primary_speaker:
-            primary_frames = self._get_speaker_frame_indices(dialogue, primary_speaker, segment_start, frame_count, fps)
-
-        # Helper to choose focus per detected faces in one frame
-        # Держим запас от краёв, чтобы не резать лица в вертикальном кропе
+        # Helper to compute focus from faces
         min_bound = 0.20
         max_bound = 0.80
-        # Store last known positions to keep focus near a speaker when faces vanish
-        priors = {"primary": None, "pair": None}
 
-        def _focus_for_faces(faces, frame_index: int) -> Optional[float]:
+        def _focus_for_faces(faces: list) -> Optional[float]:
             if not faces:
                 return None
-            # Drop tiny detections (already filtered in _detect_faces, but double-check)
+            # Filter tiny detections
             faces_f = [
                 f for f in faces
                 if f.get("area", 0.0) >= 0.0005 * f.get("width", 1.0) * f.get("height", 1.0)
@@ -685,180 +672,93 @@ class FaceDetector:
             if not faces_f:
                 return None
 
-            # Защита от нулевой ширины кадра/детекции
             frame_width = max(1e-3, faces_f[0].get("width", 1.0))
 
             if len(faces_f) == 1:
                 f = faces_f[0]
-                denom = max(1e-3, f.get("width", frame_width))
-                center_clamped = float(max(min_bound, min(max_bound, f["center_x"] / denom)))
-                priors["primary"] = center_clamped
-                return center_clamped
+                return float(max(min_bound, min(max_bound, f["center_x"] / frame_width)))
 
-            # Multiple faces: check if one is much larger (3x+ area)
+            # Multiple faces: check if one is much larger
             faces_sorted = sorted(faces_f, key=lambda f: f["area"], reverse=True)
             largest = faces_sorted[0]
             second = faces_sorted[1]
             size_ratio = largest["area"] / max(second["area"], 1.0)
             
             if size_ratio >= 3.0:
-                # One face is dominant - focus on it
-                denom = max(1e-3, largest.get("width", frame_width))
-                center_clamped = float(max(min_bound, min(max_bound, largest["center_x"] / denom)))
-                priors["primary"] = center_clamped
-                logger.debug("Frame %d: dominant face (%.1fx larger), focus=%.3f", frame_index, size_ratio, center_clamped)
-                return center_clamped
+                return float(max(min_bound, min(max_bound, largest["center_x"] / frame_width)))
 
-            centers = [f["center_x"] / max(1e-3, f.get("width", frame_width)) for f in faces_f]
-            span = max(centers) - min(centers)
+            # Multiple similar-sized faces: center between them
+            centers = [f["center_x"] / frame_width for f in faces_f]
+            center_avg = (min(centers) + max(centers)) / 2.0
+            return float(max(min_bound, min(max_bound, center_avg)))
 
-            if span < 0.45:
-                center_pair = float(max(min_bound, min(max_bound, (min(centers) + max(centers)) / 2.0)))
-                priors["pair"] = center_pair
-                return center_pair
+        # Step 2: For each scene, sample 5 frames at the start and average focus
+        SAMPLES_PER_SCENE = 5
+        SAMPLE_SPACING_SEC = 0.2  # 200ms between samples
+        
+        segments: list[dict] = []
+        last_valid_focus = 0.5  # fallback
 
-            # span wide: pick primary speaker position if we can infer left/right
-            left_pos = min(centers)
-            right_pos = max(centers)
-            mid_pos = (left_pos + right_pos) / 2.0
-
-            if primary_speaker:
-                # Heuristic: if current frame is inside primary speaker speech, decide closest cluster to center
-                if frame_index in primary_frames:
-                    # Assume primary speaker is nearer to center (0.5) or pick closer cluster
-                    if abs(0.5 - left_pos) < abs(0.5 - right_pos):
-                        primary_pos = left_pos
-                    else:
-                        primary_pos = right_pos
-                    # Blend to midpoint to avoid pushing crop to the extreme edge
-                    blended = 0.65 * primary_pos + 0.35 * mid_pos
-                    focus_primary = float(max(min_bound, min(max_bound, blended)))
-                    priors["primary"] = focus_primary
-                    return focus_primary
-
-            # Fallback: closest to center
-            best = min(centers, key=lambda c: abs(c - 0.5))
-            return float(max(min_bound, min(max_bound, best)))
-
-        sample_step = max(1, int(sample_period * fps))
-        timeline_raw: list[tuple[float, Optional[float]]] = []
-
-        last_detect_ts = 0.0
-        for frame_idx in range(0, frame_count, sample_step):
-            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                timeline_raw.append((frame_idx / fps, None))
-                continue
-            faces = self._detect_faces(frame)
-            if tracker:
-                faces = tracker.update(faces)
-            focus_val = _focus_for_faces(faces, frame_idx)
-            timeline_raw.append((frame_idx / fps, focus_val))
-            if focus_val is not None:
-                last_detect_ts = frame_idx / fps
+        for i in range(len(scene_boundaries) - 1):
+            scene_start = scene_boundaries[i]
+            scene_end = scene_boundaries[i + 1]
+            
+            # Sample 5 frames starting from scene_start
+            focus_values: list[float] = []
+            
+            for sample_idx in range(SAMPLES_PER_SCENE):
+                sample_time = scene_start + sample_idx * SAMPLE_SPACING_SEC
+                if sample_time >= scene_end:
+                    break
+                    
+                frame_idx = int(sample_time * fps)
+                if frame_idx >= frame_count:
+                    break
+                    
+                capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    continue
+                    
+                faces = self._detect_faces(frame)
+                focus_val = _focus_for_faces(faces)
+                
+                if focus_val is not None:
+                    focus_values.append(focus_val)
+                    logger.debug(
+                        "Scene %d, sample %d (t=%.2fs): focus=%.3f",
+                        i, sample_idx, sample_time, focus_val
+                    )
+            
+            # Calculate average focus for this scene
+            if focus_values:
+                scene_focus = sum(focus_values) / len(focus_values)
+                last_valid_focus = scene_focus
+            else:
+                # No faces detected - use last known focus
+                scene_focus = last_valid_focus
+            
+            segments.append({
+                "start": scene_start,
+                "end": scene_end,
+                "focus": scene_focus,
+            })
+            
+            logger.info(
+                "Scene %d [%.2f-%.2f]: %d samples -> focus=%.3f",
+                i, scene_start, scene_end, len(focus_values), scene_focus
+            )
 
         capture.release()
 
-        # Fill gaps: carry last known focus; если лиц долго нет — опираемся на priors (primary/pair), и только затем центр
-        filled: list[tuple[float, float]] = []
-        last_focus = 0.5
-        last_seen_ts = 0.0
-        no_face_reset_sec = 1.5  # быстрее сброс при пропаже лиц (было 3.0)
-        for ts, focus in timeline_raw:
-            if focus is None:
-                if (ts - last_seen_ts) > no_face_reset_sec:
-                    fallback = priors.get("primary") or priors.get("pair") or last_focus or 0.5
-                    last_focus = fallback
-                focus = last_focus
-            else:
-                last_focus = focus
-                last_seen_ts = ts
-            filled.append((ts, focus))
-
-        if not filled:
+        if not segments:
             return []
 
-        # Лёгкое сглаживание (окно 5) внутри стабильного плана, БЕЗ гистерезиса.
-        # Instant switch при резких изменениях (scene changes), но усредняем мелкие колебания.
-        smoothed: list[tuple[float, float]] = []
-        window: list[float] = []
-        jump_threshold = 0.20  # что считаем "резким скачком" (новый план) — выше = меньше дёрганий
-
-        for ts, fval in filled:
-            # Если резкий скачок → сбрасываем окно и переключаемся МГНОВЕННО
-            if window and abs(fval - window[-1]) > jump_threshold:
-                window = [fval]
-                smoothed.append((ts, fval))
-                continue
-            # Иначе добавляем в окно и усредняем (убирает шум детектора)
-            window.append(fval)
-            if len(window) > 7:  # Окно 7 для более плавного сглаживания
-                window.pop(0)
-            smoothed.append((ts, sum(window) / len(window)))
-
-        # Merge into segments if focus change is small (< 0.15)
-        # Higher threshold = fewer segments = less jerky camera
-        merged: list[dict] = []
-        seg_start = smoothed[0][0]
-        seg_focus = smoothed[0][1]
-        threshold = 0.15
-
-        for i in range(1, len(smoothed)):
-            ts, fval = smoothed[i]
-            if abs(fval - seg_focus) <= threshold:
-                continue
-            # close current segment at this timestamp
-            merged.append({"start": seg_start, "end": ts, "focus": seg_focus})
-            seg_start = ts
-            seg_focus = fval
-
-        # tail
-        merged.append({"start": seg_start, "end": duration, "focus": seg_focus})
-
-        # Detect scene changes (camera cuts) and split segments at those boundaries
-        scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
+        # No smoothing needed - each scene has a fixed focus
+        # No merging needed - scenes are already the correct segments
         
-        # Split merged segments at scene change boundaries
-        if scene_changes:
-            split_segments: list[dict] = []
-            for seg in merged:
-                seg_start_time = seg["start"]
-                seg_end_time = seg["end"]
-                seg_focus_val = seg["focus"]
-                
-                # Find scene changes within this segment
-                cuts_in_seg = [sc for sc in scene_changes if seg_start_time < sc < seg_end_time]
-                
-                if not cuts_in_seg:
-                    split_segments.append(seg)
-                else:
-                    # Split segment at each scene change
-                    cuts_sorted = sorted(cuts_in_seg)
-                    prev_cut = seg_start_time
-                    for cut_ts in cuts_sorted:
-                        split_segments.append({"start": prev_cut, "end": cut_ts, "focus": seg_focus_val})
-                        prev_cut = cut_ts
-                    # Add final sub-segment
-                    split_segments.append({"start": prev_cut, "end": seg_end_time, "focus": seg_focus_val})
-            
-            merged = split_segments
-
-        # Filter extremely short segments (<2.5s) by merging with previous
-        # Longer minimum = more stable camera, fewer micro-segments
-        cleaned: list[dict] = []
-        for seg in merged:
-            if cleaned and (seg["end"] - seg["start"]) < 2.5:
-                # merge into previous
-                prev = cleaned[-1]
-                new_end = seg["end"]
-                # keep focus of previous; extend duration
-                prev["end"] = new_end
-            else:
-                cleaned.append(seg)
-
-        logger.info("Built focus timeline: %s", cleaned)
-        return cleaned
+        logger.info("Built scene-based focus timeline: %d segments", len(segments))
+        return segments
 
     # ------------------------------------------------------------------ #
     # Vertical focus timeline (y-axis) for better framing of heads       #
