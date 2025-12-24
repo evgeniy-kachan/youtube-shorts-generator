@@ -576,10 +576,11 @@ class FaceDetector:
             end_tc = FrameTimecode(end_frame, fps)
             
             # Detect scenes using ContentDetector (adaptive threshold)
-            # threshold: lower = more sensitive (default 27.0, оставляем 23.0 для чувствительности)
+            # threshold: lower = more sensitive (default 27.0)
+            # Lowered to 15.0 to catch camera switches between similar close-ups
             scene_list = detect(
                 video_path,
-                ContentDetector(threshold=23.0, min_scene_len=15),  # минимум ~0.6s при 25fps
+                ContentDetector(threshold=15.0, min_scene_len=10),  # минимум ~0.4s при 25fps
                 start_time=start_tc,
                 end_time=end_tc,
             )
@@ -607,6 +608,104 @@ class FaceDetector:
         except Exception as exc:
             logger.warning("Scene detection failed for %s: %s", video_path, exc)
             return []
+
+    # ------------------------------------------------------------------ #
+    # Face-jump detection (camera switch detection via face position)
+    # ------------------------------------------------------------------ #
+    def _detect_face_jumps(
+        self,
+        video_path: str,
+        segment_start: float = 0.0,
+        segment_end: float | None = None,
+        sample_interval: float = 0.15,  # Sample every 150ms
+        jump_threshold: float = 0.25,   # 25% position change = camera switch
+    ) -> list[float]:
+        """
+        Detect camera switches by looking for sudden jumps in face position.
+        
+        If face.center_x changes by more than jump_threshold between consecutive
+        samples, it's likely a camera switch.
+        
+        Returns:
+            List of timestamps where face jumps were detected
+        """
+        capture = cv2.VideoCapture(video_path)
+        if not capture.isOpened():
+            return []
+        
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        if (not math.isfinite(fps)) or fps <= 1e-3:
+            fps = 25.0
+        duration = frame_count / fps
+        
+        if segment_end is None:
+            segment_end = duration
+        
+        # Sample frames at regular intervals
+        sample_times = []
+        t = 0.0
+        while t < duration:
+            sample_times.append(t)
+            t += sample_interval
+        
+        # Detect faces at each sample point
+        face_positions: list[tuple[float, float | None]] = []  # (time, position)
+        
+        for sample_time in sample_times:
+            frame_idx = int(sample_time * fps)
+            if frame_idx >= frame_count:
+                break
+            
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                face_positions.append((sample_time, None))
+                continue
+            
+            faces = self._detect_faces(frame)
+            if not faces:
+                face_positions.append((sample_time, None))
+                continue
+            
+            # Use largest face
+            best_face = max(faces, key=lambda f: f.get("area", 0))
+            frame_width = best_face.get("width", 1.0)
+            position = best_face["center_x"] / max(frame_width, 1.0)
+            face_positions.append((sample_time, position))
+        
+        capture.release()
+        
+        # Find jumps
+        jump_times: list[float] = []
+        prev_pos: float | None = None
+        prev_time: float = 0.0
+        
+        for sample_time, position in face_positions:
+            if position is None:
+                continue
+            
+            if prev_pos is not None:
+                diff = abs(position - prev_pos)
+                if diff >= jump_threshold:
+                    # Jump detected!
+                    # Use midpoint between samples as the jump time
+                    jump_time = (prev_time + sample_time) / 2.0
+                    jump_times.append(jump_time)
+                    logger.info(
+                        "Face-jump detected at %.2fs: position %.3f -> %.3f (diff=%.3f)",
+                        jump_time, prev_pos, position, diff
+                    )
+            
+            prev_pos = position
+            prev_time = sample_time
+        
+        logger.info(
+            "Face-jump detection: found %d jumps in [%.1f, %.1f]s",
+            len(jump_times), segment_start, segment_end or duration
+        )
+        
+        return jump_times
 
     # ------------------------------------------------------------------ #
     # Speaker-aware focus timeline (follows the speaking person)
@@ -837,7 +936,10 @@ class FaceDetector:
                         )
             
             # Handle short segments (likely overlaps): keep focus on dominant speaker
-            MIN_SEGMENT_DURATION = 1.5  # Segments shorter than 1.5s are likely overlaps
+            MIN_SEGMENT_DURATION = 3.0  # Segments shorter than 3s → merge to reduce jitter
+            
+            # Minimum position difference to switch focus (avoid jerky transitions)
+            MIN_FOCUS_DIFF = 0.12  # Don't switch if positions differ by less than 12%
             
             # Find the dominant speaker (most total speech)
             total_durations = _get_speaker_duration_after(0.0)
@@ -881,7 +983,20 @@ class FaceDetector:
                         )
                 
                 # Normal segment - use speaker's position
-                focus = speaker_positions.get(speaker, last_focus)
+                new_focus = speaker_positions.get(speaker, last_focus)
+                
+                # Check if position difference is too small to bother switching
+                focus_diff = abs(new_focus - last_focus)
+                if focus_diff < MIN_FOCUS_DIFF and segments:
+                    # Positions are too close - don't switch, extend previous segment
+                    logger.info(
+                        "Segment [%.2f-%.2f]: '%s' focus=%.3f too close to previous %.3f (diff=%.3f < %.2f), keeping previous",
+                        group["start"], group["end"], speaker, new_focus, last_focus, focus_diff, MIN_FOCUS_DIFF
+                    )
+                    segments[-1]["end"] = group["end"]
+                    continue
+                
+                focus = new_focus
                 
                 segments.append({
                     "start": group["start"],
@@ -899,7 +1014,136 @@ class FaceDetector:
             capture.release()
             
             if segments:
-                logger.info("Built SPEAKER-AWARE focus timeline: %d segments", len(segments))
+                # ============================================================
+                # DETECT CAMERA SWITCHES via face-jumps and split segments
+                # ============================================================
+                face_jumps = self._detect_face_jumps(video_path, segment_start, segment_end)
+                
+                if face_jumps:
+                    # Split segments at camera switch points
+                    split_segments: list[dict] = []
+                    
+                    for seg in segments:
+                        seg_start = seg["start"]
+                        seg_end = seg["end"]
+                        seg_focus = seg["focus"]
+                        
+                        # Find face jumps within this segment
+                        jumps_in_seg = [j for j in face_jumps if seg_start < j < seg_end]
+                        
+                        if not jumps_in_seg:
+                            split_segments.append(seg)
+                        else:
+                            # Split segment at each jump
+                            prev_time = seg_start
+                            for jump_time in sorted(jumps_in_seg):
+                                if jump_time > prev_time + 0.3:  # Min 300ms segment
+                                    split_segments.append({
+                                        "start": prev_time,
+                                        "end": jump_time,
+                                        "focus": seg_focus,  # Will be re-sampled below
+                                    })
+                                prev_time = jump_time
+                            # Add final part
+                            if seg_end > prev_time + 0.3:
+                                split_segments.append({
+                                    "start": prev_time,
+                                    "end": seg_end,
+                                    "focus": seg_focus,
+                                })
+                    
+                    logger.info(
+                        "Split %d segments at %d camera switches -> %d segments",
+                        len(segments), len(face_jumps), len(split_segments)
+                    )
+                    
+                    # Re-sample focus for each new segment (to get correct position for each camera)
+                    resample_cap = cv2.VideoCapture(video_path)
+                    if resample_cap.isOpened():
+                        resample_fps = resample_cap.get(cv2.CAP_PROP_FPS) or 25.0
+                        resample_frame_count = int(resample_cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+                        
+                        for seg in split_segments:
+                            # Sample 3 frames in this segment
+                            samples: list[float] = []
+                            seg_dur = seg["end"] - seg["start"]
+                            for offset in [0.2, 0.5, 0.8]:
+                                sample_time = seg["start"] + offset * seg_dur
+                                frame_idx = int(sample_time * resample_fps)
+                                if frame_idx >= resample_frame_count:
+                                    continue
+                                resample_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                                ok, frame = resample_cap.read()
+                                if not ok or frame is None:
+                                    continue
+                                faces = self._detect_faces(frame)
+                                focus_val = _focus_for_faces(faces)
+                                if focus_val is not None:
+                                    samples.append(focus_val)
+                            
+                            if samples:
+                                seg["focus"] = sum(samples) / len(samples)
+                                logger.info(
+                                    "Re-sampled segment [%.2f-%.2f]: %d samples -> focus=%.3f",
+                                    seg["start"], seg["end"], len(samples), seg["focus"]
+                                )
+                        resample_cap.release()
+                    
+                    segments = split_segments
+                
+                # ============================================================
+                # ADD SMOOTH TRANSITIONS (cross-fade) between segments
+                # ============================================================
+                TRANSITION_DURATION = 0.4  # 400ms transition between focus positions
+                
+                smoothed_segments: list[dict] = []
+                
+                for i, seg in enumerate(segments):
+                    if i == 0:
+                        # First segment - no transition needed
+                        smoothed_segments.append(seg)
+                        continue
+                    
+                    prev_seg = smoothed_segments[-1]
+                    prev_focus = prev_seg["focus"]
+                    curr_focus = seg["focus"]
+                    focus_diff = abs(curr_focus - prev_focus)
+                    
+                    if focus_diff >= MIN_FOCUS_DIFF:
+                        # Significant focus change - add transition
+                        transition_start = seg["start"]
+                        transition_end = min(seg["start"] + TRANSITION_DURATION, seg["end"])
+                        
+                        # Shorten previous segment slightly to make room for transition
+                        if prev_seg["end"] > transition_start:
+                            prev_seg["end"] = transition_start
+                        
+                        # Create transition segment (midpoint focus)
+                        mid_focus = (prev_focus + curr_focus) / 2.0
+                        
+                        # Only add transition if there's room
+                        if transition_end > transition_start + 0.1:
+                            smoothed_segments.append({
+                                "start": transition_start,
+                                "end": transition_end,
+                                "focus": mid_focus,
+                                "is_transition": True,  # Mark as transition for logging
+                            })
+                            logger.info(
+                                "Added transition [%.2f-%.2f]: focus %.3f -> %.3f (mid=%.3f)",
+                                transition_start, transition_end, prev_focus, curr_focus, mid_focus
+                            )
+                            
+                            # Adjust current segment to start after transition
+                            seg = dict(seg)  # Copy to avoid modifying original
+                            seg["start"] = transition_end
+                    
+                    # Add current segment (possibly shortened)
+                    if seg["end"] > seg["start"]:
+                        smoothed_segments.append(seg)
+                
+                segments = smoothed_segments
+                logger.info("Built SPEAKER-AWARE focus timeline: %d segments (with transitions)", len(segments))
                 return segments
         
         # ============================================================
@@ -907,12 +1151,24 @@ class FaceDetector:
         # ============================================================
         logger.info("Using SCENE-BASED focus (no diarization data)")
         
+        # Combine PySceneDetect with face-jump detection
         scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
-        scene_boundaries = [0.0] + scene_changes + [duration]
+        face_jumps = self._detect_face_jumps(video_path, segment_start, segment_end)
+        
+        # Merge scene changes and face jumps, remove duplicates within 0.5s
+        all_changes = sorted(set(scene_changes + face_jumps))
+        merged_changes: list[float] = []
+        for t in all_changes:
+            if not merged_changes or (t - merged_changes[-1]) >= 0.5:
+                merged_changes.append(t)
+        
+        scene_boundaries = [0.0] + merged_changes + [duration]
         
         logger.info(
-            "Scene-based focus: %d scenes, boundaries: %s",
+            "Scene-based focus: %d scenes (PySceneDetect=%d, face-jumps=%d), boundaries: %s",
             len(scene_boundaries) - 1,
+            len(scene_changes),
+            len(face_jumps),
             [f"{t:.2f}s" for t in scene_boundaries],
         )
         
