@@ -533,7 +533,11 @@ class FaceDetector:
         segment_end: float | None = None,
     ) -> list[float]:
         """
-        Detect abrupt scene changes (camera cuts) using PySceneDetect.
+        Detect abrupt scene changes (camera cuts) using TransNetV2 neural network.
+        
+        TransNetV2 is a deep learning model specifically designed for shot boundary
+        detection with F1=96.2% on BBC Planet Earth benchmark.
+        https://github.com/soCzech/TransNetV2
         
         Args:
             video_path: Path to video file
@@ -541,72 +545,29 @@ class FaceDetector:
             segment_end: End time in seconds (None = full video)
         
         Returns:
-            List of timestamps (in seconds) where scene changes occur
+            List of timestamps (in seconds, relative to segment_start) where scene changes occur
         """
         try:
-            from scenedetect import detect, ContentDetector
-            from scenedetect.frame_timecode import FrameTimecode
-        except ImportError:
-            logger.warning("PySceneDetect not installed, scene detection disabled")
-            return []
-        
-        try:
-            # Use OpenCV to get fps/duration (PySceneDetect high-level API no longer exposes VideoStream)
-            cap = cv2.VideoCapture(video_path)
-            if not cap.isOpened():
-                raise OSError("unable to open video for scene detection")
-            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-            if (not math.isfinite(fps)) or fps <= 1e-3:
-                fps = 25.0
-            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
-            if frame_count <= 0:
-                frame_count = 1
-            duration = frame_count / fps if fps > 1e-3 else frame_count / 25.0
-            cap.release()
-
-            if segment_end is None:
-                segment_end = duration
+            from backend.services.transnet_detector import get_transnet_detector
             
-            # Convert time boundaries to frame numbers
-            start_frame = int(segment_start * fps)
-            end_frame = int(segment_end * fps)
-            
-            # Create start/end timecodes
-            start_tc = FrameTimecode(start_frame, fps)
-            end_tc = FrameTimecode(end_frame, fps)
-            
-            # Detect scenes using ContentDetector (adaptive threshold)
-            # threshold: lower = more sensitive (default 27.0)
-            # Lowered to 15.0 to catch camera switches between similar close-ups
-            scene_list = detect(
+            detector = get_transnet_detector()
+            scene_changes = detector.detect_scenes(
                 video_path,
-                ContentDetector(threshold=15.0, min_scene_len=10),  # минимум ~0.4s при 25fps
-                start_time=start_tc,
-                end_time=end_tc,
+                segment_start=segment_start,
+                segment_end=segment_end,
             )
             
-            # Extract timestamps of scene changes (start of each new scene)
-            scene_changes = []
-            for i, (start_time, end_time) in enumerate(scene_list):
-                if i > 0:  # Skip first scene start (it's segment_start)
-                    timestamp = start_time.get_seconds()
-                    # Adjust to segment-relative time
-                    relative_ts = timestamp - segment_start
-                    if 0 < relative_ts < (segment_end - segment_start):
-                        scene_changes.append(relative_ts)
-                        logger.info(
-                            "Scene change detected at %.2fs (absolute: %.2fs)",
-                            relative_ts, timestamp
-                        )
-            
             logger.info(
-                "Detected %d scene changes in [%.1f, %.1f]",
+                "TransNetV2: detected %d scene changes in [%.1f, %.1f]",
                 len(scene_changes), segment_start, segment_end or 0
             )
             return scene_changes
             
+        except ImportError as e:
+            logger.warning("TransNetV2 not available: %s, falling back to face-jump detection", e)
+            return []
         except Exception as exc:
-            logger.warning("Scene detection failed for %s: %s", video_path, exc)
+            logger.warning("TransNetV2 scene detection failed for %s: %s", video_path, exc)
             return []
 
     # ------------------------------------------------------------------ #
@@ -1151,7 +1112,7 @@ class FaceDetector:
         # ============================================================
         logger.info("Using SCENE-BASED focus (no diarization data)")
         
-        # Combine PySceneDetect with face-jump detection
+        # Combine TransNetV2 with face-jump detection
         scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
         face_jumps = self._detect_face_jumps(video_path, segment_start, segment_end)
         
@@ -1165,7 +1126,7 @@ class FaceDetector:
         scene_boundaries = [0.0] + merged_changes + [duration]
         
         logger.info(
-            "Scene-based focus: %d scenes (PySceneDetect=%d, face-jumps=%d), boundaries: %s",
+            "Scene-based focus: %d scenes (TransNetV2=%d, face-jumps=%d), boundaries: %s",
             len(scene_boundaries) - 1,
             len(scene_changes),
             len(face_jumps),

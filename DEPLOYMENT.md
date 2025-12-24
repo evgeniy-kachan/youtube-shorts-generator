@@ -11,7 +11,7 @@ Main application environment for video processing, face detection, and API serve
 - NumPy < 2.0 (required by onnxruntime-gpu, insightface)
 - onnxruntime-gpu
 - insightface (face detection)
-- scenedetect (scene change detection)
+- TransNetV2 (scene change detection, PyTorch-based, F1=96.2%)
 - opencv-contrib-python
 - FastAPI, WhisperX, etc.
 
@@ -80,7 +80,7 @@ The backend will automatically call venv-diar for diarization tasks via subproce
 - `venv-host` (requirements.txt):
   - ✅ Face detection (insightface, onnxruntime-gpu)
   - ✅ Video processing (opencv, ffmpeg, moviepy)
-  - ✅ Scene detection (scenedetect)
+  - ✅ Scene detection (TransNetV2, PyTorch-based)
   - ✅ API server (FastAPI, uvicorn)
   - ✅ Transcription (whisperx)
   - ❌ Speaker diarization (pyannote.audio)
