@@ -137,7 +137,7 @@ class FaceDetector:
     def __init__(
         self,
         model_name: str = "antelopev2",  # default to SCRFD (better on profiles)
-        det_thresh: float = 0.20,
+        det_thresh: float = 0.15,  # Lowered to catch profile/sideways faces
         ctx_id: int = 0,
     ):
         """
@@ -164,15 +164,17 @@ class FaceDetector:
                 name=self.model_name,
                 providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
             )
-            # Larger det_size + lower threshold to catch harder poses
-            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(1280, 1280))
+            # Larger det_size to catch small faces on wide shots
+            # 1920x1920 allows detection of faces ~20px wide on 4K video
+            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(1920, 1920))
             logger.info("InsightFace initialized successfully")
         except Exception as e:
             logger.error("Failed to initialize InsightFace: %s", e, exc_info=True)
             raise RuntimeError(f"InsightFace initialization failed: {e}") from e
 
     # Minimum face width in pixels to filter out noise detections
-    MIN_FACE_WIDTH_PX = 40
+    # Lowered from 40 to 25 to catch faces on wide shots
+    MIN_FACE_WIDTH_PX = 25
 
     def _detect_faces(self, frame: np.ndarray) -> Sequence[dict]:
         """Detect faces in frame using InsightFace."""
