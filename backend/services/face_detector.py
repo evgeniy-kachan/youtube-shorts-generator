@@ -761,8 +761,9 @@ class FaceDetector:
         
         # ============================================================
         # STEP 1: TransNetV2 scene detection
+        # NOTE: video_path is already the CUT segment (starts at 0), so use local time
         # ============================================================
-        scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
+        scene_changes = self._detect_scene_changes(video_path, 0.0, None)
         scene_boundaries = [0.0] + scene_changes + [duration]
         
         logger.info(
@@ -1015,7 +1016,8 @@ class FaceDetector:
         merged.append({"start": seg_start, "end": duration, "focus_y": seg_focus})
 
         # Detect scene changes and split segments at those boundaries
-        scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
+        # NOTE: video_path is already the CUT segment (starts at 0), so use local time
+        scene_changes = self._detect_scene_changes(video_path, 0.0, None)
         
         if scene_changes:
             split_segments: list[dict] = []
