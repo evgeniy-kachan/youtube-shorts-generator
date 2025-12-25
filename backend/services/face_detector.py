@@ -202,7 +202,7 @@ class FaceDetector:
             )
             # Larger det_size to catch small faces on wide shots
             # 1920x1920 allows detection of faces ~20px wide on 4K video
-            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(1280, 1280), nms_thresh=0.45)
+            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(1280, 1280))
             logger.info("InsightFace initialized successfully")
         except Exception as e:
             logger.error("Failed to initialize InsightFace: %s", e, exc_info=True)
