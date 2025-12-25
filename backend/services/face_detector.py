@@ -15,11 +15,16 @@ logger = logging.getLogger(__name__)
 
 class SimpleTracker:
     """
-    Minimal IoU-based tracker to stabilize face positions across frames.
-    No velocities, just IoU matching with light smoothing on centers.
+    IoU-based tracker with prediction support for profile faces.
+    Key feature: tracks survive when SCRFD misses detection (profile view).
+    After MIN_HITS frames, track is considered "confirmed" and will be used
+    even when detection fails.
     """
 
-    def __init__(self, max_age: int = 10, iou_thresh: float = 0.2):
+    MIN_HITS = 3  # Track must be detected N times to be confirmed
+    MAX_AGE = 15  # Keep track alive for N frames without detection
+
+    def __init__(self, max_age: int = 15, iou_thresh: float = 0.25):
         self.max_age = max_age
         self.iou_thresh = iou_thresh
         self.tracks: list[dict] = []
@@ -45,24 +50,29 @@ class SimpleTracker:
         self.tracks.clear()
         self.next_id = 1
 
+    def get_confirmed_tracks(self) -> list[dict]:
+        """Return tracks that have been detected at least MIN_HITS times."""
+        return [t for t in self.tracks if t.get("hits", 0) >= self.MIN_HITS]
+
     def update(self, faces: Sequence[dict]) -> list[dict]:
+        """
+        Update tracks with new detections.
+        Returns: list of faces with smoothed positions (includes predicted tracks).
+        """
         # Age existing tracks
         for t in self.tracks:
             t["age"] += 1
 
-        if not faces:
-            # Drop old
-            self.tracks = [t for t in self.tracks if t["age"] <= self.max_age]
-            return []
-
         # Prepare detections
         det_boxes = []
+        det_faces = []
         for f in faces:
             x1 = f["x"]
             y1 = f["y"]
             x2 = f["x"] + f["w"]
             y2 = f["y"] + f["h"]
             det_boxes.append((x1, y1, x2, y2))
+            det_faces.append(f)
 
         assigned_tracks = set()
         assigned_dets = set()
@@ -83,9 +93,11 @@ class SimpleTracker:
                 t = self.tracks[best_track]
                 t["bbox"] = box
                 t["age"] = 0
+                t["hits"] = t.get("hits", 0) + 1
+                t["last_face"] = det_faces[det_idx]  # Store last detected face
                 # Smooth center_x
                 det_cx = (box[0] + box[2]) / 2.0
-                smoothed_cx = 0.6 * det_cx + 0.4 * t["center_x"]
+                smoothed_cx = 0.7 * det_cx + 0.3 * t["center_x"]
                 t["center_x"] = smoothed_cx
                 assigned_tracks.add(best_track)
                 assigned_dets.add(det_idx)
@@ -101,17 +113,21 @@ class SimpleTracker:
                     "bbox": box,
                     "center_x": det_cx,
                     "age": 0,
+                    "hits": 1,
+                    "last_face": det_faces[det_idx],
                 }
             )
             self.next_id += 1
 
-        # Drop stale
+        # Drop stale tracks
         self.tracks = [t for t in self.tracks if t["age"] <= self.max_age]
 
-        # Return faces with smoothed center_x if matched
+        # Build output: detected faces + confirmed tracks without detection
         out = []
-        for det_idx, f in enumerate(faces):
-            # Find matching track by IoU again (cheap, small N)
+        used_track_ids = set()
+
+        # First, add all detected faces with smoothed positions
+        for det_idx, f in enumerate(det_faces):
             box = det_boxes[det_idx]
             best_track = None
             best_iou = self.iou_thresh
@@ -124,7 +140,26 @@ class SimpleTracker:
                 f = dict(f)
                 f["center_x"] = best_track["center_x"]
                 f["track_id"] = best_track["id"]
+                used_track_ids.add(best_track["id"])
             out.append(f)
+
+        # Add confirmed tracks that weren't detected this frame (profile prediction)
+        for t in self.tracks:
+            if t["id"] in used_track_ids:
+                continue
+            # Only use confirmed tracks (seen MIN_HITS times) that are still fresh
+            if t.get("hits", 0) >= self.MIN_HITS and t["age"] <= 5:
+                # Use last known face with predicted position
+                if "last_face" in t:
+                    predicted_face = dict(t["last_face"])
+                    predicted_face["center_x"] = t["center_x"]
+                    predicted_face["track_id"] = t["id"]
+                    predicted_face["predicted"] = True  # Mark as predicted
+                    out.append(predicted_face)
+                    logger.debug(
+                        "Track %d: using predicted position (age=%d, hits=%d)",
+                        t["id"], t["age"], t["hits"]
+                    )
 
         return out
 
@@ -132,12 +167,13 @@ class SimpleTracker:
 class FaceDetector:
     """
     Face detector using InsightFace for horizontal face focus estimation.
+    Uses tracking to maintain face positions when SCRFD misses profile views.
     """
 
     def __init__(
         self,
         model_name: str = "antelopev2",  # default to SCRFD (better on profiles)
-        det_thresh: float = 0.15,  # Lowered to catch profile/sideways faces
+        det_thresh: float = 0.30,  # Balance: catch profiles but reduce noise
         ctx_id: int = 0,
     ):
         """
@@ -166,15 +202,15 @@ class FaceDetector:
             )
             # Larger det_size to catch small faces on wide shots
             # 1920x1920 allows detection of faces ~20px wide on 4K video
-            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(1920, 1920))
+            self._detector.prepare(ctx_id=self.ctx_id, det_thresh=self.det_thresh, det_size=(1280, 1280), nms_thresh=0.45)
             logger.info("InsightFace initialized successfully")
         except Exception as e:
             logger.error("Failed to initialize InsightFace: %s", e, exc_info=True)
             raise RuntimeError(f"InsightFace initialization failed: {e}") from e
 
     # Minimum face width in pixels to filter out noise detections
-    # Lowered from 40 to 25 to catch faces on wide shots
-    MIN_FACE_WIDTH_PX = 25
+    # Set to 16 to catch small faces on wide shots / profile views
+    MIN_FACE_WIDTH_PX = 16
 
     def _detect_faces(self, frame: np.ndarray) -> Sequence[dict]:
         """Detect faces in frame using InsightFace."""
