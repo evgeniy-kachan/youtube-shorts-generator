@@ -976,12 +976,12 @@ class FaceDetector:
             
             if segments:
                 # ============================================================
-                # DETECT CAMERA SWITCHES via face-jumps and split segments
+                # DETECT CAMERA SWITCHES via TransNetV2 (neural network)
                 # ============================================================
-                face_jumps = self._detect_face_jumps(video_path, segment_start, segment_end)
+                scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
                 
-                if face_jumps:
-                    # Split segments at camera switch points
+                if scene_changes:
+                    # Split segments at camera switch points (TransNetV2 detected cuts)
                     split_segments: list[dict] = []
                     
                     for seg in segments:
@@ -989,22 +989,22 @@ class FaceDetector:
                         seg_end = seg["end"]
                         seg_focus = seg["focus"]
                         
-                        # Find face jumps within this segment
-                        jumps_in_seg = [j for j in face_jumps if seg_start < j < seg_end]
+                        # Find scene changes within this segment
+                        cuts_in_seg = [t for t in scene_changes if seg_start < t < seg_end]
                         
-                        if not jumps_in_seg:
+                        if not cuts_in_seg:
                             split_segments.append(seg)
                         else:
-                            # Split segment at each jump
+                            # Split segment at each cut
                             prev_time = seg_start
-                            for jump_time in sorted(jumps_in_seg):
-                                if jump_time > prev_time + 0.3:  # Min 300ms segment
+                            for cut_time in sorted(cuts_in_seg):
+                                if cut_time > prev_time + 0.3:  # Min 300ms segment
                                     split_segments.append({
                                         "start": prev_time,
-                                        "end": jump_time,
+                                        "end": cut_time,
                                         "focus": seg_focus,  # Will be re-sampled below
                                     })
-                                prev_time = jump_time
+                                prev_time = cut_time
                             # Add final part
                             if seg_end > prev_time + 0.3:
                                 split_segments.append({
@@ -1014,8 +1014,8 @@ class FaceDetector:
                                 })
                     
                     logger.info(
-                        "Split %d segments at %d camera switches -> %d segments",
-                        len(segments), len(face_jumps), len(split_segments)
+                        "TransNetV2: Split %d segments at %d camera cuts -> %d segments",
+                        len(segments), len(scene_changes), len(split_segments)
                     )
                     
                     # Re-sample focus for each new segment (to get correct position for each camera)
@@ -1109,27 +1109,18 @@ class FaceDetector:
         
         # ============================================================
         # FALLBACK: Scene-based sampling (no diarization data)
+        # Uses TransNetV2 neural network for accurate scene detection
         # ============================================================
         logger.info("Using SCENE-BASED focus (no diarization data)")
         
-        # Combine TransNetV2 with face-jump detection
+        # Use TransNetV2 for scene detection
         scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
-        face_jumps = self._detect_face_jumps(video_path, segment_start, segment_end)
         
-        # Merge scene changes and face jumps, remove duplicates within 0.5s
-        all_changes = sorted(set(scene_changes + face_jumps))
-        merged_changes: list[float] = []
-        for t in all_changes:
-            if not merged_changes or (t - merged_changes[-1]) >= 0.5:
-                merged_changes.append(t)
-        
-        scene_boundaries = [0.0] + merged_changes + [duration]
+        scene_boundaries = [0.0] + scene_changes + [duration]
         
         logger.info(
-            "Scene-based focus: %d scenes (TransNetV2=%d, face-jumps=%d), boundaries: %s",
+            "TransNetV2 scene-based focus: %d scenes, boundaries: %s",
             len(scene_boundaries) - 1,
-            len(scene_changes),
-            len(face_jumps),
             [f"{t:.2f}s" for t in scene_boundaries],
         )
         
