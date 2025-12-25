@@ -707,539 +707,210 @@ class FaceDetector:
         return jump_times
 
     # ------------------------------------------------------------------ #
-    # Speaker-aware focus timeline (follows the speaking person)
     # ------------------------------------------------------------------ #
+    # Interview-optimized focus timeline (TransNetV2 first, then SCRFD)
+    # ------------------------------------------------------------------ #
+    
+    # Constants for focus detection
+    NUM_DETECTIONS_PER_SCENE = 7  # 7 consecutive SCRFD detections at scene start
+    CROP_WIDTH_PX = 1080  # Target crop width for 9:16 vertical video
+    
     def build_focus_timeline(
         self,
         video_path: str,
         dialogue: list[dict] | None = None,
         segment_start: float = 0.0,
         segment_end: float | None = None,
-        sample_period: float = 0.33,  # ignored in new approach
+        sample_period: float = 0.33,  # ignored
     ) -> list[dict]:
         """
-        Build focus timeline that FOLLOWS THE SPEAKING PERSON.
+        Build focus timeline optimized for interview videos (3-camera setup).
         
-        SPEAKER-AWARE APPROACH:
-        1. Use diarization data (dialogue) to find speaker segments
-        2. Group consecutive segments by speaker
-        3. For each speaker group, sample 2 frames to find their position
-        4. Focus follows whoever is speaking
-        
-        Falls back to scene-based sampling if no dialogue data.
+        ALGORITHM:
+        1. TransNetV2 detects scene changes (wide shot, close-up A, close-up B)
+        2. For each scene: 7 consecutive SCRFD detections at scene START
+        3. Decision logic:
+           - 1 face → center on it
+           - 2 faces, fit in 1080px → center between them  
+           - 2 faces, DON'T fit → SPEAKER-AWARE (focus on who's speaking)
         """
-        # === DIAGNOSTIC LOGGING ===
-        dialogue_len = len(dialogue) if dialogue else 0
-        dialogue_preview = []
-        if dialogue and len(dialogue) > 0:
-            for i, turn in enumerate(dialogue[:3]):  # first 3 turns
-                dialogue_preview.append({
-                    "speaker": turn.get("speaker"),
-                    "start": turn.get("start"),
-                    "end": turn.get("end"),
-                })
         logger.info(
-            "build_focus_timeline called: dialogue_len=%d, segment_start=%.2f, segment_end=%s, preview=%s",
-            dialogue_len,
-            segment_start,
-            segment_end,
-            dialogue_preview,
+            "build_focus_timeline: video=%s, dialogue_len=%d, segment=[%.2f, %s]",
+            video_path, len(dialogue) if dialogue else 0, segment_start, segment_end
         )
-        # === END DIAGNOSTIC ===
         
         capture = cv2.VideoCapture(video_path)
         if not capture.isOpened():
-            logger.warning("InsightFace: unable to open video %s for timeline", video_path)
+            logger.warning("Cannot open video %s", video_path)
             return []
 
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
-        if frame_count <= 0:
-            frame_count = 1
         fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
-        if (not math.isfinite(fps)) or fps <= 1e-3:
+        if not math.isfinite(fps) or fps <= 1e-3:
             fps = 25.0
         duration = frame_count / fps
-
-        # Helper to compute focus from faces
+        frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
+        
+        # Calculate scale factor (video is scaled to fit 1920px height)
+        frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+        scale_factor = 1920.0 / frame_height if frame_height > 0 else 1.0
+        scaled_width = int(frame_width * scale_factor)
+        
         min_bound = 0.20
         max_bound = 0.80
-
-        def _focus_for_faces(faces: list) -> Optional[float]:
-            if not faces:
-                return None
-            faces_f = [
-                f for f in faces
-                if f.get("area", 0.0) >= 0.0005 * f.get("width", 1.0) * f.get("height", 1.0)
-                and f.get("w", 0.0) >= self.MIN_FACE_WIDTH_PX
-            ]
-            if not faces_f:
-                return None
-
-            frame_width = max(1e-3, faces_f[0].get("width", 1.0))
-
-            if len(faces_f) == 1:
-                f = faces_f[0]
-                return float(max(min_bound, min(max_bound, f["center_x"] / frame_width)))
-
-            # Multiple faces: check if one is much larger
-            faces_sorted = sorted(faces_f, key=lambda f: f["area"], reverse=True)
-            largest = faces_sorted[0]
-            second = faces_sorted[1]
-            size_ratio = largest["area"] / max(second["area"], 1.0)
-            
-            if size_ratio >= 3.0:
-                return float(max(min_bound, min(max_bound, largest["center_x"] / frame_width)))
-
-            # Multiple similar-sized faces: center between them
-            centers = [f["center_x"] / frame_width for f in faces_f]
-            center_avg = (min(centers) + max(centers)) / 2.0
-            return float(max(min_bound, min(max_bound, center_avg)))
-
-        def _sample_focus_at_time(t: float) -> Optional[float]:
-            """Sample face focus at a specific time."""
-            frame_idx = int(t * fps)
-            if frame_idx >= frame_count:
-                return None
-            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                return None
-            faces = self._detect_faces(frame)
-            return _focus_for_faces(faces)
-
-        # ============================================================
-        # SPEAKER-AWARE MODE: Use diarization to follow the speaker
-        # ============================================================
-        if dialogue and len(dialogue) >= 2:
-            logger.info("Using SPEAKER-AWARE focus (diarization data available)")
-            
-            # Pre-calculate speech duration for each speaker (for overlap handling)
-            def _get_speaker_duration_after(time_point: float) -> dict[str, float]:
-                """Calculate total speech duration for each speaker AFTER a given time."""
-                durations: dict[str, float] = {}
-                for seg in dialogue:
-                    seg_start = seg.get("start", 0.0) - segment_start
-                    seg_end = seg.get("end", 0.0) - segment_start
-                    if seg_end <= time_point:
-                        continue  # This segment is before our time point
-                    speaker = seg.get("speaker", "unknown")
-                    # Only count the part after time_point
-                    effective_start = max(seg_start, time_point)
-                    effective_duration = max(0.0, seg_end - effective_start)
-                    durations[speaker] = durations.get(speaker, 0.0) + effective_duration
-                return durations
-            
-            # Group consecutive dialogue segments by speaker
-            speaker_groups: list[dict] = []
-            current_speaker = None
-            group_start = 0.0
-            
-            for seg in dialogue:
-                speaker = seg.get("speaker", "unknown")
-                seg_start = seg.get("start", 0.0) - segment_start  # relative to clip
-                seg_end = seg.get("end", 0.0) - segment_start
-                
-                # Clamp to clip boundaries
-                seg_start = max(0.0, seg_start)
-                seg_end = min(duration, seg_end)
-                
-                if seg_start >= seg_end:
-                    continue
-                
-                if speaker != current_speaker:
-                    # New speaker - close previous group
-                    if current_speaker is not None and group_start < seg_start:
-                        speaker_groups.append({
-                            "speaker": current_speaker,
-                            "start": group_start,
-                            "end": seg_start,
-                        })
-                    current_speaker = speaker
-                    group_start = seg_start
-            
-            # Close last group
-            if current_speaker is not None:
-                speaker_groups.append({
-                    "speaker": current_speaker,
-                    "start": group_start,
-                    "end": duration,
-                })
-            
-            logger.info(
-                "Found %d speaker groups: %s",
-                len(speaker_groups),
-                [(g["speaker"], f"{g['start']:.1f}-{g['end']:.1f}s") for g in speaker_groups]
-            )
-            
-            # Build speaker position cache: try multiple samples to find each speaker's position
-            speaker_positions: dict[str, float] = {}
-            
-            # Collect ALL segments for each speaker (to sample from multiple places)
-            speaker_all_segments: dict[str, list[tuple[float, float]]] = {}
-            for group in speaker_groups:
-                speaker = group["speaker"]
-                if speaker not in speaker_all_segments:
-                    speaker_all_segments[speaker] = []
-                speaker_all_segments[speaker].append((group["start"], group["end"]))
-            
-            # For each speaker, try up to 10 samples across all their segments
-            MAX_SAMPLES_PER_SPEAKER = 10
-            SAMPLE_OFFSETS = [0.1, 0.3, 0.5, 0.7, 0.9]  # Sample at different points
-            
-            for speaker, segs in speaker_all_segments.items():
-                samples_found: list[float] = []
-                
-                for seg_start, seg_end in segs:
-                    if len(samples_found) >= MAX_SAMPLES_PER_SPEAKER:
-                        break
-                    seg_dur = seg_end - seg_start
-                    
-                    for offset in SAMPLE_OFFSETS:
-                        if len(samples_found) >= MAX_SAMPLES_PER_SPEAKER:
-                            break
-                        sample_time = seg_start + offset * seg_dur
-                        focus_val = _sample_focus_at_time(sample_time)
-                        if focus_val is not None:
-                            samples_found.append(focus_val)
-                            logger.debug(
-                                "Speaker '%s': sample at t=%.2fs -> focus=%.3f",
-                                speaker, sample_time, focus_val
-                            )
-                
-                if samples_found:
-                    speaker_positions[speaker] = sum(samples_found) / len(samples_found)
-                    logger.info(
-                        "Speaker '%s' position: %.3f (from %d samples)",
-                        speaker, speaker_positions[speaker], len(samples_found)
-                    )
-                else:
-                    logger.warning("Speaker '%s': NO face detected in any sample!", speaker)
-            
-            # FALLBACK: If a speaker has no position, infer from OPPOSITE side of known speakers
-            known_positions = list(speaker_positions.values())
-            if known_positions:
-                known_avg = sum(known_positions) / len(known_positions)
-                
-                for speaker in speaker_all_segments.keys():
-                    if speaker not in speaker_positions:
-                        # Infer: if known speakers are on left, this one is probably on right
-                        if known_avg < 0.50:
-                            inferred_pos = 0.75  # Right side
-                        else:
-                            inferred_pos = 0.30  # Left side
-                        
-                        speaker_positions[speaker] = inferred_pos
-                        logger.info(
-                            "Speaker '%s': INFERRED position %.3f (opposite of known avg %.3f)",
-                            speaker, inferred_pos, known_avg
-                        )
-            
-            # Handle short segments (likely overlaps): keep focus on dominant speaker
-            MIN_SEGMENT_DURATION = 3.0  # Segments shorter than 3s → merge to reduce jitter
-            
-            # Minimum position difference to switch focus (avoid jerky transitions)
-            MIN_FOCUS_DIFF = 0.12  # Don't switch if positions differ by less than 12%
-            
-            # Find the dominant speaker (most total speech)
-            total_durations = _get_speaker_duration_after(0.0)
-            dominant_speaker = max(total_durations, key=total_durations.get) if total_durations else None
-            
-            logger.info(
-                "Speaker durations: %s, dominant: %s",
-                {k: f"{v:.1f}s" for k, v in total_durations.items()},
-                dominant_speaker
-            )
-            
-            # Build focus timeline from speaker groups
-            # Short segments (overlaps) → keep focus on speaker with MORE text after
-            segments: list[dict] = []
-            last_focus = 0.5
-            last_speaker = None
-            
-            for i, group in enumerate(speaker_groups):
-                speaker = group["speaker"]
-                seg_duration = group["end"] - group["start"]
-                
-                # Check if this is a short segment (likely overlap/interruption)
-                if seg_duration < MIN_SEGMENT_DURATION:
-                    # Look ahead: who speaks more after this segment?
-                    future_durations = _get_speaker_duration_after(group["end"])
-                    
-                    # If the previous speaker has more upcoming speech, keep focus on them
-                    if last_speaker and future_durations.get(last_speaker, 0) >= future_durations.get(speaker, 0):
-                        logger.info(
-                            "Short segment [%.2f-%.2f] (%.1fs): '%s' interrupted, keeping focus on '%s'",
-                            group["start"], group["end"], seg_duration, speaker, last_speaker
-                        )
-                        # Extend previous segment instead of creating new one
-                        if segments:
-                            segments[-1]["end"] = group["end"]
-                        continue
-                    else:
-                        logger.info(
-                            "Short segment [%.2f-%.2f] (%.1fs): '%s' becomes dominant after",
-                            group["start"], group["end"], seg_duration, speaker
-                        )
-                
-                # Normal segment - use speaker's position
-                new_focus = speaker_positions.get(speaker, last_focus)
-                
-                # Check if position difference is too small to bother switching
-                focus_diff = abs(new_focus - last_focus)
-                if focus_diff < MIN_FOCUS_DIFF and segments:
-                    # Positions are too close - don't switch, extend previous segment
-                    logger.info(
-                        "Segment [%.2f-%.2f]: '%s' focus=%.3f too close to previous %.3f (diff=%.3f < %.2f), keeping previous",
-                        group["start"], group["end"], speaker, new_focus, last_focus, focus_diff, MIN_FOCUS_DIFF
-                    )
-                    segments[-1]["end"] = group["end"]
-                    continue
-                
-                focus = new_focus
-                
-                segments.append({
-                    "start": group["start"],
-                    "end": group["end"],
-                    "focus": focus,
-                })
-                last_focus = focus
-                last_speaker = speaker
-                
-                logger.info(
-                    "Segment [%.2f-%.2f]: speaker '%s' -> focus=%.3f",
-                    group["start"], group["end"], speaker, focus
-                )
-            
-            capture.release()
-            
-            if segments:
-                # ============================================================
-                # DETECT CAMERA SWITCHES via TransNetV2 (neural network)
-                # ============================================================
-                scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
-                
-                if scene_changes:
-                    # Split segments at camera switch points (TransNetV2 detected cuts)
-                    split_segments: list[dict] = []
-                    
-                    for seg in segments:
-                        seg_start = seg["start"]
-                        seg_end = seg["end"]
-                        seg_focus = seg["focus"]
-                        
-                        # Find scene changes within this segment
-                        cuts_in_seg = [t for t in scene_changes if seg_start < t < seg_end]
-                        
-                        if not cuts_in_seg:
-                            split_segments.append(seg)
-                        else:
-                            # Split segment at each cut
-                            prev_time = seg_start
-                            for cut_time in sorted(cuts_in_seg):
-                                if cut_time > prev_time + 0.3:  # Min 300ms segment
-                                    split_segments.append({
-                                        "start": prev_time,
-                                        "end": cut_time,
-                                        "focus": seg_focus,  # Will be re-sampled below
-                                    })
-                                prev_time = cut_time
-                            # Add final part
-                            if seg_end > prev_time + 0.3:
-                                split_segments.append({
-                                    "start": prev_time,
-                                    "end": seg_end,
-                                    "focus": seg_focus,
-                                })
-                    
-                    logger.info(
-                        "TransNetV2: Split %d segments at %d camera cuts -> %d segments",
-                        len(segments), len(scene_changes), len(split_segments)
-                    )
-                    
-                    # Re-sample focus for each new segment (to get correct position for each camera)
-                    resample_cap = cv2.VideoCapture(video_path)
-                    if resample_cap.isOpened():
-                        resample_fps = resample_cap.get(cv2.CAP_PROP_FPS) or 25.0
-                        resample_frame_count = int(resample_cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
-                        
-                        for seg in split_segments:
-                            # Sample 3 frames in this segment
-                            samples: list[float] = []
-                            seg_dur = seg["end"] - seg["start"]
-                            for offset in [0.2, 0.5, 0.8]:
-                                sample_time = seg["start"] + offset * seg_dur
-                                frame_idx = int(sample_time * resample_fps)
-                                if frame_idx >= resample_frame_count:
-                                    continue
-                                resample_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                                ok, frame = resample_cap.read()
-                                if not ok or frame is None:
-                                    continue
-                                faces = self._detect_faces(frame)
-                                focus_val = _focus_for_faces(faces)
-                                if focus_val is not None:
-                                    samples.append(focus_val)
-                            
-                            if samples:
-                                seg["focus"] = sum(samples) / len(samples)
-                                logger.info(
-                                    "Re-sampled segment [%.2f-%.2f]: %d samples -> focus=%.3f",
-                                    seg["start"], seg["end"], len(samples), seg["focus"]
-                                )
-                        resample_cap.release()
-                    
-                    segments = split_segments
-                
-                # ============================================================
-                # ADD SMOOTH TRANSITIONS (cross-fade) between segments
-                # ============================================================
-                TRANSITION_DURATION = 0.4  # 400ms transition between focus positions
-                
-                smoothed_segments: list[dict] = []
-                
-                for i, seg in enumerate(segments):
-                    if i == 0:
-                        # First segment - no transition needed
-                        smoothed_segments.append(seg)
-                        continue
-                    
-                    prev_seg = smoothed_segments[-1]
-                    prev_focus = prev_seg["focus"]
-                    curr_focus = seg["focus"]
-                    focus_diff = abs(curr_focus - prev_focus)
-                    
-                    if focus_diff >= MIN_FOCUS_DIFF:
-                        # Significant focus change - add transition
-                        transition_start = seg["start"]
-                        transition_end = min(seg["start"] + TRANSITION_DURATION, seg["end"])
-                        
-                        # Shorten previous segment slightly to make room for transition
-                        if prev_seg["end"] > transition_start:
-                            prev_seg["end"] = transition_start
-                        
-                        # Create transition segment (midpoint focus)
-                        mid_focus = (prev_focus + curr_focus) / 2.0
-                        
-                        # Only add transition if there's room
-                        if transition_end > transition_start + 0.1:
-                            smoothed_segments.append({
-                                "start": transition_start,
-                                "end": transition_end,
-                                "focus": mid_focus,
-                                "is_transition": True,  # Mark as transition for logging
-                            })
-                            logger.info(
-                                "Added transition [%.2f-%.2f]: focus %.3f -> %.3f (mid=%.3f)",
-                                transition_start, transition_end, prev_focus, curr_focus, mid_focus
-                            )
-                            
-                            # Adjust current segment to start after transition
-                            seg = dict(seg)  # Copy to avoid modifying original
-                            seg["start"] = transition_end
-                    
-                    # Add current segment (possibly shortened)
-                    if seg["end"] > seg["start"]:
-                        smoothed_segments.append(seg)
-                
-                segments = smoothed_segments
-                logger.info("Built SPEAKER-AWARE focus timeline: %d segments (with transitions)", len(segments))
-                return segments
         
         # ============================================================
-        # FALLBACK: Scene-based sampling (no diarization data)
-        # Uses TransNetV2 neural network for accurate scene detection
+        # STEP 1: TransNetV2 scene detection
         # ============================================================
-        logger.info("Using SCENE-BASED focus (no diarization data)")
-        
-        # Use TransNetV2 for scene detection
         scene_changes = self._detect_scene_changes(video_path, segment_start, segment_end)
-        
         scene_boundaries = [0.0] + scene_changes + [duration]
         
         logger.info(
-            "TransNetV2 scene-based focus: %d scenes, boundaries: %s",
+            "TransNetV2: %d scenes detected, boundaries: %s",
             len(scene_boundaries) - 1,
-            [f"{t:.2f}s" for t in scene_boundaries],
+            [f"{t:.2f}s" for t in scene_boundaries]
         )
         
+        # ============================================================
+        # STEP 2: For each scene, do 7 consecutive detections at START
+        # ============================================================
         segments: list[dict] = []
         last_valid_focus = 0.5
-
-        for i in range(len(scene_boundaries) - 1):
-            scene_start_t = scene_boundaries[i]
-            scene_end_t = scene_boundaries[i + 1]
-            scene_dur = scene_end_t - scene_start_t
+        
+        # Build speaker timeline for SPEAKER-AWARE mode
+        speaker_at_time: dict[float, str] = {}
+        if dialogue:
+            for turn in dialogue:
+                speaker = turn.get("speaker")
+                t_start = turn.get("start", 0.0) - segment_start
+                t_end = turn.get("end", 0.0) - segment_start
+                if speaker and t_end > t_start:
+                    for t in range(int(t_start * 10), int(t_end * 10)):
+                        speaker_at_time[t / 10.0] = speaker
+        
+        for scene_idx in range(len(scene_boundaries) - 1):
+            scene_start_t = scene_boundaries[scene_idx]
+            scene_end_t = scene_boundaries[scene_idx + 1]
             
-            # Sample 5 frames spread across scene
-            focus_values: list[float] = []
-            for sample_idx in range(5):
-                offset_ratio = 0.1 + (sample_idx / 4.0) * 0.8
-                sample_time = scene_start_t + offset_ratio * scene_dur
-                focus_val = _sample_focus_at_time(sample_time)
-                if focus_val is not None:
-                    focus_values.append(focus_val)
+            # Do 7 consecutive detections starting at scene_start (frames 0-6)
+            all_faces: list[list[dict]] = []
             
-            if focus_values:
-                # SMART AVERAGING: Don't average to "nobody" in the center!
-                min_pos = min(focus_values)
-                max_pos = max(focus_values)
-                spread = max_pos - min_pos
-                
-                if spread > 0.25:
-                    # Two-speaker setup detected (positions spread > 25%)
-                    # DON'T average to center where nobody is!
-                    # Instead: use the MOST COMMON position (mode-like)
+            for det_idx in range(self.NUM_DETECTIONS_PER_SCENE):
+                sample_time = scene_start_t + det_idx / fps  # consecutive frames
+                frame_idx = int(sample_time * fps)
+                if frame_idx >= frame_count:
+                    break
                     
-                    # Split into left (<0.55) and right (>=0.55) clusters
-                    left_cluster = [v for v in focus_values if v < 0.55]
-                    right_cluster = [v for v in focus_values if v >= 0.55]
+                capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    continue
                     
-                    if left_cluster and right_cluster:
-                        # Both speakers present - center between their AVERAGE positions
-                        left_avg = sum(left_cluster) / len(left_cluster)
-                        right_avg = sum(right_cluster) / len(right_cluster)
-                        # Find center that shows both (weighted by frequency)
-                        left_weight = len(left_cluster)
-                        right_weight = len(right_cluster)
-                        scene_focus = (left_avg * left_weight + right_avg * right_weight) / (left_weight + right_weight)
-                        logger.info(
-                            "Scene %d: TWO-SPEAKER setup (spread=%.2f), left=%.2f (%d), right=%.2f (%d) -> focus=%.3f",
-                            i, spread, left_avg, left_weight, right_avg, right_weight, scene_focus
-                        )
-                    elif left_cluster:
-                        # Only left speaker
-                        scene_focus = sum(left_cluster) / len(left_cluster)
-                        logger.info("Scene %d: LEFT speaker only -> focus=%.3f", i, scene_focus)
-                    else:
-                        # Only right speaker
-                        scene_focus = sum(right_cluster) / len(right_cluster)
-                        logger.info("Scene %d: RIGHT speaker only -> focus=%.3f", i, scene_focus)
-                else:
-                    # Single speaker or tight cluster - simple average is OK
-                    scene_focus = sum(focus_values) / len(focus_values)
-                    logger.info("Scene %d: single cluster (spread=%.2f) -> focus=%.3f", i, spread, scene_focus)
-                
-                # CLAMP to safe bounds (0.20-0.80) to ensure crop stays within 1080x1920
-                scene_focus = max(min_bound, min(max_bound, scene_focus))
-                last_valid_focus = scene_focus
-            else:
+                faces = self._detect_faces(frame)
+                # Filter tiny faces
+                faces = [
+                    f for f in faces
+                    if f.get("w", 0) >= self.MIN_FACE_WIDTH_PX
+                    and f.get("area", 0) >= 0.0005 * f.get("width", 1) * f.get("height", 1)
+                ]
+                if faces:
+                    all_faces.append(faces)
+            
+            # ============================================================
+            # STEP 3: Analyze detections and decide focus
+            # ============================================================
+            if not all_faces:
+                # No faces detected → keep previous focus
                 scene_focus = last_valid_focus
-                logger.info("Scene %d: no faces -> fallback focus=%.3f", i, scene_focus)
+                logger.info("Scene %d [%.2f-%.2f]: NO faces → fallback %.3f", 
+                           scene_idx, scene_start_t, scene_end_t, scene_focus)
+            else:
+                # Count faces per detection
+                face_counts = [len(faces) for faces in all_faces]
+                most_common_count = max(set(face_counts), key=face_counts.count)
+                
+                # Get all face positions (normalized 0-1)
+                all_positions: list[float] = []
+                for faces in all_faces:
+                    for f in faces:
+                        pos = f["center_x"] / f["width"]
+                        all_positions.append(pos)
+                
+                if most_common_count == 1:
+                    # === SINGLE FACE (close-up) → center on it ===
+                    avg_pos = sum(all_positions) / len(all_positions)
+                    scene_focus = max(min_bound, min(max_bound, avg_pos))
+                    logger.info(
+                        "Scene %d [%.2f-%.2f]: 1 FACE (close-up) → focus=%.3f",
+                        scene_idx, scene_start_t, scene_end_t, scene_focus
+                    )
+                    
+                elif most_common_count >= 2:
+                    # === TWO FACES (wide shot) → check if they fit ===
+                    # Get leftmost and rightmost positions
+                    left_pos = min(all_positions)
+                    right_pos = max(all_positions)
+                    
+                    # Calculate if both faces fit in 1080px crop
+                    # Positions are normalized (0-1), convert to pixels in scaled video
+                    left_px = left_pos * scaled_width
+                    right_px = right_pos * scaled_width
+                    span_px = right_px - left_px
+                    
+                    # Add margin for face width (~100px each side)
+                    required_width = span_px + 200
+                    
+                    if required_width <= self.CROP_WIDTH_PX:
+                        # === BOTH FIT → center between them ===
+                        center_pos = (left_pos + right_pos) / 2.0
+                        scene_focus = max(min_bound, min(max_bound, center_pos))
+                        logger.info(
+                            "Scene %d [%.2f-%.2f]: 2 FACES FIT (span=%dpx < %dpx) → center=%.3f",
+                            scene_idx, scene_start_t, scene_end_t, 
+                            int(required_width), self.CROP_WIDTH_PX, scene_focus
+                        )
+                    else:
+                        # === DON'T FIT → SPEAKER-AWARE mode ===
+                        # Find who's speaking at scene start
+                        speaking_speaker = speaker_at_time.get(round(scene_start_t, 1))
+                        
+                        if speaking_speaker and dialogue:
+                            # Find speaker position from detection
+                            # Assume left speaker is SPEAKER_00, right is SPEAKER_01
+                            # (common interview convention)
+                            if "00" in speaking_speaker or "0" == speaking_speaker[-1]:
+                                scene_focus = max(min_bound, min(max_bound, left_pos))
+                                logger.info(
+                                    "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT → SPEAKER-AWARE: %s (left) → focus=%.3f",
+                                    scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
+                                )
+                            else:
+                                scene_focus = max(min_bound, min(max_bound, right_pos))
+                                logger.info(
+                                    "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT → SPEAKER-AWARE: %s (right) → focus=%.3f",
+                                    scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
+                                )
+                        else:
+                            # No diarization → center between (might cut faces)
+                            center_pos = (left_pos + right_pos) / 2.0
+                            scene_focus = max(min_bound, min(max_bound, center_pos))
+                            logger.info(
+                                "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → center=%.3f",
+                                scene_idx, scene_start_t, scene_end_t, scene_focus
+                            )
+                else:
+                    scene_focus = last_valid_focus
+                    
+                last_valid_focus = scene_focus
             
             segments.append({
                 "start": scene_start_t,
                 "end": scene_end_t,
                 "focus": scene_focus,
             })
-            
-            logger.info(
-                "Scene %d [%.2f-%.2f]: %d samples -> focus=%.3f",
-                i, scene_start_t, scene_end_t, len(focus_values), scene_focus
-            )
-
-        capture.release()
         
-        logger.info("Built scene-based focus timeline: %d segments", len(segments))
+        capture.release()
+        logger.info("Built focus timeline: %d segments", len(segments))
         return segments
 
     # ------------------------------------------------------------------ #
