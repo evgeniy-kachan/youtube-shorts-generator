@@ -757,8 +757,8 @@ class FaceDetector:
         scale_factor = 1920.0 / frame_height if frame_height > 0 else 1.0
         scaled_width = int(frame_width * scale_factor)
         
-        min_bound = 0.20
-        max_bound = 0.80
+        min_bound = 0.30  # Don't crop too close to edges (faces get cut off)
+        max_bound = 0.70
         
         # ============================================================
         # STEP 1: TransNetV2 scene detection
