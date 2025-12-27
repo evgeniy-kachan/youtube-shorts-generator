@@ -179,13 +179,16 @@ class VideoProcessor:
             duration = end_time - start_time
             
             # Use ffmpeg to cut video precisely
-            # noaccurate_seek=None forces seeking to nearest keyframe (cleaner cuts)
+            # Re-encode for frame-accurate cuts (slower but cleaner transitions)
             (
                 ffmpeg
-                .input(video_path, ss=start_time, t=duration, noaccurate_seek=None)
+                .input(video_path, ss=start_time, t=duration)
                 .output(
                     output_path,
-                    codec='copy',  # Copy without re-encoding for speed
+                    vcodec='libx264',
+                    acodec='aac',
+                    crf=18,  # High quality
+                    preset='fast',
                     avoid_negative_ts='make_zero'
                 )
                 .overwrite_output()
