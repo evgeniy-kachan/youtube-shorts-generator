@@ -712,7 +712,7 @@ class FaceDetector:
     # ------------------------------------------------------------------ #
     
     # Constants for focus detection
-    NUM_DETECTIONS_PER_SCENE = 12  # 12 SCRFD detections spread across first ~1 second
+    NUM_DETECTIONS_PER_SCENE = 15  # 15 SCRFD detections spread across first ~1.2 seconds
     FRAME_STEP = 2  # Sample every 2nd frame (covers ~1 sec at 25fps)
     CROP_WIDTH_PX = 1080  # Target crop width for 9:16 vertical video
     
@@ -794,7 +794,7 @@ class FaceDetector:
             scene_start_t = scene_boundaries[scene_idx]
             scene_end_t = scene_boundaries[scene_idx + 1]
             
-            # Do 12 detections every 2 frames starting at scene_start (frames 0,2,4,...,22 ≈ 1 sec)
+            # Do 15 detections every 2 frames starting at scene_start (frames 0,2,4,...,28 ≈ 1.2 sec)
             all_faces: list[list[dict]] = []
             
             for det_idx in range(self.NUM_DETECTIONS_PER_SCENE):
@@ -937,8 +937,97 @@ class FaceDetector:
             })
         
         capture.release()
-        logger.info("Built focus timeline: %d segments", len(segments))
-        return segments
+        
+        # ============================================================
+        # STEP 4: Validate focus - if face is on opposite side, flip
+        # ============================================================
+        validated_segments = self._validate_focus_positions(video_path, segments, scaled_width)
+        
+        logger.info("Built focus timeline: %d segments", len(validated_segments))
+        return validated_segments
+
+    def _validate_focus_positions(
+        self,
+        video_path: str,
+        segments: list[dict],
+        frame_width: int,
+    ) -> list[dict]:
+        """
+        Validate that faces are actually visible after applying focus.
+        If focus says 'left' but face is on 'right', flip the focus.
+        """
+        if not segments:
+            return segments
+            
+        capture = cv2.VideoCapture(video_path)
+        if not capture.isOpened():
+            return segments
+            
+        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        min_bound = 0.30
+        max_bound = 0.70
+        
+        validated = []
+        for seg in segments:
+            seg_start = seg["start"]
+            seg_end = seg["end"]
+            seg_focus = seg["focus"]
+            
+            # Sample frame from middle of segment
+            mid_time = (seg_start + seg_end) / 2.0
+            frame_idx = int(mid_time * fps)
+            
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ret, frame = capture.read()
+            
+            if not ret or frame is None:
+                validated.append(seg)
+                continue
+            
+            # Detect faces
+            self._ensure_detector()
+            faces = self._detector.get(frame)
+            
+            if not faces:
+                validated.append(seg)
+                continue
+            
+            # Find the largest face
+            largest_face = max(faces, key=lambda f: f.bbox[2] - f.bbox[0])
+            face_center_x = (largest_face.bbox[0] + largest_face.bbox[2]) / 2.0
+            face_pos = face_center_x / frame_width  # Normalized 0-1
+            
+            # Check if focus and face are on opposite sides
+            focus_is_left = seg_focus < 0.45
+            focus_is_right = seg_focus > 0.55
+            face_is_left = face_pos < 0.35
+            face_is_right = face_pos > 0.65
+            
+            new_focus = seg_focus
+            
+            if focus_is_left and face_is_right:
+                # Focus on left, but face detected on right → flip to right
+                new_focus = max_bound
+                logger.info(
+                    "VALIDATION: Segment [%.2f-%.2f] focus=%.3f (left) but face at %.1f%% (right) → FLIP to %.3f",
+                    seg_start, seg_end, seg_focus, face_pos * 100, new_focus
+                )
+            elif focus_is_right and face_is_left:
+                # Focus on right, but face detected on left → flip to left
+                new_focus = min_bound
+                logger.info(
+                    "VALIDATION: Segment [%.2f-%.2f] focus=%.3f (right) but face at %.1f%% (left) → FLIP to %.3f",
+                    seg_start, seg_end, seg_focus, face_pos * 100, new_focus
+                )
+            
+            validated.append({
+                "start": seg_start,
+                "end": seg_end,
+                "focus": new_focus,
+            })
+        
+        capture.release()
+        return validated
 
     # ------------------------------------------------------------------ #
     # Vertical focus timeline (y-axis) for better framing of heads       #
