@@ -984,8 +984,7 @@ class FaceDetector:
                 validated.append(seg)
                 continue
             
-            # Detect faces
-            self._ensure_detector()
+            # Detect faces (detector already initialized)
             faces = self._detector.get(frame)
             
             if not faces:
