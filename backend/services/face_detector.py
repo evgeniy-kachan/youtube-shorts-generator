@@ -765,11 +765,7 @@ class FaceDetector:
         # NOTE: video_path is already the CUT segment (starts at 0), so use local time
         # ============================================================
         scene_changes = self._detect_scene_changes(video_path, 0.0, None)
-        # Shift scene changes 0.15s earlier (TransNetV2 detects slightly late)
-        SCENE_SHIFT = 0.15
-        scene_changes = [max(0.0, t - SCENE_SHIFT) for t in scene_changes]
-        # Remove duplicates and sort (in case shift caused overlap with 0.0)
-        scene_boundaries = sorted(set([0.0] + scene_changes + [duration]))
+        scene_boundaries = [0.0] + scene_changes + [duration]
         
         logger.info(
             "TransNetV2: %d scenes detected, boundaries: %s",

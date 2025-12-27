@@ -179,9 +179,10 @@ class VideoProcessor:
             duration = end_time - start_time
             
             # Use ffmpeg to cut video precisely
+            # noaccurate_seek=None forces seeking to nearest keyframe (cleaner cuts)
             (
                 ffmpeg
-                .input(video_path, ss=start_time, t=duration)
+                .input(video_path, ss=start_time, t=duration, noaccurate_seek=None)
                 .output(
                     output_path,
                     codec='copy',  # Copy without re-encoding for speed
