@@ -713,7 +713,8 @@ class FaceDetector:
     
     # Constants for focus detection
     NUM_DETECTIONS_PER_SCENE = 12  # 12 SCRFD detections spread across first ~1 second
-    FRAME_STEP = 2  # Sample every 2nd frame (covers ~1 sec at 25fps)
+    SKIP_FRAMES = 3  # Skip first 3 frames after scene cut (let camera settle)
+    FRAME_STEP = 2  # Sample every 2nd frame after skip
     CROP_WIDTH_PX = 1080  # Target crop width for 9:16 vertical video
     
     def build_focus_timeline(
@@ -729,7 +730,7 @@ class FaceDetector:
         
         ALGORITHM:
         1. TransNetV2 detects scene changes (wide shot, close-up A, close-up B)
-        2. For each scene: 12 SCRFD detections spread across first ~1 second (every 2 frames)
+        2. For each scene: skip 3 frames, then 12 SCRFD detections every 2 frames (~1 sec)
         3. Decision logic:
            - 1 face → center on it
            - 2 faces, fit in 1080px → center between them  
@@ -794,12 +795,13 @@ class FaceDetector:
             scene_start_t = scene_boundaries[scene_idx]
             scene_end_t = scene_boundaries[scene_idx + 1]
             
-            # Do 12 detections every 2 frames starting at scene_start (frames 0,2,4,...,22 ≈ 1 sec)
+            # Skip 3 frames, then do 12 detections every 2 frames (frames 3,5,7,...,25 ≈ 1 sec)
             all_faces: list[list[dict]] = []
             
             for det_idx in range(self.NUM_DETECTIONS_PER_SCENE):
-                # Sample every FRAME_STEP frames (covers ~1 sec at 25fps)
-                sample_time = scene_start_t + (det_idx * self.FRAME_STEP) / fps
+                # Skip first SKIP_FRAMES, then sample every FRAME_STEP frames
+                frame_offset = self.SKIP_FRAMES + (det_idx * self.FRAME_STEP)
+                sample_time = scene_start_t + frame_offset / fps
                 frame_idx = int(sample_time * fps)
                 if frame_idx >= frame_count:
                     break
