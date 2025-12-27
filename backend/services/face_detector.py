@@ -765,7 +765,11 @@ class FaceDetector:
         # NOTE: video_path is already the CUT segment (starts at 0), so use local time
         # ============================================================
         scene_changes = self._detect_scene_changes(video_path, 0.0, None)
-        scene_boundaries = [0.0] + scene_changes + [duration]
+        # Shift scene changes 0.15s earlier (TransNetV2 detects slightly late)
+        SCENE_SHIFT = 0.15
+        scene_changes = [max(0.0, t - SCENE_SHIFT) for t in scene_changes]
+        # Remove duplicates and sort (in case shift caused overlap with 0.0)
+        scene_boundaries = sorted(set([0.0] + scene_changes + [duration]))
         
         logger.info(
             "TransNetV2: %d scenes detected, boundaries: %s",
@@ -894,13 +898,37 @@ class FaceDetector:
                                     scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
                                 )
                         else:
-                            # No diarization → center between (might cut faces)
-                            center_pos = (left_pos + right_pos) / 2.0
-                            scene_focus = max(min_bound, min(max_bound, center_pos))
-                            logger.info(
-                                "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → center=%.3f",
-                                scene_idx, scene_start_t, scene_end_t, scene_focus
-                            )
+                            # No diarization → pick side with LARGER face (or right if equal)
+                            # Collect face sizes for left and right clusters
+                            left_sizes: list[float] = []
+                            right_sizes: list[float] = []
+                            mid_pos = (left_pos + right_pos) / 2.0
+                            
+                            for faces in all_faces:
+                                for f in faces:
+                                    pos = f["center_x"] / f["width"]
+                                    face_w = f.get("face_w", 50)  # face width in pixels
+                                    if pos < mid_pos:
+                                        left_sizes.append(face_w)
+                                    else:
+                                        right_sizes.append(face_w)
+                            
+                            avg_left = sum(left_sizes) / len(left_sizes) if left_sizes else 0
+                            avg_right = sum(right_sizes) / len(right_sizes) if right_sizes else 0
+                            
+                            if avg_left > avg_right * 1.2:  # Left is significantly larger
+                                scene_focus = max(min_bound, min(max_bound, left_pos))
+                                logger.info(
+                                    "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → LARGER LEFT (%.0f vs %.0f) → focus=%.3f",
+                                    scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus
+                                )
+                            else:
+                                # Right is larger or equal → pick right (default)
+                                scene_focus = max(min_bound, min(max_bound, right_pos))
+                                logger.info(
+                                    "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → RIGHT (%.0f vs %.0f) → focus=%.3f",
+                                    scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus
+                                )
                 else:
                     scene_focus = last_valid_focus
                     
