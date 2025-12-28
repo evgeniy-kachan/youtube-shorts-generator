@@ -406,8 +406,8 @@ class VideoProcessor:
                 start = start + TRANSITION_SKIP
             
             focus = float(seg.get("focus", 0.5))
-            # Ставим мягкие границы, чтобы кроп не уезжал в край и не резал второе лицо
-            focus = max(0.20, min(0.80, focus))
+            # Широкие границы — face_detector уже знает где лицо
+            focus = max(0.15, min(0.85, focus))
 
             offset_x = int(round(focus * scaled_width - (self.TARGET_WIDTH / 2)))
             offset_x = max(0, min(margin_x, offset_x))
