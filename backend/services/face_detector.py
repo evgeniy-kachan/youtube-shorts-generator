@@ -756,8 +756,10 @@ class FaceDetector:
         scale_factor = 1920.0 / frame_height if frame_height > 0 else 1.0
         scaled_width = int(frame_width * scale_factor)
         
-        min_bound = 0.30  # Don't crop too close to edges (faces get cut off)
-        max_bound = 0.70
+        # When face IS detected, allow wide range but keep margin for face width
+        # (no longer using tight 0.30-0.70 bounds that pushed faces to edges)
+        safe_min = 0.15  # Leave room for face width on left
+        safe_max = 0.85  # Leave room for face width on right
         
         # ============================================================
         # STEP 1: TransNetV2 scene detection
@@ -845,8 +847,9 @@ class FaceDetector:
                 
                 if most_common_count == 1:
                     # === SINGLE FACE (close-up) → center on it ===
+                    # Use safe bounds (wider range) since we KNOW where the face is
                     avg_pos = sum(all_positions) / len(all_positions)
-                    scene_focus = max(min_bound, min(max_bound, avg_pos))
+                    scene_focus = max(safe_min, min(safe_max, avg_pos))
                     logger.info(
                         "Scene %d [%.2f-%.2f]: 1 FACE (close-up) → focus=%.3f",
                         scene_idx, scene_start_t, scene_end_t, scene_focus
@@ -869,8 +872,9 @@ class FaceDetector:
                     
                     if required_width <= self.CROP_WIDTH_PX:
                         # === BOTH FIT → center between them ===
+                        # Use safe bounds since we know where faces are
                         center_pos = (left_pos + right_pos) / 2.0
-                        scene_focus = max(min_bound, min(max_bound, center_pos))
+                        scene_focus = max(safe_min, min(safe_max, center_pos))
                         logger.info(
                             "Scene %d [%.2f-%.2f]: 2 FACES FIT (span=%dpx < %dpx) → center=%.3f",
                             scene_idx, scene_start_t, scene_end_t, 
@@ -885,14 +889,15 @@ class FaceDetector:
                             # Find speaker position from detection
                             # Assume left speaker is SPEAKER_00, right is SPEAKER_01
                             # (common interview convention)
+                            # Use safe bounds since we know face positions
                             if "00" in speaking_speaker or "0" == speaking_speaker[-1]:
-                                scene_focus = max(min_bound, min(max_bound, left_pos))
+                                scene_focus = max(safe_min, min(safe_max, left_pos))
                                 logger.info(
                                     "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT → SPEAKER-AWARE: %s (left) → focus=%.3f",
                                     scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
                                 )
                             else:
-                                scene_focus = max(min_bound, min(max_bound, right_pos))
+                                scene_focus = max(safe_min, min(safe_max, right_pos))
                                 logger.info(
                                     "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT → SPEAKER-AWARE: %s (right) → focus=%.3f",
                                     scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
@@ -916,15 +921,16 @@ class FaceDetector:
                             avg_left = sum(left_sizes) / len(left_sizes) if left_sizes else 0
                             avg_right = sum(right_sizes) / len(right_sizes) if right_sizes else 0
                             
+                            # Use safe bounds since we know face positions
                             if avg_left > avg_right * 1.2:  # Left is significantly larger
-                                scene_focus = max(min_bound, min(max_bound, left_pos))
+                                scene_focus = max(safe_min, min(safe_max, left_pos))
                                 logger.info(
                                     "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → LARGER LEFT (%.0f vs %.0f) → focus=%.3f",
                                     scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus
                                 )
                             else:
                                 # Right is larger or equal → pick right (default)
-                                scene_focus = max(min_bound, min(max_bound, right_pos))
+                                scene_focus = max(safe_min, min(safe_max, right_pos))
                                 logger.info(
                                     "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → RIGHT (%.0f vs %.0f) → focus=%.3f",
                                     scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus
