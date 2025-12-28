@@ -392,11 +392,19 @@ class VideoProcessor:
         margin_y = max(scaled_height - self.TARGET_HEIGHT, 0)
 
         # Build filter_complex with trim+scale+crop per segment
+        # Skip ~2-3 frames (0.08s) at transitions to hide flicker
+        TRANSITION_SKIP = 0.08
+        
         parts = []
         labels = []
         for idx, seg in enumerate(focus_timeline):
             start = max(0.0, float(seg.get("start", 0.0)))
             end = float(seg.get("end", start))
+            
+            # Skip frames at transition (except first segment)
+            if idx > 0:
+                start = start + TRANSITION_SKIP
+            
             focus = float(seg.get("focus", 0.5))
             # Ставим мягкие границы, чтобы кроп не уезжал в край и не резал второе лицо
             focus = max(0.20, min(0.80, focus))
@@ -451,7 +459,8 @@ class VideoProcessor:
             output_path,
         ]
 
-        logger.info("Applying multi-crop timeline with %d segments", len(focus_timeline))
+        logger.info("Applying multi-crop timeline with %d segments (%.0fms skip at transitions)", 
+                    len(focus_timeline), TRANSITION_SKIP * 1000)
         try:
             subprocess.run(
                 cmd,
