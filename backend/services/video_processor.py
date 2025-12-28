@@ -392,8 +392,8 @@ class VideoProcessor:
         margin_y = max(scaled_height - self.TARGET_HEIGHT, 0)
 
         # Build filter_complex with trim+scale+crop per segment
-        # Skip ~2-3 frames (0.08s) at transitions to hide flicker
-        TRANSITION_SKIP = 0.08
+        # Skip ~3-4 frames (0.12s) at transitions to hide flicker
+        TRANSITION_SKIP = 0.12
         
         parts = []
         labels = []
