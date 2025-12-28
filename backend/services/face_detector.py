@@ -712,8 +712,7 @@ class FaceDetector:
     # ------------------------------------------------------------------ #
     
     # Constants for focus detection
-    NUM_DETECTIONS_PER_SCENE = 15  # 15 SCRFD detections spread across first ~1.2 seconds
-    FRAME_STEP = 2  # Sample every 2nd frame (covers ~1 sec at 25fps)
+    NUM_DETECTIONS_PER_SCENE = 15  # 15 SCRFD detections spread EVENLY across entire scene
     CROP_WIDTH_PX = 1080  # Target crop width for 9:16 vertical video
     
     def build_focus_timeline(
@@ -793,13 +792,18 @@ class FaceDetector:
         for scene_idx in range(len(scene_boundaries) - 1):
             scene_start_t = scene_boundaries[scene_idx]
             scene_end_t = scene_boundaries[scene_idx + 1]
+            scene_duration = scene_end_t - scene_start_t
             
-            # Do 15 detections every 2 frames starting at scene_start (frames 0,2,4,...,28 ≈ 1.2 sec)
+            # Spread samples EVENLY across the ENTIRE scene duration
             all_faces: list[list[dict]] = []
             
             for det_idx in range(self.NUM_DETECTIONS_PER_SCENE):
-                # Sample every FRAME_STEP frames (covers ~1 sec at 25fps)
-                sample_time = scene_start_t + (det_idx * self.FRAME_STEP) / fps
+                # Calculate sample position: evenly spread across scene
+                if self.NUM_DETECTIONS_PER_SCENE > 1:
+                    progress = det_idx / (self.NUM_DETECTIONS_PER_SCENE - 1)
+                else:
+                    progress = 0.5
+                sample_time = scene_start_t + progress * scene_duration
                 frame_idx = int(sample_time * fps)
                 if frame_idx >= frame_count:
                     break
