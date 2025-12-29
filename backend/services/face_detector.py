@@ -840,15 +840,20 @@ class FaceDetector:
                 
                 # Get all face positions (normalized 0-1)
                 all_positions: list[float] = []
+                single_face_positions: list[float] = []  # Only from frames with exactly 1 face
                 for faces in all_faces:
                     for f in faces:
                         pos = f["center_x"] / frame_width  # FIX: divide by ORIGINAL frame width!
                         all_positions.append(pos)
+                    # Track single-face frames separately
+                    if len(faces) == 1:
+                        single_face_positions.append(faces[0]["center_x"] / frame_width)
                 
                 if most_common_count == 1:
                     # === SINGLE FACE (close-up) → center on it ===
-                    # Use safe bounds (wider range) since we KNOW where the face is
-                    avg_pos = sum(all_positions) / len(all_positions)
+                    # Use only single-face frames for accurate centering
+                    positions_to_use = single_face_positions if single_face_positions else all_positions
+                    avg_pos = sum(positions_to_use) / len(positions_to_use)
                     scene_focus = max(safe_min, min(safe_max, avg_pos))
                     logger.info(
                         "Scene %d [%.2f-%.2f]: 1 FACE (close-up) → focus=%.3f",
