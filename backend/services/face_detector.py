@@ -842,7 +842,7 @@ class FaceDetector:
                 all_positions: list[float] = []
                 for faces in all_faces:
                     for f in faces:
-                        pos = f["center_x"] / f["width"]
+                        pos = f["center_x"] / scaled_width  # FIX: divide by frame width, not face width!
                         all_positions.append(pos)
                 
                 if most_common_count == 1:
@@ -911,7 +911,7 @@ class FaceDetector:
                             
                             for faces in all_faces:
                                 for f in faces:
-                                    pos = f["center_x"] / f["width"]
+                                    pos = f["center_x"] / scaled_width  # FIX: divide by frame width!
                                     face_w = f.get("face_w", 50)  # face width in pixels
                                     if pos < mid_pos:
                                         left_sizes.append(face_w)
