@@ -284,7 +284,7 @@ const SegmentsList = ({
 }) => {
   const [selectedSegments, setSelectedSegments] = useState([]);
   const [expandedSegments, setExpandedSegments] = useState([]);
-  const [verticalMethod, setVerticalMethod] = useState('letterbox');
+  const [verticalMethod, setVerticalMethod] = useState('center_crop');
   
   // Style settings
   const [subtitleAnimation, setSubtitleAnimation] = useState('bounce');
@@ -292,10 +292,11 @@ const SegmentsList = ({
   const [subtitleFont, setSubtitleFont] = useState('Montserrat Light');
   const [subtitleFontSize, setSubtitleFontSize] = useState(86);
   const [subtitleBackground, setSubtitleBackground] = useState(false);
-  const [ttsProvider, setTtsProvider] = useState('local');
+  const [ttsProvider, setTtsProvider] = useState('elevenlabs');
   const [voiceMix, setVoiceMix] = useState('male_duo');
   const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(true);
-  const [cropFocus, setCropFocus] = useState('center');
+  // cropFocus is now always 'face_auto' for center_crop
+  const cropFocus = verticalMethod === 'center_crop' ? 'face_auto' : 'center';
 
   // Tabs: 'style', 'text', 'position'
   const [activeTab, setActiveTab] = useState('style');
@@ -499,57 +500,25 @@ const SegmentsList = ({
                 </label>
                 <div className="flex space-x-3">
                   {[
-                    { id: 'letterbox', label: '⚫️ Вписать (поля)' },
-                    { id: 'center_crop', label: '✂️ Кроп (центр)' },
+                    { id: 'letterbox', label: '⚫️ Вписать (поля)', description: 'Чёрные полосы сверху/снизу' },
+                    { id: 'center_crop', label: '🤖 Умный кроп', description: 'Автофокус на лица' },
                   ].map((method) => (
                     <button
                       key={method.id}
                       type="button"
                       disabled={loading}
                       onClick={() => setVerticalMethod(method.id)}
-                      className={`flex-1 py-2 px-3 border rounded-lg text-sm font-medium transition ${
+                      className={`flex-1 py-3 px-4 border rounded-xl text-left transition ${
                         verticalMethod === method.id
-                          ? 'border-purple-600 bg-purple-50 text-purple-700'
+                          ? 'border-purple-600 bg-purple-50 ring-1 ring-purple-300'
                           : 'border-gray-200 text-gray-600 hover:border-gray-300'
                       }`}
                     >
-                      {method.label}
+                      <div className="font-semibold text-gray-900">{method.label}</div>
+                      <div className="text-xs text-gray-500 mt-1">{method.description}</div>
                     </button>
                   ))}
                 </div>
-                {verticalMethod === 'center_crop' && (
-                  <div className="mt-4">
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-                      Фокус кадра
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                      {[
-                        { id: 'center', label: 'По центру', description: 'Балансируем между спикерами' },
-                        { id: 'left', label: 'Auto Left', description: 'Сдвигаем окно на ≈1/3 влево' },
-                        { id: 'right', label: 'Auto Right', description: 'Сдвигаем окно на ≈1/3 вправо' },
-                        { id: 'face_auto', label: '🤖 Авто (лицо)', description: 'YuNet ищет лицо и центрирует кадр' },
-                      ].map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          disabled={loading}
-                          onClick={() => setCropFocus(option.id)}
-                          className={`p-3 border rounded-xl text-left transition ${
-                            cropFocus === option.id
-                              ? 'border-purple-600 bg-purple-50 ring-1 ring-purple-300'
-                              : 'border-gray-200 hover:border-purple-400'
-                          }`}
-                        >
-                          <div className="font-semibold text-gray-900">{option.label}</div>
-                          <div className="text-xs text-gray-500 mt-1">{option.description}</div>
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-xs text-gray-500 mt-2">
-                      Режим «Авто (лицо)» анализирует несколько кадров сегмента, поэтому конвертация может идти чуть дольше.
-                    </p>
-                  </div>
-                )}
               </div>
 
               <div>
