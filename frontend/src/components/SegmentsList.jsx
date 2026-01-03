@@ -285,7 +285,7 @@ const SegmentsList = ({
   const [selectedSegments, setSelectedSegments] = useState([]);
   const [expandedSegments, setExpandedSegments] = useState([]);
   const [verticalMethod, setVerticalMethod] = useState('center_crop');
-  
+
   // Style settings
   const [subtitleAnimation, setSubtitleAnimation] = useState('bounce');
   const [subtitlePosition, setSubtitlePosition] = useState('mid_low');
@@ -382,7 +382,8 @@ const SegmentsList = ({
               Найдено {segments.length} интересных моментов
             </p>
             <p className="text-xs text-purple-500 mt-1">
-              Нажмите карточку, чтобы раскрыть полный текст (по умолчанию видно 2 строки).
+              Нажмите карточку, чтобы раскрыть полный текст (по умолчанию видно
+              2 строки).
             </p>
           </div>
           <div className="flex space-x-2">
@@ -486,13 +487,13 @@ const SegmentsList = ({
         </div>
 
         <div className="pt-6 border-t">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Настройки видео</h3>
-          
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">
+            Настройки видео
+          </h3>
+
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            
             {/* Left Column: Controls (Tabs) */}
             <div className="lg:col-span-7 space-y-6">
-              
               {/* Format Selection (Always visible) */}
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
@@ -500,8 +501,16 @@ const SegmentsList = ({
                 </label>
                 <div className="flex space-x-3">
                   {[
-                    { id: 'letterbox', label: '⚫️ Вписать (поля)', description: 'Чёрные полосы сверху/снизу' },
-                    { id: 'center_crop', label: '🤖 Умный кроп', description: 'Автофокус на лица' },
+                    {
+                      id: 'letterbox',
+                      label: '⚫️ Вписать (поля)',
+                      description: 'Чёрные полосы сверху/снизу',
+                    },
+                    {
+                      id: 'center_crop',
+                      label: '🤖 Умный кроп',
+                      description: 'Автофокус на лица',
+                    },
                   ].map((method) => (
                     <button
                       key={method.id}
@@ -514,8 +523,12 @@ const SegmentsList = ({
                           : 'border-gray-200 text-gray-600 hover:border-gray-300'
                       }`}
                     >
-                      <div className="font-semibold text-gray-900">{method.label}</div>
-                      <div className="text-xs text-gray-500 mt-1">{method.description}</div>
+                      <div className="font-semibold text-gray-900">
+                        {method.label}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {method.description}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -549,13 +562,18 @@ const SegmentsList = ({
                           : 'border-gray-200 hover:border-purple-400'
                       }`}
                     >
-                      <div className="font-semibold text-gray-900">{option.title}</div>
-                      <div className="text-xs text-gray-500 mt-1">{option.description}</div>
+                      <div className="font-semibold text-gray-900">
+                        {option.title}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {option.description}
+                      </div>
                     </button>
                   ))}
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  ElevenLabs требует активный интернет и API ключ, но даёт более живой голос.
+                  ElevenLabs требует активный интернет и API ключ, но даёт более
+                  живой голос.
                 </p>
               </div>
 
@@ -565,9 +583,21 @@ const SegmentsList = ({
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {[
-                    { id: 'male_duo', label: '2 мужских', description: 'Интервью с мужчинами' },
-                    { id: 'mixed_duo', label: 'Муж + Жен', description: 'Смешанная пара' },
-                    { id: 'female_duo', label: '2 женских', description: 'Интервью с женщинами' },
+                    {
+                      id: 'male_duo',
+                      label: '2 мужских',
+                      description: 'Интервью с мужчинами',
+                    },
+                    {
+                      id: 'mixed_duo',
+                      label: 'Муж + Жен',
+                      description: 'Смешанная пара',
+                    },
+                    {
+                      id: 'female_duo',
+                      label: '2 женских',
+                      description: 'Интервью с женщинами',
+                    },
                   ].map((option) => (
                     <button
                       key={option.id}
@@ -578,15 +608,24 @@ const SegmentsList = ({
                         voiceMix === option.id
                           ? 'border-purple-600 bg-purple-50 ring-1 ring-purple-300'
                           : 'border-gray-200 hover:border-purple-400'
-                      } ${ttsProvider !== 'elevenlabs' ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      } ${
+                        ttsProvider !== 'elevenlabs'
+                          ? 'opacity-60 cursor-not-allowed'
+                          : ''
+                      }`}
                     >
-                      <div className="font-semibold text-gray-900">{option.label}</div>
-                      <div className="text-xs text-gray-500 mt-1">{option.description}</div>
+                      <div className="font-semibold text-gray-900">
+                        {option.label}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {option.description}
+                      </div>
                     </button>
                   ))}
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  По умолчанию назначаются мужские голоса. Выберите другой вариант, если есть спикер-женщина.
+                  По умолчанию назначаются мужские голоса. Выберите другой
+                  вариант, если есть спикер-женщина.
                 </p>
               </div>
 
@@ -610,7 +649,8 @@ const SegmentsList = ({
                       : '⬜️ Только новая озвучка'}
                   </div>
                   <div className="text-xs text-gray-500 mt-1">
-                    Если включить — подмешаем тихий оригинальный звук (‑20 dB), чтобы оставить атмосферу площадки.
+                    Если включить — подмешаем тихий оригинальный звук (‑20 dB),
+                    чтобы оставить атмосферу площадки.
                   </div>
                 </button>
               </div>
@@ -638,7 +678,6 @@ const SegmentsList = ({
 
               {/* Tab Content */}
               <div className="min-h-[300px]">
-                
                 {/* TAB: STYLE (Animations) */}
                 {activeTab === 'style' && (
                   <div className="animate-fadeIn">
@@ -708,7 +747,9 @@ const SegmentsList = ({
                         >
                           <div className="font-semibold text-gray-900 flex items-center">
                             {/* This span will animate on hover */}
-                            <span className={`anim-target anim-${option.id} inline-block`}>
+                            <span
+                              className={`anim-target anim-${option.id} inline-block`}
+                            >
                               {option.label}
                             </span>
                           </div>
@@ -734,12 +775,14 @@ const SegmentsList = ({
                         disabled={loading}
                         onChange={(e) => setSubtitleFont(e.target.value)}
                         style={{
-                          fontFamily: FONT_OPTIONS.find(f => f.id === subtitleFont)?.css
+                          fontFamily: FONT_OPTIONS.find(
+                            (f) => f.id === subtitleFont
+                          )?.css,
                         }}
                       >
                         {FONT_OPTIONS.map((font) => (
-                          <option 
-                            key={font.id} 
+                          <option
+                            key={font.id}
                             value={font.id}
                             style={{ fontFamily: font.css }}
                           >
@@ -786,7 +829,11 @@ const SegmentsList = ({
                             : 'border-gray-200 hover:border-purple-500 text-gray-700'
                         }`}
                       >
-                        <span>{subtitleBackground ? '✅ Фон включён' : '⬜️ Фон выключен'}</span>
+                        <span>
+                          {subtitleBackground
+                            ? '✅ Фон включён'
+                            : '⬜️ Фон выключен'}
+                        </span>
                       </button>
                       <p className="text-xs text-gray-500 mt-2">
                         Полупрозрачный черный блок для лучшей читаемости.
@@ -827,7 +874,6 @@ const SegmentsList = ({
                     </div>
                   </div>
                 )}
-
               </div>
             </div>
 
@@ -856,7 +902,10 @@ const SegmentsList = ({
           <div className="mt-8 flex justify-end border-t pt-6">
             <div className="flex items-center gap-4">
               <p className="text-sm text-gray-600">
-                Выбрано сегментов: <span className="font-bold text-gray-900">{selectedSegments.length}</span>
+                Выбрано сегментов:{' '}
+                <span className="font-bold text-gray-900">
+                  {selectedSegments.length}
+                </span>
               </p>
               <button
                 onClick={handleProcess}

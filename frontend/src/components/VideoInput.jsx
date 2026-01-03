@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 const VideoInput = ({ onSubmit, loading }) => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [error, setError] = useState('');
+  const [analysisMode, setAnalysisMode] = useState('fast'); // 'fast' or 'deep'
 
   const handleFileChange = (event) => {
     setError('');
@@ -38,7 +39,7 @@ const VideoInput = ({ onSubmit, loading }) => {
       return;
     }
 
-    onSubmit(selectedFile);
+    onSubmit(selectedFile, analysisMode);
   };
 
   return (
@@ -80,6 +81,41 @@ const VideoInput = ({ onSubmit, loading }) => {
           {error && (
             <p className="mt-2 text-sm text-red-600">{error}</p>
           )}
+        </div>
+
+        {/* Analysis Mode Selector */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Режим анализа
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => setAnalysisMode('fast')}
+              className={`p-4 border rounded-xl text-left transition ${
+                analysisMode === 'fast'
+                  ? 'border-purple-600 bg-purple-50 ring-1 ring-purple-300'
+                  : 'border-gray-200 hover:border-purple-400'
+              }`}
+            >
+              <div className="font-semibold text-gray-900">⚡ Быстрый</div>
+              <div className="text-xs text-gray-500 mt-1">~30 сек, хорошее качество</div>
+            </button>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => setAnalysisMode('deep')}
+              className={`p-4 border rounded-xl text-left transition ${
+                analysisMode === 'deep'
+                  ? 'border-purple-600 bg-purple-50 ring-1 ring-purple-300'
+                  : 'border-gray-200 hover:border-purple-400'
+              }`}
+            >
+              <div className="font-semibold text-gray-900">🧠 Глубокий</div>
+              <div className="text-xs text-gray-500 mt-1">~3-4 мин, максимум качества</div>
+            </button>
+          </div>
         </div>
 
         <button

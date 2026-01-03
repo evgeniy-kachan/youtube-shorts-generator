@@ -125,7 +125,7 @@ function App() {
     };
   }, [analysisTask, processingTask, stage, segments, buildProcessedSegments]);
 
-  const handleAnalyze = async (file) => {
+  const handleAnalyze = async (file, analysisMode = 'fast') => {
     if (!file) {
       alert('Пожалуйста, выберите видеофайл формата MP4');
       return;
@@ -146,9 +146,11 @@ function App() {
       }
 
       setProgress(0.05);
-      setStatusMessage('Файл загружен. Начинаем анализ...');
+      setStatusMessage(analysisMode === 'deep' 
+        ? 'Файл загружен. Запускаем глубокий анализ (3-4 мин)...' 
+        : 'Файл загружен. Начинаем анализ...');
 
-      const response = await analyzeLocalVideo(uploadedFilename);
+      const response = await analyzeLocalVideo(uploadedFilename, analysisMode);
       setAnalysisTask(response.task_id);
     } catch (error) {
       console.error('Error starting analysis:', error);

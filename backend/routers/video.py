@@ -376,7 +376,7 @@ def _analyze_video_task(task_id: str, youtube_url: str):
         logger.error(f"Error in analysis task {task_id}: {e}", exc_info=True)
         tasks[task_id] = {"status": "failed", "progress": tasks[task_id]['progress'], "message": str(e)}
 
-def _analyze_local_video_task(task_id: str, filename: str):
+def _analyze_local_video_task(task_id: str, filename: str, analysis_mode: str = "fast"):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Processing local video..."}
         
@@ -386,13 +386,13 @@ def _analyze_local_video_task(task_id: str, filename: str):
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found in temp directory: {filename}")
 
-        _run_analysis_pipeline(task_id, video_id, video_path)
+        _run_analysis_pipeline(task_id, video_id, video_path, analysis_mode)
 
     except Exception as e:
         logger.error(f"Error in local analysis task {task_id}: {e}", exc_info=True)
         tasks[task_id] = {"status": "failed", "progress": tasks[task_id].get('progress', 0.1), "message": str(e)}
 
-def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
+def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysis_mode: str = "fast"):
     """Core analysis logic, shared by YouTube and local video."""
     
     thumbnail_path = _generate_thumbnail(video_path, video_id)
@@ -406,10 +406,13 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str):
     video_duration = segments[-1]['end'] if segments else 0.0
     target_highlight_count = determine_target_highlights(video_duration)
 
-    tasks[task_id] = {"status": "processing", "progress": 0.5, "message": "Analyzing content..."}
-    
     # 3. Analyze for highlights
-    analyzer = get_service("highlight_analyzer")
+    # Select model based on analysis_mode: 'fast' = deepseek-chat, 'deep' = deepseek-reasoner
+    analysis_model = "deepseek-reasoner" if analysis_mode == "deep" else "deepseek-chat"
+    mode_label = "глубокий (R1)" if analysis_mode == "deep" else "быстрый"
+    tasks[task_id] = {"status": "processing", "progress": 0.5, "message": f"Анализ контента ({mode_label})..."}
+    
+    analyzer = HighlightAnalyzer(model_name=analysis_model)
     highlights = analyzer.analyze_segments(segments)
 
     # 4. Filter out highly overlapping segments
@@ -719,10 +722,14 @@ async def analyze_video(request: AnalyzeRequest, background_tasks: BackgroundTas
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Task queued")
 
 @router.post("/analyze-local", response_model=TaskStatus)
-async def analyze_local_video(filename: str, background_tasks: BackgroundTasks):
+async def analyze_local_video(
+    filename: str, 
+    background_tasks: BackgroundTasks,
+    analysis_mode: str = "fast"  # 'fast' (deepseek-chat) or 'deep' (deepseek-reasoner)
+):
     task_id = str(uuid.uuid4())
     tasks[task_id] = {"status": "pending", "progress": 0.0, "message": "Task queued"}
-    background_tasks.add_task(_analyze_local_video_task, task_id, filename)
+    background_tasks.add_task(_analyze_local_video_task, task_id, filename, analysis_mode)
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Task queued")
 
 @router.post("/upload-video", response_model=TaskStatus)
