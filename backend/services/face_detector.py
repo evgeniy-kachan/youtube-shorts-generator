@@ -881,16 +881,57 @@ class FaceDetector:
                     total_frames = len(face_counts)
                     single_face_ratio = single_face_frames / total_frames if total_frames > 0 else 0
                     
-                    # If >= 30% of frames show single face, it's likely a close-up shot
-                    # Prioritize single face position over speaker-aware logic
-                    if single_face_ratio >= 0.30 and single_face_positions:
+                    # If >= 30% of frames show single face, it MIGHT be a close-up shot
+                    # But first check if single-face positions are clustered together
+                    # If they're spread out (min/max > 0.20), it's not a real close-up,
+                    # just detector sometimes missing one of two faces
+                    single_face_spread = 0.0
+                    if single_face_positions:
+                        single_face_spread = max(single_face_positions) - min(single_face_positions)
+                    
+                    is_real_closeup = (
+                        single_face_ratio >= 0.30 
+                        and single_face_positions 
+                        and single_face_spread < 0.20  # Positions must be clustered (same person)
+                    )
+                    
+                    if is_real_closeup:
                         avg_pos = sum(single_face_positions) / len(single_face_positions)
                         scene_focus = max(safe_min, min(safe_max, avg_pos))
                         logger.info(
-                            "Scene %d [%.2f-%.2f]: MIXED (%.0f%% single-face frames) → CLOSE-UP focus=%.3f",
+                            "Scene %d [%.2f-%.2f]: MIXED (%.0f%% single-face, spread=%.2f) → CLOSE-UP focus=%.3f",
                             scene_idx, scene_start_t, scene_end_t, 
-                            single_face_ratio * 100, scene_focus
+                            single_face_ratio * 100, single_face_spread, scene_focus
                         )
+                    elif single_face_ratio >= 0.30 and single_face_spread >= 0.20:
+                        # High single-face ratio but positions are scattered
+                        # → NOT a real close-up, detector just missed one face sometimes
+                        # Fall through to 2-face logic below
+                        logger.info(
+                            "Scene %d [%.2f-%.2f]: MIXED but spread=%.2f too wide (different faces) → using 2-face logic",
+                            scene_idx, scene_start_t, scene_end_t, single_face_spread
+                        )
+                        # Continue to check if faces fit or use speaker-aware
+                        if required_width <= self.CROP_WIDTH_PX:
+                            center_pos = (left_pos + right_pos) / 2.0
+                            scene_focus = max(safe_min, min(safe_max, center_pos))
+                            logger.info(
+                                "  → 2 FACES FIT (span=%dpx) → center=%.3f",
+                                int(required_width), scene_focus
+                            )
+                        else:
+                            # Use speaker-aware or fallback to right speaker
+                            speaking_speaker = speaker_at_time.get(round(scene_start_t, 1))
+                            if speaking_speaker and dialogue:
+                                if "00" in speaking_speaker or "0" == speaking_speaker[-1]:
+                                    scene_focus = max(safe_min, min(safe_max, left_pos))
+                                    logger.info("  → SPEAKER-AWARE: %s (left) → focus=%.3f", speaking_speaker, scene_focus)
+                                else:
+                                    scene_focus = max(safe_min, min(safe_max, right_pos))
+                                    logger.info("  → SPEAKER-AWARE: %s (right) → focus=%.3f", speaking_speaker, scene_focus)
+                            else:
+                                scene_focus = max(safe_min, min(safe_max, right_pos))
+                                logger.info("  → NO DIARIZATION → right speaker focus=%.3f", scene_focus)
                     elif required_width <= self.CROP_WIDTH_PX:
                         # === BOTH FIT → center between them ===
                         # Use safe bounds since we know where faces are
