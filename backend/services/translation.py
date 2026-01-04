@@ -184,9 +184,17 @@ class Translator:
         self, payload: List[Dict[str, str]]
     ) -> Dict[str, Dict[str, str]]:
         prompt = (
-            "You are a professional RU<>EN translator. Translate each segment to natural Russian, "
-            "allowing light adaptation for clarity but preserving meaning. Return clean text suitable "
-            "for on-screen subtitles (no markup). Respond ONLY with valid JSON in the format:\n"
+            "You are a professional RU<>EN translator specializing in DUBBING and VOICEOVER. "
+            "Translate each segment to natural Russian with these CRITICAL rules:\n\n"
+            "1. KEEP IT SHORT: Russian voiceover must fit the SAME duration as English original. "
+            "Russian is typically 15-25% longer than English, so COMPENSATE by using:\n"
+            "   - Shorter synonyms (использовать → брать, осуществлять → делать)\n"
+            "   - Remove filler words (ну, вот, как бы, в общем)\n"
+            "   - Simplify constructions (для того чтобы → чтобы)\n"
+            "   - TARGET: translation should be ~SAME character count as original or SHORTER\n\n"
+            "2. NATURAL SPEECH: This is for voice dubbing, not written text. Use spoken Russian.\n\n"
+            "3. Return clean text suitable for on-screen subtitles (no markup).\n\n"
+            "Respond ONLY with valid JSON in the format:\n"
             '{\n  "results": [\n    {"id": "...", "subtitle_text": "..."},\n    ...\n  ]\n}\n\n'
             "Segments:\n"
         )
