@@ -1,7 +1,10 @@
 """ElevenLabs Dubbing API integration."""
+from __future__ import annotations
+
 import logging
 import time
 from pathlib import Path
+from typing import Callable
 
 import httpx
 
@@ -111,7 +114,7 @@ class DubbingService:
         dubbing_id: str,
         poll_interval: float | None = None,
         max_wait: float | None = None,
-        progress_callback: callable | None = None,
+        progress_callback: Callable | None = None,
     ) -> dict:
         """
         Wait for dubbing to complete.
@@ -201,7 +204,7 @@ class DubbingService:
         source_lang: str = "en",
         target_lang: str = "ru",
         num_speakers: int = 0,
-        progress_callback: callable | None = None,
+        progress_callback: Callable | None = None,
     ) -> str:
         """
         Full dubbing pipeline: upload → wait → download.
