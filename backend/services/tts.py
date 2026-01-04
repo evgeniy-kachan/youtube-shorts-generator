@@ -380,8 +380,13 @@ class BaseTTSService:
                 target_duration = chunk.get("target_duration")
                 word_count = chunk.get("word_count") or len(chunk.get("text", "").split())
 
+                # Check if this TTS service wants to skip ffmpeg post-retime
+                # (e.g. ElevenLabs has native speed control, ffmpeg sounds unnatural)
+                skip_retime = getattr(self, 'SKIP_POST_RETIME', False)
+                
                 should_retime_chunk = (
-                    target_duration
+                    not skip_retime
+                    and target_duration
                     and target_duration > 0
                     and current_duration > 0
                     and abs(current_duration - target_duration) > 0.08
@@ -411,8 +416,13 @@ class BaseTTSService:
             final_audio += seg
 
         actual_duration = len(final_audio) / 1000.0
+        
+        # Skip final retime for services with native speed control
+        skip_retime = getattr(self, 'SKIP_POST_RETIME', False)
+        
         if (
-            turn_target_duration > 0
+            not skip_retime
+            and turn_target_duration > 0
             and actual_duration > 0
             and abs(actual_duration - turn_target_duration) > 0.12
         ):
@@ -861,6 +871,10 @@ class TTSService(BaseTTSService):
 
 class ElevenLabsTTSService(BaseTTSService):
     """Cloud-based TTS powered by ElevenLabs."""
+    
+    # Skip ffmpeg post-processing - ElevenLabs has native speed control
+    # Aggressive tempo changes (> 1.2x) sound unnatural, better have slight desync
+    SKIP_POST_RETIME = True
 
     def __init__(
         self,
