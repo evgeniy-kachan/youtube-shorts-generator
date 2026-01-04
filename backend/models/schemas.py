@@ -103,3 +103,24 @@ class TaskStatus(BaseModel):
     message: Optional[str] = None
     result: Optional[dict] = None
 
+
+class DubbingRequest(BaseModel):
+    """Request for AI dubbing using ElevenLabs Dubbing API."""
+    video_id: str
+    segment_id: str = Field(..., description="Segment ID to dub")
+    source_lang: str = Field(default="en", description="Source language code")
+    target_lang: str = Field(default="ru", description="Target language code")
+    vertical_method: str = Field(
+        default="center_crop",
+        description="Method for vertical conversion: letterbox, center_crop"
+    )
+    crop_focus: str = Field(
+        default="face_auto",
+        description="Horizontal crop focus for center_crop method"
+    )
+    subtitle_animation: str = Field(default="bounce", description="Subtitle animation")
+    subtitle_position: str = Field(default="mid_low", description="Subtitle position")
+    subtitle_font: str = Field(default="Montserrat Light", description="Font family")
+    subtitle_font_size: int = Field(default=86, description="Font size")
+    subtitle_background: bool = Field(default=False, description="Subtitle background")
+

@@ -20,9 +20,10 @@ from backend.services.translation import Translator
 from backend.services.tts import TTSService, ElevenLabsTTSService
 from backend.services.video_processor import VideoProcessor
 from backend.services.text_markup import TextMarkupService
+from backend.services.dubbing import get_dubbing_service
 from backend.utils.file_utils import get_temp_dir, get_output_dir, clear_temp_dir
 from backend import config
-from backend.models.schemas import ProcessRequest, TaskStatus
+from backend.models.schemas import ProcessRequest, TaskStatus, DubbingRequest
 
 router = APIRouter(prefix="/api/video", tags=["video"])
 
@@ -813,6 +814,166 @@ async def process_segments(request: ProcessRequest, background_tasks: Background
         request.crop_focus,
     )
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Processing task queued")
+
+
+@router.post("/dubbing", response_model=TaskStatus)
+async def dub_segment(request: DubbingRequest, background_tasks: BackgroundTasks):
+    """
+    AI Dubbing using ElevenLabs Dubbing API.
+    Automatically translates and dubs video with voice cloning.
+    """
+    task_id = str(uuid.uuid4())
+    tasks[task_id] = {"status": "pending", "progress": 0.0, "message": "Dubbing task queued"}
+    background_tasks.add_task(
+        _dubbing_task,
+        task_id,
+        request.video_id,
+        request.segment_id,
+        request.source_lang,
+        request.target_lang,
+        request.vertical_method,
+        request.crop_focus,
+        request.subtitle_animation,
+        request.subtitle_position,
+        request.subtitle_font,
+        request.subtitle_font_size,
+        request.subtitle_background,
+    )
+    return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Dubbing task queued")
+
+
+def _dubbing_task(
+    task_id: str,
+    video_id: str,
+    segment_id: str,
+    source_lang: str,
+    target_lang: str,
+    vertical_method: str,
+    crop_focus: str,
+    subtitle_animation: str,
+    subtitle_position: str,
+    subtitle_font: str,
+    subtitle_font_size: int,
+    subtitle_background: bool,
+):
+    """Background task for AI dubbing."""
+    try:
+        tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Loading segment data..."}
+        
+        # Get cached analysis results
+        if video_id not in analysis_results_cache:
+            raise ValueError(f"Analysis results not found for video {video_id}")
+        
+        cached = analysis_results_cache[video_id]
+        segments = cached.get("segments", [])
+        
+        # Find the segment
+        segment = None
+        for s in segments:
+            if s.get("id") == segment_id:
+                segment = s
+                break
+        
+        if not segment:
+            raise ValueError(f"Segment {segment_id} not found")
+        
+        # Get video path
+        video_path = cached.get("video_path")
+        if not video_path or not os.path.exists(video_path):
+            raise FileNotFoundError(f"Source video not found: {video_path}")
+        
+        output_dir = get_output_dir(video_id)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Step 1: Cut segment from original video
+        tasks[task_id] = {"status": "processing", "progress": 0.15, "message": "Cutting video segment..."}
+        
+        start_time = segment.get("start_time", 0)
+        end_time = segment.get("end_time", 0)
+        duration = end_time - start_time
+        
+        cut_segment_path = os.path.join(output_dir, f"{segment_id}_source.mp4")
+        
+        (
+            ffmpeg
+            .input(video_path, ss=start_time, t=duration)
+            .output(cut_segment_path, vcodec='libx264', crf=18, avoid_negative_ts='make_zero')
+            .overwrite_output()
+            .run(quiet=True, capture_stdout=True, capture_stderr=True)
+        )
+        
+        # Step 2: Send to ElevenLabs Dubbing API
+        tasks[task_id] = {"status": "processing", "progress": 0.2, "message": "Uploading to ElevenLabs Dubbing..."}
+        
+        dubbed_audio_path = os.path.join(output_dir, f"{segment_id}_dubbed.mp3")
+        
+        def progress_callback(status):
+            status_code = status.get("status", "unknown")
+            tasks[task_id] = {
+                "status": "processing",
+                "progress": 0.3 + 0.4 * (0.5 if status_code == "dubbing" else 1.0),
+                "message": f"ElevenLabs: {status_code}..."
+            }
+        
+        dubbing_service = get_dubbing_service()
+        dubbing_service.dub_video(
+            video_path=cut_segment_path,
+            output_audio_path=dubbed_audio_path,
+            source_lang=source_lang,
+            target_lang=target_lang,
+            progress_callback=progress_callback,
+        )
+        
+        # Step 3: Apply video processing (crop, subtitles)
+        tasks[task_id] = {"status": "processing", "progress": 0.75, "message": "Applying video effects..."}
+        
+        renderer = get_service("renderer")
+        final_output_path = os.path.join(output_dir, f"{segment_id}.mp4")
+        
+        # Process video with dubbed audio
+        renderer.process_video(
+            video_path=cut_segment_path,
+            audio_path=dubbed_audio_path,
+            output_path=final_output_path,
+            subtitles=None,  # Dubbing API doesn't provide word-level subtitles
+            vertical_method=vertical_method,
+            crop_focus=crop_focus,
+            segment_start=start_time,
+            segment_end=end_time,
+            dialogue_turns=None,  # No dialogue turns for AI dubbing
+            subtitle_animation=subtitle_animation,
+            subtitle_position=subtitle_position,
+            subtitle_font=subtitle_font,
+            subtitle_font_size=subtitle_font_size,
+            subtitle_background=subtitle_background,
+        )
+        
+        # Clean up temporary files
+        if os.path.exists(cut_segment_path):
+            os.remove(cut_segment_path)
+        if os.path.exists(dubbed_audio_path):
+            os.remove(dubbed_audio_path)
+        
+        tasks[task_id] = {
+            "status": "completed",
+            "progress": 1.0,
+            "message": "AI Dubbing completed!",
+            "result": {
+                "segment_id": segment_id,
+                "download_url": f"/api/video/download/{video_id}/{segment_id}",
+            }
+        }
+        
+        logger.info("AI Dubbing completed for %s/%s", video_id, segment_id)
+        
+    except Exception as e:
+        logger.error("AI Dubbing failed for task %s: %s", task_id, e, exc_info=True)
+        tasks[task_id] = {
+            "status": "failed",
+            "progress": tasks[task_id].get("progress", 0.1),
+            "message": str(e)
+        }
+
 
 @router.on_event("startup")
 async def startup_event():

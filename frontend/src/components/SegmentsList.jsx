@@ -279,6 +279,7 @@ const SegmentsList = ({
   segments,
   videoTitle,
   onProcess,
+  onDubbing,
   loading,
   videoThumbnail,
 }) => {
@@ -338,6 +339,22 @@ const SegmentsList = ({
         ttsProvider,
         voiceMix,
         preserveBackgroundAudio,
+        cropFocus
+      );
+    }
+  };
+
+  const handleDubbing = () => {
+    if (selectedSegments.length > 0 && onDubbing) {
+      // AI Dubbing processes one segment at a time
+      onDubbing(
+        selectedSegments[0], // Only first selected segment
+        verticalMethod,
+        subtitleAnimation,
+        subtitlePosition,
+        subtitleFont,
+        subtitleFontSize,
+        subtitleBackground,
         cropFocus
       );
     }
@@ -898,7 +915,7 @@ const SegmentsList = ({
             </div>
           </div>
 
-          {/* Process Button */}
+          {/* Process Buttons */}
           <div className="mt-8 flex justify-end border-t pt-6">
             <div className="flex items-center gap-4">
               <p className="text-sm text-gray-600">
@@ -907,6 +924,34 @@ const SegmentsList = ({
                   {selectedSegments.length}
                 </span>
               </p>
+              
+              {/* AI Dubbing Button */}
+              {onDubbing && (
+                <button
+                  onClick={handleDubbing}
+                  disabled={selectedSegments.length === 0 || loading}
+                  className={`px-6 py-3 text-lg rounded-xl font-semibold transition shadow-lg ${
+                    selectedSegments.length === 0 || loading
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600'
+                  }`}
+                  title="ElevenLabs AI Dubbing - автоматический перевод с клонированием голоса"
+                >
+                  {loading ? (
+                    <span className="flex items-center">
+                      <svg className="animate-spin -ml-1 mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                      </svg>
+                      AI Дубляж...
+                    </span>
+                  ) : (
+                    '🎬 AI Дубляж'
+                  )}
+                </button>
+              )}
+              
+              {/* Standard Processing Button */}
               <button
                 onClick={handleProcess}
                 disabled={selectedSegments.length === 0 || loading}

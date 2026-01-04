@@ -56,6 +56,35 @@ export const getDownloadUrl = (videoId, segmentId) => {
   return `${API_BASE_URL}/api/video/download/${videoId}/${segmentId}`;
 };
 
+export const dubSegment = async (
+  videoId,
+  segmentId,
+  sourceLang = 'en',
+  targetLang = 'ru',
+  verticalMethod = 'center_crop',
+  cropFocus = 'face_auto',
+  subtitleAnimation = 'bounce',
+  subtitlePosition = 'mid_low',
+  subtitleFont = 'Montserrat Light',
+  subtitleFontSize = 86,
+  subtitleBackground = false
+) => {
+  const response = await api.post('/api/video/dubbing', {
+    video_id: videoId,
+    segment_id: segmentId,
+    source_lang: sourceLang,
+    target_lang: targetLang,
+    vertical_method: verticalMethod,
+    crop_focus: cropFocus,
+    subtitle_animation: subtitleAnimation,
+    subtitle_position: subtitlePosition,
+    subtitle_font: subtitleFont,
+    subtitle_font_size: subtitleFontSize,
+    subtitle_background: subtitleBackground,
+  });
+  return response.data;
+};
+
 export const uploadVideoFile = async (file) => {
   const formData = new FormData();
   formData.append('file', file);

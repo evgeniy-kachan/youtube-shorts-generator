@@ -8,6 +8,7 @@ import {
   analyzeLocalVideo,
   getTaskStatus,
   processSegments,
+  dubSegment,
   uploadVideoFile,
   API_BASE_URL,
 } from './services/api';
@@ -202,6 +203,43 @@ function App() {
     }
   };
 
+  const handleDubbing = async (
+    segmentId,
+    verticalMethod,
+    subtitleAnimation,
+    subtitlePosition,
+    subtitleFont,
+    subtitleFontSize,
+    subtitleBackground,
+    cropFocus = 'face_auto'
+  ) => {
+    try {
+      setStage('processing');
+      setProgress(0);
+      setStatusMessage('Запускаем AI Дубляж (ElevenLabs)...');
+      setTaskStatus('pending');
+
+      const response = await dubSegment(
+        videoData.video_id,
+        segmentId,
+        'en',  // source_lang
+        'ru',  // target_lang
+        verticalMethod,
+        cropFocus,
+        subtitleAnimation,
+        subtitlePosition,
+        subtitleFont,
+        subtitleFontSize,
+        subtitleBackground
+      );
+      setProcessingTask(response.task_id);
+    } catch (error) {
+      console.error('Error starting AI dubbing:', error);
+      alert('Ошибка AI Дубляжа: ' + error.message);
+      setStage('segments');
+    }
+  };
+
   const isBusyStage = stage === 'analyzing' || stage === 'processing';
   const hasSessionData =
     !!videoData || segments.length > 0 || processedSegments.length > 0;
@@ -263,6 +301,7 @@ function App() {
             segments={segments}
             videoTitle={videoData?.title}
             onProcess={handleProcess}
+            onDubbing={handleDubbing}
             loading={stage === 'processing'}
             videoThumbnail={videoData?.thumbnail_url}
           />
