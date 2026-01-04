@@ -356,7 +356,9 @@ class BaseTTSService:
                 / f"dialogue_turn_{turn_idx}_chunk_{chunk_idx}_{destination.name}"
             )
             try:
-                self.synthesize(chunk["text"], str(chunk_path), speaker=voice)
+                # Pass target_duration for ElevenLabs native speed control
+                chunk_target = chunk.get("target_duration")
+                self.synthesize(chunk["text"], str(chunk_path), speaker=voice, target_duration=chunk_target)
             except Exception as exc:
                 logger.error(
                     "Failed to synthesize chunk %s/%s for turn %s: %s",
@@ -771,7 +773,9 @@ class TTSService(BaseTTSService):
 
             return torch.cat(audio_segments, dim=-1)
 
-    def synthesize(self, text: str, output_path: str, speaker: str | None = None) -> str:
+    def synthesize(
+        self, text: str, output_path: str, speaker: str | None = None, target_duration: float | None = None
+    ) -> str:
         """
         Synthesize speech from text.
         
@@ -779,10 +783,12 @@ class TTSService(BaseTTSService):
             text: Text to synthesize
             output_path: Path to save audio file
             speaker: Speaker name (xenia, eugene, etc.)
+            target_duration: Ignored for local TTS (handled by ffmpeg post-processing)
             
         Returns:
             Path to generated audio file
         """
+        # Note: target_duration is ignored here - speed adjustment done via ffmpeg in BaseTTSService
         try:
             # Validate model is still available
             if self.model is None:
@@ -892,8 +898,16 @@ class ElevenLabsTTSService(BaseTTSService):
             "use_speaker_boost": speaker_boost,
         }
 
-    def _request_audio_chunk(self, text: str, voice_override: str | None = None) -> bytes:
-        """Call ElevenLabs API and return raw MP3 bytes."""
+    def _request_audio_chunk(
+        self, text: str, voice_override: str | None = None, speed: float = 1.0
+    ) -> bytes:
+        """Call ElevenLabs API and return raw MP3 bytes.
+        
+        Args:
+            text: Text to synthesize
+            voice_override: Optional voice ID to use instead of default
+            speed: Speech speed multiplier (0.7-1.2, default 1.0)
+        """
         voice_id = voice_override or self.voice_id
         url = f"{self.base_url}/text-to-speech/{voice_id}"
         headers = {
@@ -901,10 +915,13 @@ class ElevenLabsTTSService(BaseTTSService):
             "Accept": "audio/mpeg",
             "Content-Type": "application/json",
         }
+        # Clamp speed to ElevenLabs supported range
+        clamped_speed = max(0.7, min(1.2, speed))
+        voice_settings_with_speed = {**self.voice_settings, "speed": clamped_speed}
         payload = {
             "text": text,
             "model_id": self.model_id,
-            "voice_settings": self.voice_settings,
+            "voice_settings": voice_settings_with_speed,
         }
 
         try:
@@ -944,7 +961,9 @@ class ElevenLabsTTSService(BaseTTSService):
             logger.error("Failed to decode ElevenLabs audio chunk: %s", exc)
             raise
 
-    def synthesize(self, text: str, output_path: str, speaker: str | None = None) -> str:
+    def synthesize(
+        self, text: str, output_path: str, speaker: str | None = None, target_duration: float | None = None
+    ) -> str:
         clean_text = self._sanitize_text(text)
         if not clean_text:
             raise ValueError("TTS input is empty after sanitization")
@@ -952,10 +971,25 @@ class ElevenLabsTTSService(BaseTTSService):
         chunks = self._chunk_text(clean_text)
         audio_segments: list[AudioSegment] = []
         voice_override = speaker or self.voice_id
+        
+        # Calculate speed based on target duration (ElevenLabs native speed control)
+        speed = 1.0
+        if target_duration and target_duration > 0:
+            # Estimate natural duration: ~2.5 words/sec for Russian
+            word_count = len(clean_text.split())
+            estimated_duration = max(0.5, word_count / 2.5)
+            speed = estimated_duration / target_duration
+            # ElevenLabs supports 0.7-1.2
+            speed = max(0.7, min(1.2, speed))
+            if abs(speed - 1.0) > 0.05:
+                logger.info(
+                    "ElevenLabs: using speed=%.2f (estimated %.1fs → target %.1fs)",
+                    speed, estimated_duration, target_duration
+                )
 
         for idx, chunk in enumerate(chunks, start=1):
             logger.info("ElevenLabs: synthesizing chunk %s/%s (len=%s)", idx, len(chunks), len(chunk))
-            audio_bytes = self._request_audio_chunk(chunk, voice_override=voice_override)
+            audio_bytes = self._request_audio_chunk(chunk, voice_override=voice_override, speed=speed)
             segment_audio = self._decode_audio(audio_bytes)
             audio_segments.append(segment_audio)
 
