@@ -49,13 +49,17 @@ const VideoInput = ({ onSubmit, loading }) => {
           Загрузите видео — AI сделает клипы
         </h2>
         <p className="text-gray-600">
-          Выберите MP4-файл на своём компьютере, мы загрузим его на сервер и найдём самые интересные моменты автоматически.
+          Выберите MP4-файл на своём компьютере, мы загрузим его на сервер и
+          найдём самые интересные моменты автоматически.
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label htmlFor="video-upload" className="block text-sm font-medium text-gray-700 mb-2">
+          <label
+            htmlFor="video-upload"
+            className="block text-sm font-medium text-gray-700 mb-2"
+          >
             Видеофайл (MP4 / MOV)
           </label>
           <input
@@ -72,15 +76,10 @@ const VideoInput = ({ onSubmit, loading }) => {
           {selectedFile && !error && (
             <div className="mt-3 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3">
               <p className="font-medium">{selectedFile.name}</p>
-              <p>
-                Размер:{' '}
-                {(selectedFile.size / (1024 * 1024)).toFixed(2)} МБ
-              </p>
+              <p>Размер: {(selectedFile.size / (1024 * 1024)).toFixed(2)} МБ</p>
             </div>
           )}
-          {error && (
-            <p className="mt-2 text-sm text-red-600">{error}</p>
-          )}
+          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         </div>
 
         {/* Analysis Mode Selector */}
@@ -100,7 +99,9 @@ const VideoInput = ({ onSubmit, loading }) => {
               }`}
             >
               <div className="font-semibold text-gray-900">⚡ Быстрый</div>
-              <div className="text-xs text-gray-500 mt-1">~30 сек, хорошее качество</div>
+              <div className="text-xs text-gray-500 mt-1">
+                ~30 сек, хорошее качество
+              </div>
             </button>
             <button
               type="button"
@@ -113,7 +114,9 @@ const VideoInput = ({ onSubmit, loading }) => {
               }`}
             >
               <div className="font-semibold text-gray-900">🧠 Глубокий</div>
-              <div className="text-xs text-gray-500 mt-1">~3-4 мин, максимум качества</div>
+              <div className="text-xs text-gray-500 mt-1">
+                ~3-4 мин, максимум качества
+              </div>
             </button>
           </div>
         </div>
@@ -121,7 +124,9 @@ const VideoInput = ({ onSubmit, loading }) => {
         <button
           type="submit"
           disabled={loading}
-          className={`w-full btn-primary ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+          className={`w-full btn-primary ${
+            loading ? 'opacity-50 cursor-not-allowed' : ''
+          }`}
         >
           {loading ? (
             <span className="flex items-center justify-center">
@@ -154,7 +159,9 @@ const VideoInput = ({ onSubmit, loading }) => {
       </form>
 
       <div className="mt-6 border-t pt-6">
-        <h3 className="text-sm font-semibold text-gray-900 mb-3">Возможности:</h3>
+        <h3 className="text-sm font-semibold text-gray-900 mb-3">
+          Возможности:
+        </h3>
         <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {[
             'AI анализ по 12 критериям',
@@ -162,7 +169,7 @@ const VideoInput = ({ onSubmit, loading }) => {
             'Генерация озвучки',
             'Стильные субтитры как в TikTok',
             'Видео до 2 часов',
-            'Клипы от 20 сек до 3 минут'
+            'Клипы от 20 сек до 3 минут',
           ].map((feature, idx) => (
             <li key={idx} className="flex items-center text-sm text-gray-600">
               <svg

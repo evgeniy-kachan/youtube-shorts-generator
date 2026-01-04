@@ -875,7 +875,23 @@ class FaceDetector:
                     # Add margin for face width (~100px each side)
                     required_width = span_px + 200
                     
-                    if required_width <= self.CROP_WIDTH_PX:
+                    # Check for "mixed" scenes: some frames show 1 face (close-up), some show 2
+                    # Count frames by face count
+                    single_face_frames = sum(1 for fc in face_counts if fc == 1)
+                    total_frames = len(face_counts)
+                    single_face_ratio = single_face_frames / total_frames if total_frames > 0 else 0
+                    
+                    # If >= 30% of frames show single face, it's likely a close-up shot
+                    # Prioritize single face position over speaker-aware logic
+                    if single_face_ratio >= 0.30 and single_face_positions:
+                        avg_pos = sum(single_face_positions) / len(single_face_positions)
+                        scene_focus = max(safe_min, min(safe_max, avg_pos))
+                        logger.info(
+                            "Scene %d [%.2f-%.2f]: MIXED (%.0f%% single-face frames) → CLOSE-UP focus=%.3f",
+                            scene_idx, scene_start_t, scene_end_t, 
+                            single_face_ratio * 100, scene_focus
+                        )
+                    elif required_width <= self.CROP_WIDTH_PX:
                         # === BOTH FIT → center between them ===
                         # Use safe bounds since we know where faces are
                         center_pos = (left_pos + right_pos) / 2.0
