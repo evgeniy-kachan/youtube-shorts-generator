@@ -1,4 +1,5 @@
 """Video processing service for cutting, adding audio and subtitles."""
+import os
 import ffmpeg
 import logging
 from pathlib import Path
