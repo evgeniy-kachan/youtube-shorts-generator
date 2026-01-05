@@ -276,23 +276,28 @@ class HighlightAnalyzer:
                     seen_speakers.add(spk)
             
             # Build dialogue turns (group consecutive segments by same speaker)
+            # Now also preserving word-level timestamps for phrase-level sync!
             dialogue = []
             if chunk_segments:
+                first_seg = chunk_segments[0]
                 current_turn = {
-                    "speaker": chunk_segments[0].get("speaker"),
-                    "text": chunk_segments[0].get("text", "").strip(),
-                    "start": chunk_segments[0]["start"],
-                    "end": chunk_segments[0]["end"]
+                    "speaker": first_seg.get("speaker"),
+                    "text": first_seg.get("text", "").strip(),
+                    "start": first_seg["start"],
+                    "end": first_seg["end"],
+                    "words": list(first_seg.get("words") or []),  # Word timestamps!
                 }
                 
                 for seg in chunk_segments[1:]:
                     speaker = seg.get("speaker")
                     text_part = seg.get("text", "").strip()
+                    seg_words = seg.get("words") or []
                     
                     if speaker == current_turn["speaker"]:
-                        # Same speaker, append text
+                        # Same speaker, append text and words
                         current_turn["text"] += " " + text_part
                         current_turn["end"] = seg["end"]
+                        current_turn["words"].extend(seg_words)
                     else:
                         # New speaker, save current turn and start new
                         if current_turn["text"]:
@@ -301,7 +306,8 @@ class HighlightAnalyzer:
                             "speaker": speaker,
                             "text": text_part,
                             "start": seg["start"],
-                            "end": seg["end"]
+                            "end": seg["end"],
+                            "words": list(seg_words),  # Word timestamps for new turn
                         }
                 
                 if current_turn["text"]:
@@ -334,7 +340,8 @@ class HighlightAnalyzer:
                     "speaker": last["speaker"],
                     "text": (last["text"] + " " + first["text"]).strip(),
                     "start": last["start"],
-                    "end": first["end"]
+                    "end": first["end"],
+                    "words": (last.get("words") or []) + (first.get("words") or []),  # Merge words too!
                 }
                 new_dialogue.append(merged_turn)
             

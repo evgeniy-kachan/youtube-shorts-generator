@@ -56,13 +56,23 @@ def main():
             return_char_alignments=False,
         )
 
-        # Extract segments
+        # Extract segments WITH word-level timestamps
         segments = []
         for seg in result.get("segments", []):
+            # Extract word timestamps from WhisperX alignment
+            words = []
+            for w in seg.get("words", []):
+                words.append({
+                    "word": w.get("word", ""),
+                    "start": w.get("start", 0.0),
+                    "end": w.get("end", 0.0),
+                })
+            
             segments.append({
                 "start": seg.get("start", 0.0),
                 "end": seg.get("end", 0.0),
                 "text": seg.get("text", "").strip(),
+                "words": words,  # Now we keep word-level timestamps!
             })
 
         output_data = {

@@ -128,13 +128,16 @@ class TranscriptionService:
                     preview,
                 )
 
+                # Get word-level timestamps from WhisperX alignment
+                words = segment.get("words", [])
+                
                 formatted_segments.append(
                     {
                         "start": start,
                         "end": end,
                         "text": text,
                         "speaker": speaker,
-                        "words": [],  # Word-level alignment not supported in external runner yet
+                        "words": words,  # Word-level timestamps from WhisperX!
                     }
                 )
 

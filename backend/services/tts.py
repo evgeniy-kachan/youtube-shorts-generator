@@ -155,6 +155,88 @@ class BaseTTSService:
         words = max(1, len(text.split()))
         return max(0.5, words / self.SPEECH_WORDS_PER_SEC)
 
+    def _group_words_into_phrases(
+        self, words: list[dict], pause_threshold: float = 0.3
+    ) -> list[dict]:
+        """
+        Group words into phrases based on pauses between them.
+        
+        Args:
+            words: List of word dicts with 'word', 'start', 'end'
+            pause_threshold: Seconds of pause to split phrases (default 0.3s)
+        
+        Returns:
+            List of phrase dicts with 'text', 'start', 'end', 'duration', 'word_count'
+        """
+        if not words:
+            return []
+        
+        phrases: list[dict] = []
+        current_words: list[dict] = [words[0]]
+        phrase_start = words[0].get("start", 0.0)
+        phrase_end = words[0].get("end", 0.0)
+        
+        for i in range(1, len(words)):
+            prev_end = words[i - 1].get("end", 0.0)
+            curr_start = words[i].get("start", 0.0)
+            gap = curr_start - prev_end
+            
+            if gap > pause_threshold:
+                # Finalize current phrase
+                phrase_text = " ".join(w.get("word", "") for w in current_words)
+                phrases.append({
+                    "text": phrase_text,
+                    "start": phrase_start,
+                    "end": phrase_end,
+                    "duration": max(0.1, phrase_end - phrase_start),
+                    "word_count": len(current_words),
+                    "pause_after": gap,  # Store pause duration for later use
+                })
+                
+                # Start new phrase
+                current_words = [words[i]]
+                phrase_start = curr_start
+                phrase_end = words[i].get("end", 0.0)
+            else:
+                current_words.append(words[i])
+                phrase_end = words[i].get("end", 0.0)
+        
+        # Don't forget the last phrase
+        if current_words:
+            phrase_text = " ".join(w.get("word", "") for w in current_words)
+            phrases.append({
+                "text": phrase_text,
+                "start": phrase_start,
+                "end": phrase_end,
+                "duration": max(0.1, phrase_end - phrase_start),
+                "word_count": len(current_words),
+                "pause_after": 0.0,
+            })
+        
+        return phrases
+
+    def _calculate_speech_rate_from_words(self, words: list[dict]) -> float:
+        """
+        Calculate actual words-per-second from word timestamps.
+        Returns default rate if words are empty or invalid.
+        """
+        if not words or len(words) < 2:
+            return self.SPEECH_WORDS_PER_SEC
+        
+        try:
+            first_start = words[0].get("start", 0.0)
+            last_end = words[-1].get("end", 0.0)
+            total_duration = last_end - first_start
+            
+            if total_duration > 0.1:
+                rate = len(words) / total_duration
+                # Sanity check: speech rate should be between 1-5 words/sec
+                return max(1.0, min(5.0, rate))
+        except (TypeError, ValueError):
+            pass
+        
+        return self.SPEECH_WORDS_PER_SEC
+
     def _split_turn_into_chunks(self, text: str) -> list[str]:
         """Split turn text into sentence-like chunks with basic normalization."""
         normalized = (text or "").strip()
@@ -203,10 +285,29 @@ class BaseTTSService:
         """
         Prepare a synthesis plan for a dialogue turn: small chunks with pauses and
         per-chunk target durations so the final audio matches diarized timings.
+        
+        Now uses word-level timestamps (if available) for better timing estimation.
         """
         text = (turn.get("text_ru") or turn.get("text") or "").strip()
         if not text:
             return []
+
+        # Check for word-level timestamps from WhisperX
+        original_words = turn.get("words") or []
+        has_word_timestamps = bool(original_words)
+        
+        if has_word_timestamps:
+            # Calculate actual speech rate from original audio
+            original_speech_rate = self._calculate_speech_rate_from_words(original_words)
+            # Group original words into phrases for pause analysis
+            original_phrases = self._group_words_into_phrases(original_words, pause_threshold=0.3)
+            logger.debug(
+                "Turn has %d word timestamps, speech_rate=%.2f w/s, %d phrases detected",
+                len(original_words), original_speech_rate, len(original_phrases)
+            )
+        else:
+            original_speech_rate = self.SPEECH_WORDS_PER_SEC
+            original_phrases = []
 
         raw_chunks = self._split_turn_into_chunks(text)
         plan: list[dict] = []
@@ -242,7 +343,9 @@ class BaseTTSService:
         if end_time is not None and end_time > start_time:
             turn_window = max(0.2, end_time - start_time)
         else:
-            turn_window = self._estimate_duration_from_text(text)
+            # Use speech rate from original audio if available
+            translated_word_count = max(1, len(text.split()))
+            turn_window = max(0.5, translated_word_count / original_speech_rate)
 
         raw_pause_ms = sum(chunk["pause_ms"] for chunk in plan[:-1])
         pause_budget_ms = min(
