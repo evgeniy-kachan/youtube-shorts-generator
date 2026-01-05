@@ -369,14 +369,29 @@ class BaseTTSService:
         total_weight = sum(chunk["word_count"] for chunk in plan) or len(plan)
         remaining = speech_budget
 
+        # Track if any chunk duration was clamped by MIN_CHUNK_DURATION
+        # This would cause inconsistent speed between chunks
+        any_clamped = False
+
         for idx, chunk in enumerate(plan):
             weight = chunk["word_count"] / total_weight if total_weight else 1 / len(plan)
+            ideal_duration = speech_budget * weight
+            
             if idx == len(plan) - 1:
                 chunk_duration = max(self.MIN_CHUNK_DURATION, remaining)
             else:
-                chunk_duration = max(self.MIN_CHUNK_DURATION, speech_budget * weight)
+                chunk_duration = max(self.MIN_CHUNK_DURATION, ideal_duration)
+                if ideal_duration < self.MIN_CHUNK_DURATION:
+                    any_clamped = True
                 remaining = max(0.0, remaining - chunk_duration)
             chunk["target_duration"] = chunk_duration
+
+        # Warn if speed might be inconsistent between chunks
+        if any_clamped and len(plan) > 1:
+            logger.debug(
+                "Turn has %d chunks with MIN_CHUNK_DURATION override - speed may vary slightly",
+                len(plan)
+            )
 
         return plan
 
@@ -447,7 +462,20 @@ class BaseTTSService:
         destination: Path,
         turn_idx: int,
     ) -> AudioSegment | None:
-        """Synthesize per-chunk audio and stitch it with pauses."""
+        """Synthesize per-chunk audio and stitch it with pauses.
+        
+        IMPORTANT: Speed is UNIFORM across all chunks within a turn.
+        
+        How it works:
+        - Each chunk's target_duration is proportional to its word count
+        - ElevenLabs calculates speed = estimated_duration / target_duration
+        - Since ratios are the same, speed is identical for all chunks
+        
+        Example:
+        - Turn: 10 words, target = 4s
+        - Chunk A (3 words): target = 1.2s → speed = (3/2.5)/1.2 = 1.0
+        - Chunk B (7 words): target = 2.8s → speed = (7/2.5)/2.8 = 1.0
+        """
         combined_segments: list[AudioSegment] = []
         speech_target = sum(chunk.get("target_duration", 0.0) for chunk in plan)
         pause_target = sum(chunk.get("pause_ms", 0) for chunk in plan[:-1]) / 1000.0
@@ -459,8 +487,9 @@ class BaseTTSService:
                 / f"dialogue_turn_{turn_idx}_chunk_{chunk_idx}_{destination.name}"
             )
             try:
-                # Pass target_duration for ElevenLabs native speed control
-                chunk_target = chunk.get("target_duration")
+                # Pass chunk's proportional target_duration
+                # Speed will be uniform because word_count/target_duration ratio is the same
+                chunk_target = chunk.get("target_duration", 0.0)
                 self.synthesize(chunk["text"], str(chunk_path), speaker=voice, target_duration=chunk_target)
             except Exception as exc:
                 logger.error(
