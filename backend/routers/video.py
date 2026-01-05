@@ -924,35 +924,39 @@ def _dubbing_task(
             progress_callback=progress_callback,
         )
         
-        # Step 3: Apply video processing (crop, subtitles)
+        # Step 3: Apply video processing (crop, no subtitles for AI dubbing)
         tasks[task_id] = {"status": "processing", "progress": 0.75, "message": "Applying video effects..."}
         
         renderer = get_service("renderer")
         final_output_path = os.path.join(output_dir, f"{segment_id}.mp4")
         
-        # Process video with dubbed audio
-        renderer.process_video(
-            video_path=cut_segment_path,
+        # Process video with dubbed audio (no subtitles - ElevenLabs handles lip-sync)
+        processed_path = renderer.create_vertical_video(
+            video_path=cached.get("video_path"),  # Original source video
             audio_path=dubbed_audio_path,
-            output_path=final_output_path,
-            subtitles=None,  # Dubbing API doesn't provide word-level subtitles
-            vertical_method=vertical_method,
-            crop_focus=crop_focus,
-            segment_start=start_time,
-            segment_end=end_time,
-            dialogue_turns=None,  # No dialogue turns for AI dubbing
+            text="",  # No subtitles for AI dubbing
+            start_time=start_time,
+            end_time=end_time,
+            method=vertical_method,
+            subtitle_style="none",  # Disable subtitles
             subtitle_animation=subtitle_animation,
             subtitle_position=subtitle_position,
             subtitle_font=subtitle_font,
             subtitle_font_size=subtitle_font_size,
             subtitle_background=subtitle_background,
+            crop_focus=crop_focus,
         )
+        
+        # Move to final path
+        renderer.save_video(processed_path, final_output_path)
         
         # Clean up temporary files
         if os.path.exists(cut_segment_path):
             os.remove(cut_segment_path)
         if os.path.exists(dubbed_audio_path):
             os.remove(dubbed_audio_path)
+        if os.path.exists(processed_path) and processed_path != final_output_path:
+            os.remove(processed_path)
         
         tasks[task_id] = {
             "status": "completed",
