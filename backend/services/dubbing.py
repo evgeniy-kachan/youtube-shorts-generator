@@ -83,6 +83,13 @@ class DubbingService:
                     files=files,
                     data=data,
                 )
+                if response.status_code != 200:
+                    # Log detailed error from ElevenLabs
+                    try:
+                        error_detail = response.json()
+                        logger.error("ElevenLabs Dubbing API error: %s", error_detail)
+                    except Exception:
+                        logger.error("ElevenLabs Dubbing API error: %s", response.text)
                 response.raise_for_status()
         
         result = response.json()
