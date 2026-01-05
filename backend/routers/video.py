@@ -958,14 +958,13 @@ def _dubbing_task(
         if os.path.exists(processed_path) and processed_path != final_output_path:
             os.remove(processed_path)
         
+        # Use same format as regular processing for UI compatibility
+        relative_path = os.path.join(video_id, f"{segment_id}.mp4")
         tasks[task_id] = {
             "status": "completed",
             "progress": 1.0,
             "message": "AI Dubbing completed!",
-            "result": {
-                "segment_id": segment_id,
-                "download_url": f"/api/video/download/{video_id}/{segment_id}",
-            }
+            "result": {"output_videos": [relative_path]}
         }
         
         logger.info("AI Dubbing completed for %s/%s", video_id, segment_id)
