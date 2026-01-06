@@ -1388,11 +1388,15 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         # Log the inputs for debugging
         for idx, inp in enumerate(inputs):
-            logger.debug("TTD input %d: voice=%s, text=%s", idx, inp["voice_id"], inp["text"][:50])
+            vs = inp.get("voice_settings", {})
+            speed_val = vs.get("speed", 1.0) if vs else 1.0
+            logger.info(
+                "TTD input %d: voice=%s, speed=%.2f, text=%s",
+                idx, inp["voice_id"], speed_val, inp["text"][:60]
+            )
         
         # Make TTD API request
         # Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue
-        # Try without /convert suffix first
         url = f"{self.base_url}/text-to-dialogue"
         headers = {
             "xi-api-key": self.api_key,
@@ -1400,9 +1404,13 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             "Content-Type": "application/json",
         }
         payload = {
-            "inputs": inputs,  # Array of {text, voice_id}
+            "inputs": inputs,  # Array of {text, voice_id, voice_settings}
             "output_format": "mp3_44100_128",  # High quality
         }
+        
+        # Log full payload for debugging
+        import json
+        logger.info("TTD payload: %s", json.dumps(payload, ensure_ascii=False, indent=None)[:500])
         
         try:
             client_kwargs = {"timeout": self.request_timeout}
