@@ -1318,13 +1318,31 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         return clamped_speed
 
+    def _calculate_gaps(self, dialogue_turns: list[dict]) -> list[float]:
+        """
+        Calculate gaps (pauses) between dialogue turns based on timestamps.
+        
+        Returns list of gap durations in seconds (one per turn, gap BEFORE the turn).
+        First turn's gap is time from segment start (0) to first turn start.
+        """
+        gaps = []
+        prev_end = 0.0
+        
+        for turn in dialogue_turns:
+            start = turn.get("start", 0.0)
+            gap = max(0.0, start - prev_end)
+            gaps.append(gap)
+            prev_end = turn.get("end", start)
+        
+        return gaps
+
     def _prepare_ttd_inputs(
         self,
         dialogue_turns: list[dict],
         voice_map: dict[str, str],
         add_emotions: bool = True,
         speed: float = 1.0,
-    ) -> list[dict]:
+    ) -> tuple[list[dict], list[float]]:
         """
         Convert dialogue turns to TTD API format.
         
@@ -1333,9 +1351,23 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         Output format (TTD API):
             [{"text": "[cheerfully] Привет!", "voice_id": "abc123", "voice_settings": {...}}, ...]
+            
+        Returns:
+            Tuple of (inputs list, gaps list for post-processing)
         """
         inputs = []
         default_voice = self.voice_id
+        
+        # Calculate gaps between turns for post-processing
+        gaps = self._calculate_gaps(dialogue_turns)
+        
+        # Log gaps for debugging
+        total_gap = sum(gaps)
+        if total_gap > 0.5:
+            logger.info("TTD: Total gaps between turns: %.1fs", total_gap)
+            for i, gap in enumerate(gaps):
+                if gap > 0.1:
+                    logger.info("  Gap before turn %d: %.2fs", i, gap)
         
         # Voice settings with speed (same for all turns to maintain consistent rhythm)
         voice_settings = {
@@ -1369,7 +1401,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             
             inputs.append(inp)
         
-        return inputs
+        return inputs, gaps
 
     def synthesize_dialogue(
         self,
@@ -1400,10 +1432,13 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         # Calculate unified speed for entire dialogue (maintains consistent rhythm)
         speed = self._calculate_dialogue_speed(dialogue_turns)
         
-        inputs = self._prepare_ttd_inputs(dialogue_turns, voice_map, add_emotions, speed=speed)
+        inputs, gaps = self._prepare_ttd_inputs(dialogue_turns, voice_map, add_emotions, speed=speed)
         
         if not inputs:
             raise ValueError("No valid dialogue turns to synthesize")
+        
+        # Calculate leading silence (gap before first turn)
+        leading_silence_ms = int(gaps[0] * 1000) if gaps else 0
         
         logger.info(
             "TTD: Synthesizing dialogue with %d turns, voices=%s",
@@ -1472,8 +1507,16 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             logger.error("Failed to decode TTD audio: %s", exc)
             raise
         
-        # Convert to WAV and save
+        # Convert to target sample rate
         audio = audio.set_frame_rate(self.sample_rate).set_channels(1)
+        
+        # Add leading silence if first turn doesn't start at 0
+        if leading_silence_ms > 100:  # Only add if gap > 100ms
+            silence = AudioSegment.silent(duration=leading_silence_ms, frame_rate=self.sample_rate)
+            audio = silence + audio
+            logger.info("TTD: Added %.2fs leading silence", leading_silence_ms / 1000.0)
+        
+        # Save to file
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         audio.export(str(output_path), format="wav")

@@ -232,3 +232,111 @@ class Translator:
                 logger.warning("Malformed translation item: %s", item)
 
         return result_map
+
+    def translate_with_timings(
+        self, dialogue_turns: list[dict], segment_context: str = ""
+    ) -> list[dict]:
+        """
+        Second pass translation: isochronic translation with precise timings.
+        
+        Takes dialogue turns with start/end timestamps and translates each turn
+        to fit approximately the same duration as the original.
+        
+        Args:
+            dialogue_turns: List of turns with 'speaker', 'text', 'start', 'end'
+            segment_context: Optional context about the video/conversation
+            
+        Returns:
+            Same list with 'text_ru' field added to each turn
+        """
+        if not dialogue_turns:
+            return dialogue_turns
+        
+        # Build dialogue representation with timings
+        dialogue_parts = []
+        for i, turn in enumerate(dialogue_turns):
+            start = turn.get("start", 0.0)
+            end = turn.get("end", 0.0)
+            duration = end - start
+            text = turn.get("text", "")
+            speaker = turn.get("speaker", f"Speaker_{i}")
+            word_count = len(text.split())
+            
+            dialogue_parts.append(
+                f"Turn {i} [{speaker}] ({duration:.1f}s, {word_count} words):\n"
+                f"  EN: {text}"
+            )
+        
+        dialogue_str = "\n\n".join(dialogue_parts)
+        
+        prompt = (
+            "You are a professional DUBBING translator. Your task is ISOCHRONIC translation - "
+            "the Russian voiceover must match the EXACT TIMING of the original English.\n\n"
+            "CRITICAL RULES:\n"
+            "1. Each turn has a DURATION in seconds. Your Russian translation must be speakable "
+            "in approximately that same time.\n"
+            "2. If a turn is LONG (>10s) - you can EXPAND the translation, add natural phrases.\n"
+            "3. If a turn is SHORT (<3s) - keep it concise.\n"
+            "4. Russian speech rate: ~2.5 words/second. Calculate accordingly.\n"
+            "   Example: 6.0s turn → aim for ~15 Russian words\n"
+            "   Example: 18.0s turn → aim for ~45 Russian words\n"
+            "5. Maintain natural conversational Russian. This is for voice dubbing.\n"
+            "6. Keep the meaning and emotional tone of the original.\n\n"
+        )
+        
+        if segment_context:
+            prompt += f"CONTEXT: {segment_context}\n\n"
+        
+        prompt += (
+            f"DIALOGUE TO TRANSLATE:\n{dialogue_str}\n\n"
+            "Respond ONLY with valid JSON:\n"
+            '{\n  "translations": [\n'
+            '    {"turn": 0, "text_ru": "..."},\n'
+            '    {"turn": 1, "text_ru": "..."},\n'
+            '    ...\n'
+            '  ]\n}\n'
+        )
+        
+        logger.info("Isochronic translation: %d turns", len(dialogue_turns))
+        
+        try:
+            response_json = self.client.chat(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert dubbing translator who matches speech timing precisely.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,  # Lower temperature for more consistent output
+            )
+            response_text = DeepSeekClient.extract_text(response_json)
+            parsed = DeepSeekClient.extract_json(response_text)
+            translations = parsed.get("translations", [])
+            
+            # Apply translations to turns
+            for item in translations:
+                turn_idx = item.get("turn")
+                text_ru = item.get("text_ru", "")
+                if turn_idx is not None and 0 <= turn_idx < len(dialogue_turns):
+                    dialogue_turns[turn_idx]["text_ru"] = text_ru
+                    
+                    # Log comparison
+                    original = dialogue_turns[turn_idx]
+                    duration = original.get("end", 0) - original.get("start", 0)
+                    en_words = len(original.get("text", "").split())
+                    ru_words = len(text_ru.split())
+                    logger.info(
+                        "Turn %d: %.1fs | EN %d words → RU %d words (target ~%d)",
+                        turn_idx, duration, en_words, ru_words, int(duration * 2.5)
+                    )
+            
+            return dialogue_turns
+            
+        except Exception as exc:
+            logger.error("Isochronic translation failed: %s", exc, exc_info=True)
+            # Fallback: keep original text_ru if exists, or use English
+            for turn in dialogue_turns:
+                if "text_ru" not in turn:
+                    turn["text_ru"] = turn.get("text", "")
+            return dialogue_turns

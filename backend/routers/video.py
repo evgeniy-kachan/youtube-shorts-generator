@@ -587,6 +587,18 @@ def _process_segments_task(
             has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
             
             if has_dialogue and voice_plan:
+                # SECOND PASS: Isochronic translation with precise timings
+                # This improves translation quality by considering exact durations
+                try:
+                    translator = Translator()
+                    logger.info(f"Running isochronic translation for {segment['id']}")
+                    segment['dialogue'] = translator.translate_with_timings(
+                        dialogue_turns=segment['dialogue'],
+                        segment_context=segment.get('title', ''),
+                    )
+                except Exception as trans_exc:
+                    logger.warning("Isochronic translation failed, using original: %s", trans_exc)
+                
                 logger.info(f"Synthesizing multi-speaker dialogue for {segment['id']}")
                 tts_service.synthesize_dialogue(
                     dialogue_turns=segment['dialogue'],
