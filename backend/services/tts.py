@@ -1320,18 +1320,34 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
     def _calculate_gaps(self, dialogue_turns: list[dict]) -> list[float]:
         """
-        Calculate gaps (pauses) between dialogue turns based on timestamps.
+        Calculate gaps (pauses) between dialogue turns based on RELATIVE timestamps.
         
         Returns list of gap durations in seconds (one per turn, gap BEFORE the turn).
-        First turn's gap is time from segment start (0) to first turn start.
-        """
-        gaps = []
-        prev_end = 0.0
+        First turn's gap is always 0 (we start from the first turn).
         
-        for turn in dialogue_turns:
-            start = turn.get("start", 0.0)
-            gap = max(0.0, start - prev_end)
-            gaps.append(gap)
+        Note: Timestamps in turns are ABSOLUTE (from video start), so we convert
+        them to relative by using the first turn's start as base.
+        """
+        if not dialogue_turns:
+            return []
+        
+        gaps = []
+        
+        # Use first turn's start as the base (segment start)
+        segment_start = dialogue_turns[0].get("start", 0.0)
+        prev_end = segment_start  # First turn starts at relative 0
+        
+        for i, turn in enumerate(dialogue_turns):
+            start = turn.get("start", prev_end)
+            
+            if i == 0:
+                # First turn: no leading gap (starts at 0)
+                gaps.append(0.0)
+            else:
+                # Gap between previous turn end and this turn start
+                gap = max(0.0, start - prev_end)
+                gaps.append(gap)
+            
             prev_end = turn.get("end", start)
         
         return gaps
