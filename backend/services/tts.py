@@ -1259,20 +1259,45 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         Returns speed multiplier (0.7-1.2) to fit Russian translation into original timeline.
         """
-        # Calculate total original duration from whisper timestamps
+        # Log full timeline for debugging
+        logger.info("=" * 70)
+        logger.info("TTD TIMELINE COMPARISON")
+        logger.info("=" * 70)
+        
         total_original_duration = 0.0
         total_translated_words = 0
         
-        for turn in dialogue_turns:
+        for idx, turn in enumerate(dialogue_turns):
             start = turn.get("start", 0.0)
             end = turn.get("end", 0.0)
-            if end > start:
-                total_original_duration += (end - start)
+            duration = end - start if end > start else 0.0
             
-            text = turn.get("text_ru") or turn.get("text") or ""
-            total_translated_words += len(text.split())
+            text_en = turn.get("text") or ""
+            text_ru = turn.get("text_ru") or text_en
+            speaker = turn.get("speaker", "?")
+            
+            words_en = len(text_en.split())
+            words_ru = len(text_ru.split())
+            
+            # Estimate natural duration for Russian (2.5 words/sec)
+            est_ru_duration = words_ru / 2.5 if words_ru > 0 else 0.0
+            
+            logger.info(
+                "Turn %d [%s] %.1f-%.1fs (%.1fs):",
+                idx, speaker, start, end, duration
+            )
+            logger.info("  EN (%d words): %s", words_en, text_en[:80] + ("..." if len(text_en) > 80 else ""))
+            logger.info("  RU (%d words): %s", words_ru, text_ru[:80] + ("..." if len(text_ru) > 80 else ""))
+            logger.info("  Original: %.1fs | RU natural: %.1fs | Diff: %+.1fs", duration, est_ru_duration, est_ru_duration - duration)
+            
+            if duration > 0:
+                total_original_duration += duration
+            total_translated_words += words_ru
+        
+        logger.info("-" * 70)
         
         if total_original_duration <= 0 or total_translated_words <= 0:
+            logger.info("TTD: No valid durations, using speed=1.0")
             return 1.0
         
         # Estimate natural duration for Russian at ~2.5 words/sec
@@ -1285,11 +1310,11 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         # Clamp to ElevenLabs range (0.7-1.2)
         clamped_speed = max(0.7, min(1.2, speed))
         
-        if abs(clamped_speed - 1.0) > 0.05:
-            logger.info(
-                "TTD: dialogue speed=%.2f (estimated %.1fs → target %.1fs, %d words)",
-                clamped_speed, estimated_natural_duration, total_original_duration, total_translated_words
-            )
+        logger.info(
+            "TTD TOTAL: %d RU words | Original: %.1fs | RU natural: %.1fs | Speed: %.2f (clamped: %.2f)",
+            total_translated_words, total_original_duration, estimated_natural_duration, speed, clamped_speed
+        )
+        logger.info("=" * 70)
         
         return clamped_speed
 
