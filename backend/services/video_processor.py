@@ -12,6 +12,9 @@ from backend.services.diarization_runner import get_diarization_runner
 
 logger = logging.getLogger(__name__)
 
+# Temporarily suppress verbose video processing logs (set to INFO to re-enable)
+logger.setLevel(logging.WARNING)
+
 
 class VideoProcessor:
     """Process video segments: cut, add TTS audio, add stylized subtitles."""

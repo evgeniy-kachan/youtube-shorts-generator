@@ -12,6 +12,9 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Temporarily suppress verbose face detection logs (set to INFO to re-enable)
+logger.setLevel(logging.WARNING)
+
 
 class SimpleTracker:
     """

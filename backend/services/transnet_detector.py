@@ -24,6 +24,9 @@ import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
+# Temporarily suppress verbose TransNet logs (set to INFO to re-enable)
+logger.setLevel(logging.WARNING)
+
 # Hugging Face weights URL (pre-converted PyTorch weights)
 WEIGHTS_URL = "https://huggingface.co/MiaoshouAI/transnetv2-pytorch-weights/resolve/main/transnetv2-pytorch-weights.pth"
 WEIGHTS_FILENAME = "transnetv2-pytorch-weights.pth"
