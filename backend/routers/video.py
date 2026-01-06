@@ -17,7 +17,7 @@ from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
 from backend.services.highlight_analyzer import HighlightAnalyzer, determine_target_highlights
 from backend.services.translation import Translator
-from backend.services.tts import TTSService, ElevenLabsTTSService
+from backend.services.tts import TTSService, ElevenLabsTTSService, ElevenLabsTTDService
 from backend.services.video_processor import VideoProcessor
 from backend.services.text_markup import TextMarkupService
 from backend.services.dubbing import get_dubbing_service
@@ -72,25 +72,20 @@ def get_service(name: str):
 
 
 def get_tts_service(provider: str):
-    """Return configured TTS service instance (local Silero or ElevenLabs)."""
+    """Return configured TTS service instance (local Silero or ElevenLabs TTD)."""
     normalized = (provider or "local").lower()
     if normalized == "elevenlabs":
-        cache_key = "tts_elevenlabs"
+        # Use TTD (Text-to-Dialogue) with eleven_v3 model for better multi-speaker support
+        cache_key = "tts_elevenlabs_ttd"
         if cache_key not in _services:
             if not config.ELEVENLABS_API_KEY:
                 raise ValueError("ElevenLabs API key is not configured on the server.")
-            _services[cache_key] = ElevenLabsTTSService(
+            _services[cache_key] = ElevenLabsTTDService(
                 api_key=config.ELEVENLABS_API_KEY,
                 voice_id=config.ELEVENLABS_VOICE_ID,
-                model_id=config.ELEVENLABS_MODEL_ID,
                 language=config.SILERO_LANGUAGE,
-                max_chunk_chars=config.ELEVENLABS_MAX_CHARS,
                 base_url=config.ELEVENLABS_BASE_URL,
-                request_timeout=config.ELEVENLABS_REQUEST_TIMEOUT,
-                stability=config.ELEVENLABS_STABILITY,
-                similarity_boost=config.ELEVENLABS_SIMILARITY,
-                style=config.ELEVENLABS_STYLE,
-                speaker_boost=config.ELEVENLABS_SPEAKER_BOOST,
+                request_timeout=120.0,  # TTD may take longer
                 proxy_url=config.ELEVENLABS_PROXY,
             )
         return _services[cache_key]

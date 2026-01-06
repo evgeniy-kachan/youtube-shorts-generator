@@ -1157,3 +1157,255 @@ class ElevenLabsTTSService(BaseTTSService):
     def synthesize_and_save(self, text: str, output_path: str, speaker: str | None = None) -> str:
         return self.synthesize(text, output_path, speaker=speaker)
 
+
+class ElevenLabsTTDService(ElevenLabsTTSService):
+    """
+    ElevenLabs Text-to-Dialogue service using Eleven v3 model.
+    
+    Advantages over regular TTS:
+    - Synthesizes entire dialogue in ONE API call
+    - Supports audio tags for emotions: [cheerfully], [sad], [laughing]
+    - More natural transitions between speakers
+    - No need for manual audio stitching
+    
+    Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert
+    """
+    
+    # Audio tags for emotional delivery
+    EMOTION_TAGS = {
+        # Positive emotions
+        "happy": "[cheerfully]",
+        "excited": "[excitedly]",
+        "enthusiastic": "[enthusiastically]",
+        "laughing": "[laughing]",
+        "amused": "[amused]",
+        
+        # Negative emotions
+        "sad": "[sadly]",
+        "angry": "[angrily]",
+        "frustrated": "[frustrated]",
+        "disappointed": "[disappointed]",
+        
+        # Neutral/other
+        "thoughtful": "[thoughtfully]",
+        "curious": "[curiously]",
+        "surprised": "[surprised]",
+        "hesitant": "[hesitantly]",
+        "confident": "[confidently]",
+        "whispering": "[whispering]",
+        "shouting": "[shouting]",
+        "sarcastic": "[sarcastically]",
+    }
+    
+    def __init__(
+        self,
+        api_key: str,
+        voice_id: str,
+        language: str = "ru",
+        sample_rate: int = 44100,
+        base_url: str = "https://api.elevenlabs.io/v1",
+        request_timeout: float = 120.0,  # TTD may take longer
+        proxy_url: str | None = None,
+    ):
+        # Initialize parent with eleven_v3 model (required for TTD)
+        super().__init__(
+            api_key=api_key,
+            voice_id=voice_id,
+            model_id="eleven_v3",  # TTD requires v3 model
+            language=language,
+            sample_rate=sample_rate,
+            base_url=base_url,
+            request_timeout=request_timeout,
+            proxy_url=proxy_url,
+        )
+        logger.info("ElevenLabsTTDService initialized with eleven_v3 model")
+
+    def _add_emotion_tag(self, text: str, emotion: str | None = None) -> str:
+        """
+        Add audio tag for emotion based on punctuation or explicit emotion.
+        
+        Examples:
+            "Hello!" → "[excitedly] Hello!"
+            "Oh no..." → "[sadly] Oh no..."
+            "What?!" → "[surprised] What?!"
+        """
+        text = text.strip()
+        if not text:
+            return text
+        
+        # If explicit emotion provided, use it
+        if emotion and emotion.lower() in self.EMOTION_TAGS:
+            return f"{self.EMOTION_TAGS[emotion.lower()]} {text}"
+        
+        # Infer emotion from punctuation
+        if text.endswith("?!") or text.endswith("!?"):
+            return f"[surprised] {text}"
+        elif text.endswith("!"):
+            return f"[enthusiastically] {text}"
+        elif text.endswith("..."):
+            return f"[thoughtfully] {text}"
+        elif text.endswith("?"):
+            return f"[curiously] {text}"
+        
+        # Check for laughing indicators
+        if any(laugh in text.lower() for laugh in ["хаха", "ахах", "lol", "haha", "хех"]):
+            return f"[laughing] {text}"
+        
+        return text
+
+    def _prepare_ttd_inputs(
+        self,
+        dialogue_turns: list[dict],
+        voice_map: dict[str, str],
+        add_emotions: bool = True,
+    ) -> list[dict]:
+        """
+        Convert dialogue turns to TTD API format.
+        
+        Input format (our internal):
+            [{"speaker": "SPEAKER_00", "text_ru": "Привет!", "emotion": "happy"}, ...]
+        
+        Output format (TTD API):
+            [{"text": "[cheerfully] Привет!", "voice_id": "abc123"}, ...]
+        """
+        inputs = []
+        default_voice = self.voice_id
+        
+        for turn in dialogue_turns:
+            text = turn.get("text_ru") or turn.get("text") or ""
+            if not text.strip():
+                continue
+            
+            speaker_id = turn.get("speaker")
+            voice_id = voice_map.get(speaker_id) or voice_map.get("__default__") or default_voice
+            
+            # Add emotion tags if enabled
+            if add_emotions:
+                emotion = turn.get("emotion")
+                text = self._add_emotion_tag(text, emotion)
+            
+            inputs.append({
+                "text": text,
+                "voice_id": voice_id,
+            })
+        
+        return inputs
+
+    def synthesize_dialogue(
+        self,
+        dialogue_turns: list[dict],
+        output_path: str,
+        voice_map: dict[str, str],
+        pause_ms: int = 300,  # ignored in TTD - natural pauses
+        base_start: float | None = None,  # ignored in TTD
+        add_emotions: bool = True,
+    ) -> str:
+        """
+        Synthesize dialogue using ElevenLabs Text-to-Dialogue API.
+        
+        This is a single API call that generates the entire dialogue
+        with natural transitions between speakers.
+        
+        Args:
+            dialogue_turns: List of turns with speaker, text_ru/text, optional emotion
+            output_path: Where to save the audio file
+            voice_map: Mapping of speaker IDs to ElevenLabs voice IDs
+            pause_ms: Ignored (TTD handles pauses naturally)
+            base_start: Ignored (TTD handles timing internally)
+            add_emotions: Whether to add audio tags based on punctuation
+            
+        Returns:
+            Path to the saved audio file
+        """
+        inputs = self._prepare_ttd_inputs(dialogue_turns, voice_map, add_emotions)
+        
+        if not inputs:
+            raise ValueError("No valid dialogue turns to synthesize")
+        
+        logger.info(
+            "TTD: Synthesizing dialogue with %d turns, voices=%s",
+            len(inputs),
+            list(set(inp["voice_id"] for inp in inputs)),
+        )
+        
+        # Log the inputs for debugging
+        for idx, inp in enumerate(inputs):
+            logger.debug("TTD input %d: voice=%s, text=%s", idx, inp["voice_id"], inp["text"][:50])
+        
+        # Make TTD API request
+        url = f"{self.base_url}/text-to-dialogue/convert"
+        headers = {
+            "xi-api-key": self.api_key,
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "inputs": inputs,
+            "output_format": "mp3_44100_128",  # High quality
+        }
+        
+        try:
+            client_kwargs = {"timeout": self.request_timeout}
+            transport = None
+            if self.proxy_url:
+                try:
+                    transport = httpx.HTTPTransport(proxy=self.proxy_url)
+                except TypeError:
+                    transport = None
+            if transport:
+                client_kwargs["transport"] = transport
+            
+            with httpx.Client(**client_kwargs) as client:
+                response = client.post(url, headers=headers, json=payload)
+            
+            response.raise_for_status()
+            audio_bytes = response.content
+            
+        except httpx.HTTPStatusError as http_exc:
+            logger.error(
+                "TTD API error (status=%s): %s",
+                http_exc.response.status_code,
+                http_exc.response.text,
+            )
+            raise
+        except httpx.HTTPError as exc:
+            logger.error("TTD API request failed: %s", exc)
+            raise
+        
+        # Decode and save audio
+        try:
+            audio = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp3")
+        except Exception as exc:
+            logger.error("Failed to decode TTD audio: %s", exc)
+            raise
+        
+        # Convert to WAV and save
+        audio = audio.set_frame_rate(self.sample_rate).set_channels(1)
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        audio.export(str(output_path), format="wav")
+        
+        duration_sec = len(audio) / 1000.0
+        logger.info(
+            "TTD: Dialogue saved to %s (duration=%.2fs, %d turns)",
+            output_path,
+            duration_sec,
+            len(inputs),
+        )
+        
+        # Store timing info in turns for subtitle sync
+        # TTD doesn't return per-turn timings, so we estimate proportionally
+        total_chars = sum(len(inp["text"]) for inp in inputs)
+        elapsed = 0.0
+        for idx, turn in enumerate(dialogue_turns):
+            if idx >= len(inputs):
+                break
+            text = inputs[idx]["text"]
+            turn_duration = (len(text) / total_chars) * duration_sec if total_chars > 0 else 0.1
+            turn["tts_start_offset"] = elapsed
+            turn["tts_duration"] = turn_duration
+            turn["tts_end_offset"] = elapsed + turn_duration
+            elapsed += turn_duration
+        
+        return str(output_path)
+
