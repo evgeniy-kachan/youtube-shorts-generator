@@ -1391,8 +1391,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             logger.debug("TTD input %d: voice=%s, text=%s", idx, inp["voice_id"], inp["text"][:50])
         
         # Make TTD API request
-        # Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert
-        url = f"{self.base_url}/text-to-dialogue/convert"
+        # Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue
+        # Try without /convert suffix first
+        url = f"{self.base_url}/text-to-dialogue"
         headers = {
             "xi-api-key": self.api_key,
             "Accept": "audio/mpeg",
