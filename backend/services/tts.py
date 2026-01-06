@@ -1018,7 +1018,7 @@ class ElevenLabsTTSService(BaseTTSService):
         max_chunk_chars: int = 500,
         base_url: str = "https://api.elevenlabs.io/v1",
         request_timeout: float = 45.0,
-        stability: float = 0.35,
+        stability: float = 0.5,  # TTD requires 0.0, 0.5, or 1.0
         similarity_boost: float = 0.75,
         style: float = 0.0,
         speaker_boost: bool = True,
