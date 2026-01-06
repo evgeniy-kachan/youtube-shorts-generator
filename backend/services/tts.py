@@ -1253,11 +1253,52 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         return text
 
+    def _calculate_dialogue_speed(self, dialogue_turns: list[dict]) -> float:
+        """
+        Calculate unified speed for entire dialogue based on original vs translated duration.
+        
+        Returns speed multiplier (0.7-1.2) to fit Russian translation into original timeline.
+        """
+        # Calculate total original duration from whisper timestamps
+        total_original_duration = 0.0
+        total_translated_words = 0
+        
+        for turn in dialogue_turns:
+            start = turn.get("start", 0.0)
+            end = turn.get("end", 0.0)
+            if end > start:
+                total_original_duration += (end - start)
+            
+            text = turn.get("text_ru") or turn.get("text") or ""
+            total_translated_words += len(text.split())
+        
+        if total_original_duration <= 0 or total_translated_words <= 0:
+            return 1.0
+        
+        # Estimate natural duration for Russian at ~2.5 words/sec
+        estimated_natural_duration = total_translated_words / 2.5
+        
+        # Speed = how much we need to adjust
+        # > 1.0 means speed up, < 1.0 means slow down
+        speed = estimated_natural_duration / total_original_duration
+        
+        # Clamp to ElevenLabs range (0.7-1.2)
+        clamped_speed = max(0.7, min(1.2, speed))
+        
+        if abs(clamped_speed - 1.0) > 0.05:
+            logger.info(
+                "TTD: dialogue speed=%.2f (estimated %.1fs → target %.1fs, %d words)",
+                clamped_speed, estimated_natural_duration, total_original_duration, total_translated_words
+            )
+        
+        return clamped_speed
+
     def _prepare_ttd_inputs(
         self,
         dialogue_turns: list[dict],
         voice_map: dict[str, str],
         add_emotions: bool = True,
+        speed: float = 1.0,
     ) -> list[dict]:
         """
         Convert dialogue turns to TTD API format.
@@ -1266,10 +1307,18 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             [{"speaker": "SPEAKER_00", "text_ru": "Привет!", "emotion": "happy"}, ...]
         
         Output format (TTD API):
-            [{"text": "[cheerfully] Привет!", "voice_id": "abc123"}, ...]
+            [{"text": "[cheerfully] Привет!", "voice_id": "abc123", "voice_settings": {...}}, ...]
         """
         inputs = []
         default_voice = self.voice_id
+        
+        # Voice settings with speed (same for all turns to maintain consistent rhythm)
+        voice_settings = {
+            "stability": 0.5,
+            "similarity_boost": 0.75,
+        }
+        if abs(speed - 1.0) > 0.02:
+            voice_settings["speed"] = speed
         
         for turn in dialogue_turns:
             text = turn.get("text_ru") or turn.get("text") or ""
@@ -1284,10 +1333,16 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 emotion = turn.get("emotion")
                 text = self._add_emotion_tag(text, emotion)
             
-            inputs.append({
+            inp = {
                 "text": text,
                 "voice_id": voice_id,
-            })
+            }
+            
+            # Add voice_settings only if we're adjusting speed
+            if abs(speed - 1.0) > 0.02:
+                inp["voice_settings"] = voice_settings
+            
+            inputs.append(inp)
         
         return inputs
 
@@ -1317,7 +1372,10 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         Returns:
             Path to the saved audio file
         """
-        inputs = self._prepare_ttd_inputs(dialogue_turns, voice_map, add_emotions)
+        # Calculate unified speed for entire dialogue (maintains consistent rhythm)
+        speed = self._calculate_dialogue_speed(dialogue_turns)
+        
+        inputs = self._prepare_ttd_inputs(dialogue_turns, voice_map, add_emotions, speed=speed)
         
         if not inputs:
             raise ValueError("No valid dialogue turns to synthesize")
