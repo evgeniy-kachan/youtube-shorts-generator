@@ -312,6 +312,39 @@ class HighlightAnalyzer:
                 
                 if current_turn["text"]:
                     dialogue.append(current_turn)
+            
+            # Refine turn boundaries using word-level timestamps (more accurate than Pyannote)
+            for turn in dialogue:
+                words = turn.get("words") or []
+                if words:
+                    # Find actual first and last word timestamps
+                    first_word_start = None
+                    last_word_end = None
+                    for w in words:
+                        w_start = w.get("start")
+                        w_end = w.get("end")
+                        if w_start is not None and (first_word_start is None or w_start < first_word_start):
+                            first_word_start = w_start
+                        if w_end is not None and (last_word_end is None or w_end > last_word_end):
+                            last_word_end = w_end
+                    
+                    # Update turn boundaries if word timestamps are available
+                    old_start, old_end = turn["start"], turn["end"]
+                    if first_word_start is not None:
+                        turn["start"] = first_word_start
+                    if last_word_end is not None:
+                        turn["end"] = last_word_end
+                    
+                    # Log significant corrections
+                    new_duration = turn["end"] - turn["start"]
+                    old_duration = old_end - old_start
+                    if abs(new_duration - old_duration) > 0.5:
+                        logger.debug(
+                            "Refined turn [%s]: %.1fs->%.1fs (was %.1fs, now %.1fs)",
+                            turn.get("speaker", "?"),
+                            old_start, turn["start"],
+                            old_duration, new_duration,
+                        )
 
             return {
                 "start": start,
