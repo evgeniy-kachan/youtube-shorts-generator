@@ -628,19 +628,9 @@ def _process_segments_task(
 
             original_duration = max(0.1, float(segment.get('end_time', 0)) - float(segment.get('start_time', 0)))
 
-            # Apply tempo adjustment for both single-speaker and multi-speaker dialogue
-            # TTD generates a single audio file, so we can safely speed up the whole thing
-            if audio_duration > original_duration + 0.2:
+            # Tempo adjustment only for single-speaker (atempo can distort multi-speaker dialogue)
+            if audio_duration > original_duration + 0.2 and not has_dialogue:
                 before_duration = audio_duration
-                speed_ratio = audio_duration / original_duration
-                logger.info(
-                    "Applying tempo adjustment for %s: %.2fs -> %.2fs (ratio %.2fx)%s",
-                    segment['id'],
-                    audio_duration,
-                    original_duration,
-                    speed_ratio,
-                    " [multi-speaker]" if has_dialogue else "",
-                )
                 if _speed_match_audio_duration(audio_path, audio_duration, original_duration):
                     try:
                         audio_segment = AudioSegment.from_file(audio_path)
@@ -660,10 +650,12 @@ def _process_segments_task(
                         audio_duration,
                         original_duration,
                     )
-            else:
-                logger.debug(
-                    "Tempo adjustment not needed for %s (diff %.2fs <= 0.2s)",
+            elif has_dialogue and audio_duration > original_duration + 0.5:
+                logger.warning(
+                    "Multi-speaker audio too long for %s: %.2fs vs %.2fs (diff %.2fs) - consider shorter translation",
                     segment['id'],
+                    audio_duration,
+                    original_duration,
                     audio_duration - original_duration,
                 )
 
