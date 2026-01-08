@@ -659,6 +659,18 @@ def _process_segments_task(
             has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
             
             if has_dialogue and voice_plan:
+                # Debug: check if words are present
+                for i, turn in enumerate(segment['dialogue']):
+                    words = turn.get('words') or []
+                    logger.info(
+                        "Turn %d [%s]: %d words, first=%s, last=%s",
+                        i,
+                        turn.get('speaker', '?'),
+                        len(words),
+                        words[0] if words else None,
+                        words[-1] if words else None,
+                    )
+                
                 # Refine turn boundaries using word-level timestamps (more accurate than Pyannote)
                 _refine_turn_boundaries(segment['dialogue'])
                 
