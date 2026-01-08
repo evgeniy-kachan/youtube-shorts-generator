@@ -1303,9 +1303,15 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         # Estimate natural duration for Russian at ~2.5 words/sec
         estimated_natural_duration = total_translated_words / 2.5
         
-        # Speed = how much we need to adjust
-        # > 1.0 means speed up, < 1.0 means slow down
-        speed = estimated_natural_duration / total_original_duration
+        # Speed = how much to speed up/slow down
+        # If RU takes longer than original → speed > 1.0 to compress
+        # If RU takes shorter than original → speed < 1.0 to expand
+        # Formula: speed = natural_duration / target_duration
+        # 
+        # Also compensate for TTD's natural inter-speaker pauses (~10%)
+        target_duration = total_original_duration * 0.90  # Reserve 10% for TTD pauses
+        
+        speed = estimated_natural_duration / target_duration
         
         # Clamp to ElevenLabs range (0.7-1.2)
         clamped_speed = max(0.7, min(1.2, speed))
