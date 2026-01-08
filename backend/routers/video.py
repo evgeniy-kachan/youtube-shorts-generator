@@ -628,8 +628,19 @@ def _process_segments_task(
 
             original_duration = max(0.1, float(segment.get('end_time', 0)) - float(segment.get('start_time', 0)))
 
-            if audio_duration > original_duration + 0.2 and not has_dialogue:
+            # Apply tempo adjustment for both single-speaker and multi-speaker dialogue
+            # TTD generates a single audio file, so we can safely speed up the whole thing
+            if audio_duration > original_duration + 0.2:
                 before_duration = audio_duration
+                speed_ratio = audio_duration / original_duration
+                logger.info(
+                    "Applying tempo adjustment for %s: %.2fs -> %.2fs (ratio %.2fx)%s",
+                    segment['id'],
+                    audio_duration,
+                    original_duration,
+                    speed_ratio,
+                    " [multi-speaker]" if has_dialogue else "",
+                )
                 if _speed_match_audio_duration(audio_path, audio_duration, original_duration):
                     try:
                         audio_segment = AudioSegment.from_file(audio_path)
@@ -644,24 +655,17 @@ def _process_segments_task(
                         _scale_dialogue_offsets(segment['dialogue'], scale)
                 else:
                     logger.info(
-                        "Skipping tempo adjustment for %s (audio %.2fs vs original %.2fs)",
+                        "Tempo adjustment failed for %s (audio %.2fs vs original %.2fs)",
                         segment['id'],
                         audio_duration,
                         original_duration,
                     )
             else:
-                if has_dialogue and audio_duration > original_duration + 0.2:
-                    logger.info(
-                        "Tempo adjustment skipped for %s (multi-speaker dialogue, diff %.2fs)",
-                        segment['id'],
-                        audio_duration - original_duration,
-                    )
-                else:
-                    logger.debug(
-                        "Tempo adjustment not triggered for %s (diff %.2fs <= 0.2s)",
-                        segment['id'],
-                        audio_duration - original_duration,
-                    )
+                logger.debug(
+                    "Tempo adjustment not needed for %s (diff %.2fs <= 0.2s)",
+                    segment['id'],
+                    audio_duration - original_duration,
+                )
 
             target_duration = max(audio_duration, original_duration)
 
