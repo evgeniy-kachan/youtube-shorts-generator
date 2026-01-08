@@ -261,6 +261,56 @@ def _scale_dialogue_offsets(dialogue: list[dict] | None, scale: float) -> None:
                 turn[key] = value * scale
 
 
+def _refine_turn_boundaries(dialogue: list[dict] | None) -> None:
+    """
+    Refine turn start/end times using word-level timestamps from WhisperX.
+    
+    Pyannote diarization can have inaccurate boundaries, but WhisperX word
+    timestamps are more precise. This function updates turn boundaries to
+    match actual speech.
+    """
+    if not dialogue:
+        return
+    
+    for turn in dialogue:
+        words = turn.get("words") or []
+        if not words:
+            continue
+        
+        # Find actual first and last word timestamps
+        first_word_start = None
+        last_word_end = None
+        
+        for w in words:
+            w_start = w.get("start")
+            w_end = w.get("end")
+            if w_start is not None and (first_word_start is None or w_start < first_word_start):
+                first_word_start = w_start
+            if w_end is not None and (last_word_end is None or w_end > last_word_end):
+                last_word_end = w_end
+        
+        # Update turn boundaries if word timestamps are available
+        old_start, old_end = turn.get("start", 0), turn.get("end", 0)
+        old_duration = old_end - old_start
+        
+        if first_word_start is not None:
+            turn["start"] = first_word_start
+        if last_word_end is not None:
+            turn["end"] = last_word_end
+        
+        new_duration = turn["end"] - turn["start"]
+        
+        # Log significant corrections
+        if abs(new_duration - old_duration) > 0.5:
+            logger.info(
+                "Refined turn [%s]: %.1f-%.1fs → %.1f-%.1fs (%.1fs → %.1fs)",
+                turn.get("speaker", "?"),
+                old_start, old_end,
+                turn["start"], turn["end"],
+                old_duration, new_duration,
+            )
+
+
 def _speed_match_audio_duration(
     audio_path: str,
     current_duration: float,
@@ -609,6 +659,9 @@ def _process_segments_task(
             has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
             
             if has_dialogue and voice_plan:
+                # Refine turn boundaries using word-level timestamps (more accurate than Pyannote)
+                _refine_turn_boundaries(segment['dialogue'])
+                
                 # SECOND PASS: Isochronic translation with precise timings
                 # This improves translation quality by considering exact durations
                 try:
