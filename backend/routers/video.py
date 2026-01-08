@@ -261,10 +261,21 @@ def _scale_dialogue_offsets(dialogue: list[dict] | None, scale: float) -> None:
                 turn[key] = value * scale
 
 
-def _speed_match_audio_duration(audio_path: str, current_duration: float, target_duration: float) -> bool:
+def _speed_match_audio_duration(
+    audio_path: str,
+    current_duration: float,
+    target_duration: float,
+    max_tempo: float = 4.0,
+) -> bool:
     """
     Use ffmpeg atempo filters to speed up (shorten) an audio track so it fits within
     the visual segment duration, keeping pitch natural.
+    
+    Args:
+        audio_path: Path to audio file to modify
+        current_duration: Current audio duration in seconds
+        target_duration: Target duration to match
+        max_tempo: Maximum tempo multiplier (default 4.0, use 1.2 for voice-safe limits)
     """
     if not audio_path or current_duration <= 0 or target_duration <= 0:
         return False
@@ -272,9 +283,20 @@ def _speed_match_audio_duration(audio_path: str, current_duration: float, target
     tempo = current_duration / target_duration
     if tempo <= 1.02:
         return False  # difference is negligible
+    
+    # Clamp tempo to max allowed (for voice quality)
+    if tempo > max_tempo:
+        logger.info(
+            "Clamping tempo from %.2f to %.2f for %s (voice-safe limit)",
+            tempo,
+            max_tempo,
+            audio_path,
+        )
+        tempo = max_tempo
+    
     if tempo > 4.0:
         logger.warning(
-            "Skipping tempo adjustment for %s (tempo=%.2f exceeds limit).",
+            "Skipping tempo adjustment for %s (tempo=%.2f exceeds hard limit).",
             audio_path,
             tempo,
         )
@@ -628,10 +650,23 @@ def _process_segments_task(
 
             original_duration = max(0.1, float(segment.get('end_time', 0)) - float(segment.get('start_time', 0)))
 
-            # Tempo adjustment only for single-speaker (atempo can distort multi-speaker dialogue)
-            if audio_duration > original_duration + 0.2 and not has_dialogue:
+            # Tempo adjustment for audio that's too long
+            # - Single-speaker: allow up to 4x tempo (more aggressive)
+            # - Multi-speaker: limit to 1.2x (ElevenLabs-like, preserves voice quality)
+            if audio_duration > original_duration + 0.2:
                 before_duration = audio_duration
-                if _speed_match_audio_duration(audio_path, audio_duration, original_duration):
+                max_tempo = 1.2 if has_dialogue else 4.0  # Voice-safe limit for dialogue
+                
+                logger.info(
+                    "Applying tempo adjustment for %s: %.2fs -> %.2fs (max_tempo=%.1f)%s",
+                    segment['id'],
+                    audio_duration,
+                    original_duration,
+                    max_tempo,
+                    " [multi-speaker]" if has_dialogue else "",
+                )
+                
+                if _speed_match_audio_duration(audio_path, audio_duration, original_duration, max_tempo=max_tempo):
                     try:
                         audio_segment = AudioSegment.from_file(audio_path)
                         audio_duration = audio_segment.duration_seconds or original_duration
@@ -643,21 +678,19 @@ def _process_segments_task(
                     scale = audio_duration / before_duration if before_duration else 1.0
                     if scale and segment.get('dialogue'):
                         _scale_dialogue_offsets(segment['dialogue'], scale)
+                    
+                    logger.info(
+                        "Tempo adjusted %s: %.2fs -> %.2fs (scale=%.2f)",
+                        segment['id'],
+                        before_duration,
+                        audio_duration,
+                        scale,
+                    )
                 else:
                     logger.info(
-                        "Tempo adjustment failed for %s (audio %.2fs vs original %.2fs)",
+                        "Tempo adjustment skipped for %s (negligible diff or limit reached)",
                         segment['id'],
-                        audio_duration,
-                        original_duration,
                     )
-            elif has_dialogue and audio_duration > original_duration + 0.5:
-                logger.warning(
-                    "Multi-speaker audio too long for %s: %.2fs vs %.2fs (diff %.2fs) - consider shorter translation",
-                    segment['id'],
-                    audio_duration,
-                    original_duration,
-                    audio_duration - original_duration,
-                )
 
             target_duration = max(audio_duration, original_duration)
 
