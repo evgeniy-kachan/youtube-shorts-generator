@@ -24,6 +24,8 @@ import tempfile
 from pathlib import Path
 from typing import List, Dict
 
+import torch
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -46,11 +48,38 @@ def extract_wav(input_path: str, dst_path: str, sample_rate: int = 16000) -> Non
     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
-def run_diarization(wav_path: str, hf_token: str, model: str = "pyannote/speaker-diarization-3.1") -> List[Dict]:
+def is_wav_file(path: str) -> bool:
+    """Check if file is already a WAV file (16kHz mono)."""
+    try:
+        import wave
+        with wave.open(path, 'rb') as wf:
+            return wf.getnchannels() == 1 and wf.getframerate() == 16000
+    except Exception:
+        return False
+
+
+def run_diarization(
+    wav_path: str,
+    hf_token: str,
+    device: str = "cuda",
+    model: str = "pyannote/speaker-diarization-3.1",
+) -> List[Dict]:
     """Run pyannote diarization and return list of segments."""
     from pyannote.audio import Pipeline
 
+    # Determine device
+    if device == "cuda" and not torch.cuda.is_available():
+        logger.warning("CUDA requested but not available. Falling back to CPU.")
+        device = "cpu"
+    
+    logger.info("Loading Pyannote pipeline on device: %s", device)
     pipeline = Pipeline.from_pretrained(model, use_auth_token=hf_token)
+    
+    # Move pipeline to GPU for faster inference
+    if device == "cuda":
+        pipeline.to(torch.device("cuda"))
+        logger.info("Pyannote pipeline moved to GPU")
+    
     diarization = pipeline(wav_path)
 
     segments: List[Dict] = []
@@ -74,6 +103,7 @@ def main():
     parser.add_argument("--input", required=True, help="Input video/audio file")
     parser.add_argument("--output", required=True, help="Output JSON path")
     parser.add_argument("--hf_token", required=False, help="HuggingFace token (or set HUGGINGFACE_TOKEN env)")
+    parser.add_argument("--device", default="cuda", help="Device (cuda/cpu)")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -82,10 +112,16 @@ def main():
     if not hf_token:
         raise RuntimeError("HuggingFace token is required. Pass --hf_token or set HUGGINGFACE_TOKEN.")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        wav_path = Path(tmpdir) / "audio.wav"
-        extract_wav(str(input_path), str(wav_path), sample_rate=16000)
-        segments = run_diarization(str(wav_path), hf_token=hf_token)
+    # Check if input is already a valid WAV file (skip extraction)
+    if input_path.suffix.lower() == ".wav" and is_wav_file(str(input_path)):
+        logger.info("Input is already a valid WAV file, skipping extraction")
+        segments = run_diarization(str(input_path), hf_token=hf_token, device=args.device)
+    else:
+        # Extract audio from video/other format
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wav_path = Path(tmpdir) / "audio.wav"
+            extract_wav(str(input_path), str(wav_path), sample_rate=16000)
+            segments = run_diarization(str(wav_path), hf_token=hf_token, device=args.device)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:

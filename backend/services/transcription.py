@@ -1,6 +1,7 @@
 """Video transcription service using external WhisperX runner (venv-asr)."""
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -73,35 +74,61 @@ class TranscriptionService:
     def transcribe(self, audio_path: str, language: str = "en") -> List[Dict]:
         """
         Transcribe audio file using external WhisperX runner and (optionally) diarize speakers.
+        
+        WhisperX and Pyannote run in PARALLEL for better performance.
         """
         try:
             logger.info("Transcribing audio via external runner: %s", audio_path)
             
-            # Run external WhisperX transcription
-            result = self.transcription_runner.transcribe(
-                audio_path=audio_path,
-                model=self.model_name,
-                language=language,
-                device=self.device,
-                compute_type=self.compute_type,
-            )
+            # Prepare parallel tasks
+            transcription_result = None
+            diarization_result = []
             
-            segments = result.get("segments", [])
-            detected_language = result.get("language", language)
-
-            # Optional diarization via external venv-diar
-            speaker_map = {}
+            def run_transcription():
+                return self.transcription_runner.transcribe(
+                    audio_path=audio_path,
+                    model=self.model_name,
+                    language=language,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                )
+            
+            def run_diarization():
+                if self.enable_diarization and self.diarization_runner:
+                    return self.diarization_runner.run(input_path=audio_path)
+                return []
+            
+            # Run WhisperX and Pyannote in PARALLEL
             if self.enable_diarization and self.diarization_runner:
-                try:
-                    logger.info("Running external diarization for %s", audio_path)
-                    diar_result = self.diarization_runner.run(input_path=audio_path)
+                logger.info("Running transcription and diarization in PARALLEL")
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    future_transcription = executor.submit(run_transcription)
+                    future_diarization = executor.submit(run_diarization)
                     
-                    # Build speaker map: {(start, end): speaker}
-                    for seg in diar_result:
-                        speaker_map[(seg["start"], seg["end"])] = seg["speaker"]
-                    logger.info("Diarization completed: %d speaker segments", len(diar_result))
-                except Exception as exc:
-                    logger.warning("Diarization failed (%s). Continuing without speaker tags.", exc)
+                    # Wait for both to complete
+                    try:
+                        transcription_result = future_transcription.result()
+                    except Exception as exc:
+                        logger.error("Transcription failed: %s", exc)
+                        raise
+                    
+                    try:
+                        diarization_result = future_diarization.result()
+                        logger.info("Diarization completed: %d speaker segments", len(diarization_result))
+                    except Exception as exc:
+                        logger.warning("Diarization failed (%s). Continuing without speaker tags.", exc)
+                        diarization_result = []
+            else:
+                # No diarization - just run transcription
+                transcription_result = run_transcription()
+            
+            segments = transcription_result.get("segments", [])
+            detected_language = transcription_result.get("language", language)
+
+            # Build speaker map from diarization results
+            speaker_map = {}
+            for seg in diarization_result:
+                speaker_map[(seg["start"], seg["end"])] = seg["speaker"]
 
             # Format segments and assign speakers
             formatted_segments = []
