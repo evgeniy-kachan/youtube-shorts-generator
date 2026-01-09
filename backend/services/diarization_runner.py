@@ -22,11 +22,13 @@ class DiarizationRunner:
         diar_script: str | None = None,
         hf_token: str | None = None,
         device: str = "cuda",
+        num_speakers: int = 2,
     ):
         self.diar_python = diar_python or "/opt/youtube-shorts-generator/venv-diar/bin/python"
         self.diar_script = diar_script or str(Path(__file__).resolve().parents[1] / "tools" / "diarize.py")
         self.hf_token = hf_token or os.getenv("HUGGINGFACE_TOKEN")
         self.device = device
+        self.num_speakers = num_speakers
 
     def run(self, input_path: str) -> List[Dict]:
         """
@@ -64,6 +66,8 @@ class DiarizationRunner:
                 self.hf_token,
                 "--device",
                 self.device,
+                "--num_speakers",
+                str(self.num_speakers),
             ]
             
             logger.info("Running external diarization: %s", " ".join(cmd))

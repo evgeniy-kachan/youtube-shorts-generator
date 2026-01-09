@@ -63,6 +63,7 @@ def run_diarization(
     hf_token: str,
     device: str = "cuda",
     model: str = "pyannote/speaker-diarization-3.1",
+    num_speakers: int = 2,
 ) -> List[Dict]:
     """Run pyannote diarization and return list of segments."""
     from pyannote.audio import Pipeline
@@ -80,7 +81,20 @@ def run_diarization(
         pipeline.to(torch.device("cuda"))
         logger.info("Pyannote pipeline moved to GPU")
     
-    diarization = pipeline(wav_path)
+    # Fine-tune hyperparameters for better accuracy
+    pipeline.instantiate({
+        "segmentation": {
+            "min_duration_off": 0.3,  # Min pause to consider new segment (300ms)
+        },
+        "clustering": {
+            "method": "centroid",
+            "min_cluster_size": 6,    # Smaller clusters allowed (more sensitive)
+            "threshold": 0.65,        # Stricter threshold for speaker separation
+        },
+    })
+    
+    logger.info("Running diarization with num_speakers=%d", num_speakers)
+    diarization = pipeline(wav_path, num_speakers=num_speakers)
 
     segments: List[Dict] = []
     for turn, _, speaker in diarization.itertracks(yield_label=True):
@@ -104,6 +118,7 @@ def main():
     parser.add_argument("--output", required=True, help="Output JSON path")
     parser.add_argument("--hf_token", required=False, help="HuggingFace token (or set HUGGINGFACE_TOKEN env)")
     parser.add_argument("--device", default="cuda", help="Device (cuda/cpu)")
+    parser.add_argument("--num_speakers", type=int, default=2, help="Expected number of speakers (default: 2)")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -115,13 +130,23 @@ def main():
     # Check if input is already a valid WAV file (skip extraction)
     if input_path.suffix.lower() == ".wav" and is_wav_file(str(input_path)):
         logger.info("Input is already a valid WAV file, skipping extraction")
-        segments = run_diarization(str(input_path), hf_token=hf_token, device=args.device)
+        segments = run_diarization(
+            str(input_path), 
+            hf_token=hf_token, 
+            device=args.device,
+            num_speakers=args.num_speakers,
+        )
     else:
         # Extract audio from video/other format
         with tempfile.TemporaryDirectory() as tmpdir:
             wav_path = Path(tmpdir) / "audio.wav"
             extract_wav(str(input_path), str(wav_path), sample_rate=16000)
-            segments = run_diarization(str(wav_path), hf_token=hf_token, device=args.device)
+            segments = run_diarization(
+                str(wav_path), 
+                hf_token=hf_token, 
+                device=args.device,
+                num_speakers=args.num_speakers,
+            )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
