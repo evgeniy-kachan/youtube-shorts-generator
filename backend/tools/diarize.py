@@ -84,12 +84,12 @@ def run_diarization(
     # Fine-tune hyperparameters for better accuracy
     pipeline.instantiate({
         "segmentation": {
-            "min_duration_off": 0.3,  # Min pause to consider new segment (300ms)
+            "min_duration_off": 0.1,  # Min pause to consider new segment (100ms - more sensitive)
         },
         "clustering": {
             "method": "centroid",
             "min_cluster_size": 6,    # Smaller clusters allowed (more sensitive)
-            "threshold": 0.65,        # Stricter threshold for speaker separation
+            "threshold": 0.5,         # Lower threshold = more aggressive speaker separation
         },
     })
     
