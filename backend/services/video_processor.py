@@ -1002,6 +1002,40 @@ class VideoProcessor:
         Build subtitles directly from dialogue turns, preserving per-speaker timing
         and enabling color coding.
         """
+        # Add gap between turns when speaker changes to prevent visual overlap
+        SPEAKER_CHANGE_GAP = 0.12  # 120ms gap between different speakers
+        
+        # Pre-process: trim end times when next turn has different speaker
+        for idx, turn in enumerate(dialogue):
+            if idx < len(dialogue) - 1:
+                next_turn = dialogue[idx + 1]
+                current_speaker = turn.get("speaker")
+                next_speaker = next_turn.get("speaker")
+                
+                if current_speaker != next_speaker:
+                    # Trim end time of current turn to create visual gap
+                    tts_end = turn.get("tts_end_offset")
+                    next_start = next_turn.get("tts_start_offset")
+                    
+                    if tts_end is not None and next_start is not None:
+                        # If turns are contiguous or overlapping, create gap
+                        if tts_end >= next_start - 0.01:
+                            new_end = next_start - SPEAKER_CHANGE_GAP
+                            turn["tts_end_offset"] = new_end
+                            turn["tts_duration"] = new_end - turn.get("tts_start_offset", 0)
+                            
+                            # Also trim last word in tts_words if it exceeds new end
+                            tts_words = turn.get("tts_words")
+                            if tts_words and len(tts_words) > 0:
+                                last_word = tts_words[-1]
+                                if last_word.get("end", 0) > new_end:
+                                    last_word["end"] = new_end
+                            
+                            logger.info(
+                                "Added speaker change gap before turn %d: trimmed turn %d end from %.2f to %.2f",
+                                idx + 1, idx, tts_end, new_end
+                            )
+        
         # Debug: log incoming tts timing for each turn
         for idx, turn in enumerate(dialogue):
             logger.info(
