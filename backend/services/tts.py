@@ -1552,18 +1552,60 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         )
         
         # Store timing info in turns for subtitle sync
-        # TTD doesn't return per-turn timings, so we estimate proportionally
-        total_chars = sum(len(inp["text"]) for inp in inputs)
-        elapsed = 0.0
+        # Use original turn durations/ratios scaled to fit TTD output
+        # This preserves natural pacing better than character-based estimation
+        
+        # Calculate original total duration (excluding leading gap)
+        original_durations = []
+        original_gaps = []  # gaps between turns
+        first_turn_start = dialogue_turns[0].get("start", 0.0) if dialogue_turns else 0.0
+        
         for idx, turn in enumerate(dialogue_turns):
             if idx >= len(inputs):
                 break
-            text = inputs[idx]["text"]
-            turn_duration = (len(text) / total_chars) * duration_sec if total_chars > 0 else 0.1
+            turn_start = turn.get("start", 0.0)
+            turn_end = turn.get("end", turn_start + 1.0)
+            turn_dur = max(0.1, turn_end - turn_start)
+            original_durations.append(turn_dur)
+            
+            # Gap before this turn
+            if idx == 0:
+                original_gaps.append(0.0)  # First turn starts at 0 in output
+            else:
+                prev_end = dialogue_turns[idx - 1].get("end", 0.0)
+                gap = max(0.0, turn_start - prev_end)
+                original_gaps.append(gap)
+        
+        total_original = sum(original_durations) + sum(original_gaps)
+        
+        # Account for leading silence in TTD output
+        leading_sec = leading_silence_ms / 1000.0
+        ttd_speech_duration = duration_sec - leading_sec  # TTD audio without our leading silence
+        
+        # Scale factor: how much to stretch/compress original timing
+        scale = ttd_speech_duration / total_original if total_original > 0 else 1.0
+        
+        elapsed = leading_sec  # Start after leading silence
+        for idx, turn in enumerate(dialogue_turns):
+            if idx >= len(original_durations):
+                break
+            
+            # Add scaled gap before this turn
+            elapsed += original_gaps[idx] * scale
+            
+            turn_duration = original_durations[idx] * scale
             turn["tts_start_offset"] = elapsed
             turn["tts_duration"] = turn_duration
             turn["tts_end_offset"] = elapsed + turn_duration
             elapsed += turn_duration
+            
+            logger.debug(
+                "TTD subtitle timing turn %d: %.2f-%.2fs (%.2fs)",
+                idx,
+                turn["tts_start_offset"],
+                turn["tts_end_offset"],
+                turn["tts_duration"],
+            )
         
         return str(output_path)
 
