@@ -1290,13 +1290,17 @@ class VideoProcessor:
         selected_style['alignment'] = position_config.get('an', selected_style['alignment'])
         selected_style['marginv'] = position_config.get('marginv', selected_style['marginv'])
         
-        # For subtitle background, use BorderStyle=3 (opaque box) instead of 1 (outline)
-        # BackColour only works with BorderStyle=3
+        # For subtitle background, use BorderStyle=3 (opaque box)
+        # In BorderStyle=3: OutlineColour = box color, Outline = padding
         if subtitle_background:
             selected_style['borderstyle'] = 3
-            selected_style['outline'] = 8  # Padding around text
-            back_color = "&H80000000"  # Semi-transparent black (80 alpha)
+            selected_style['outline'] = 12  # Padding around text
+            # OutlineColour becomes the box color in BorderStyle=3
+            # Format: &HAABBGGRR (AA=alpha, BB=blue, GG=green, RR=red)
+            box_color = "&H90000000"  # Semi-transparent black (90 hex = ~56% opacity)
+            back_color = "&H00000000"  # No shadow
         else:
+            box_color = selected_style['outlinecolor']
             back_color = "&H00000000"
 
         ass_content = f"""[Script Info]
@@ -1308,7 +1312,7 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{selected_style['fontname']},{selected_style['fontsize']},{selected_style['primarycolor']},&H000000FF,{selected_style['outlinecolor']},{back_color},0,0,0,0,100,100,0,0,{selected_style['borderstyle']},{selected_style['outline']},{selected_style['shadow']},{selected_style['alignment']},10,10,{selected_style['marginv']},1
+Style: Default,{selected_style['fontname']},{selected_style['fontsize']},{selected_style['primarycolor']},&H000000FF,{box_color},{back_color},0,0,0,0,100,100,0,0,{selected_style['borderstyle']},{selected_style['outline']},{selected_style['shadow']},{selected_style['alignment']},10,10,{selected_style['marginv']},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1442,22 +1446,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         y = base_y - lane * lane_gap
         an = position_conf.get('an', 8)
         pos_tag = rf"\pos({x},{y})"
-        background_tags = r"{\blur14\bord2\shad0\1c&H000000&}" if subtitle_background else ""
+        # Background is handled by BorderStyle=3 in the style definition
+        # Don't add inline tags that would override it
         color_cmd = color_tag or ""
         # For slide/mask animations we need both start/end Y positions
         slide_start_y = y + 220
         move_down_y = y + 100
         presets = {
-            'bounce': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
-            'slide': rf"{{\an{an}\move({x},{slide_start_y},{x},{y},0,260)\fad(60,60){background_tags}{color_cmd}}}",
-            'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{background_tags}{color_cmd}}}",
-            'fade': rf"{{\an{an}{pos_tag}\fad(100,100){background_tags}{color_cmd}}}",
-            'scale': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
-            'karaoke': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
-            'typewriter': rf"{{\an{an}{pos_tag}{background_tags}{color_cmd}}}",
-            'mask': rf"{{\an{an}\move({x},{move_down_y},{x},{y},0,300){background_tags}{color_cmd}}}",
-            'simple_fade': rf"{{\an{an}{pos_tag}\fad(150,150){background_tags}{color_cmd}}}",
-            'word_pop': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
+            'bounce': rf"{{\an{an}{pos_tag}\fad(80,40){color_cmd}}}",
+            'slide': rf"{{\an{an}\move({x},{slide_start_y},{x},{y},0,260)\fad(60,60){color_cmd}}}",
+            'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{color_cmd}}}",
+            'fade': rf"{{\an{an}{pos_tag}\fad(100,100){color_cmd}}}",
+            'scale': rf"{{\an{an}{pos_tag}\fad(80,40){color_cmd}}}",
+            'karaoke': rf"{{\an{an}{pos_tag}\fad(80,40){color_cmd}}}",
+            'typewriter': rf"{{\an{an}{pos_tag}{color_cmd}}}",
+            'mask': rf"{{\an{an}\move({x},{move_down_y},{x},{y},0,300){color_cmd}}}",
+            'simple_fade': rf"{{\an{an}{pos_tag}\fad(150,150){color_cmd}}}",
+            'word_pop': rf"{{\an{an}{pos_tag}\fad(80,40){color_cmd}}}",
         }
         return presets.get(animation, presets['fade'])
 
@@ -1470,52 +1475,49 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         subtitle_background: bool,
         preserve_color: bool = False,
     ) -> str:
-        background_tags = (
-            r"\bord0\shad0"
-            if subtitle_background
-            else ""
-        )
+        # Background box is handled by BorderStyle=3 in the style definition
+        # Word animations should not override \bord or \shad
         if animation == 'bounce':
             return (
                 r"{\alpha&HFF"
                 rf"\t({start_ms},{mid_ms},\alpha&H00\fscy120)"
-                rf"\t({mid_ms},{end_ms},\fscy100{background_tags})}}"
+                rf"\t({mid_ms},{end_ms},\fscy100)}}"
             )
         if animation == 'slide':
             return (
                 r"{\alpha&HFF"
                 rf"\t({start_ms},{mid_ms},\alpha&H40)"
-                rf"\t({mid_ms},{end_ms},\alpha&H00{background_tags})}}"
+                rf"\t({mid_ms},{end_ms},\alpha&H00)}}"
             )
         if animation == 'spark':
             if preserve_color:
                 return (
-                    r"{\alpha&HFF\bord4\blur4"
-                    rf"\t({start_ms},{mid_ms},\alpha&H00\bord0\blur0)"
-                    rf"\t({mid_ms},{end_ms},\alpha&H00{background_tags})}}"
+                    r"{\alpha&HFF\blur4"
+                    rf"\t({start_ms},{mid_ms},\alpha&H00\blur0)"
+                    rf"\t({mid_ms},{end_ms},\alpha&H00)}}"
                 )
             return (
-                r"{\alpha&HFF\1c&H00F7FF\bord4\blur4"
-                rf"\t({start_ms},{mid_ms},\alpha&H00\1c&HFFFFFF\bord0\blur0)"
-                rf"\t({mid_ms},{end_ms},\alpha&H00{background_tags})}}"
+                r"{\alpha&HFF\1c&H00F7FF\blur4"
+                rf"\t({start_ms},{mid_ms},\alpha&H00\1c&HFFFFFF\blur0)"
+                rf"\t({mid_ms},{end_ms},\alpha&H00)}}"
             )
         if animation == 'fade':
             return (
                 r"{\alpha&HFF"
                 rf"\t({start_ms},{mid_ms},\alpha&H00)"
-                rf"\t({mid_ms},{end_ms},{background_tags})}}"
+                rf"\t({mid_ms},{end_ms},)}}"
             )
         if animation == 'scale':
             return (
                 r"{\alpha&HFF\fscx90\fscy90"
                 rf"\t({start_ms},{mid_ms},\alpha&H00\fscx105\fscy105)"
-                rf"\t({mid_ms},{end_ms},\fscx100\fscy100{background_tags})}}"
+                rf"\t({mid_ms},{end_ms},\fscx100\fscy100)}}"
             )
         if animation == 'word_pop':
             return (
                 r"{\alpha&HFF\fscx0\fscy0"
                 rf"\t({start_ms},{mid_ms},\alpha&H00\fscx115\fscy115)"
-                rf"\t({mid_ms},{end_ms},\fscx100\fscy100{background_tags})}}"
+                rf"\t({mid_ms},{end_ms},\fscx100\fscy100)}}"
             )
         if animation == 'karaoke':
             # Word appears in Cyan/Gold, then fades to White
@@ -1523,35 +1525,35 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 return (
                     r"{\alpha&HFF"
                     rf"\t({start_ms},{mid_ms},\alpha&H00)"
-                    rf"\t({mid_ms},{end_ms},{background_tags})}}"
+                    rf"\t({mid_ms},{end_ms},)}}"
                 )
             return (
                 r"{\alpha&HFF\1c&H00E1FF"
                 rf"\t({start_ms},{mid_ms},\alpha&H00)"
-                rf"\t({mid_ms},{end_ms},\1c&HFFFFFF{background_tags})}}"
+                rf"\t({mid_ms},{end_ms},\1c&HFFFFFF)}}"
             )
         if animation == 'typewriter':
             # Sharp appearance
             return (
                 r"{\alpha&HFF"
-                rf"\t({start_ms},{start_ms + 1},\alpha&H00{background_tags})}}"
+                rf"\t({start_ms},{start_ms + 1},\alpha&H00)}}"
             )
         if animation == 'mask':
             # Clip reveal simulation: move slightly up and appear
             return (
                 r"{\alpha&HFF"
-                rf"\t({start_ms},{mid_ms},\alpha&H00{background_tags})}}"
+                rf"\t({start_ms},{mid_ms},\alpha&H00)}}"
             )
         if animation == 'simple_fade':
             # Smooth appearance opacity 0->1
             return (
                 r"{\alpha&HFF"
-                rf"\t({start_ms},{mid_ms},\alpha&H00{background_tags})}}"
+                rf"\t({start_ms},{mid_ms},\alpha&H00)}}"
             )
         return (
             r"{\alpha&HFF"
             rf"\t({start_ms},{mid_ms},\alpha&H00\fscx118\fscy118)"
-            rf"\t({mid_ms},{end_ms},\fscx100\fscy100{background_tags})}}"
+            rf"\t({mid_ms},{end_ms},\fscx100\fscy100)}}"
         )
     
     def extract_audio(self, video_path: str, output_path: str) -> str:
