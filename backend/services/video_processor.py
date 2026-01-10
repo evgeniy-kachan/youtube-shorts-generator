@@ -1002,6 +1002,16 @@ class VideoProcessor:
         Build subtitles directly from dialogue turns, preserving per-speaker timing
         and enabling color coding.
         """
+        # Debug: log incoming tts timing for each turn
+        for idx, turn in enumerate(dialogue):
+            logger.info(
+                "Subtitle input turn %d: tts_start=%.2f, tts_end=%.2f, tts_dur=%.2f",
+                idx,
+                turn.get("tts_start_offset", -1),
+                turn.get("tts_end_offset", -1),
+                turn.get("tts_duration", -1),
+            )
+        
         subtitles: List[Dict] = []
         lane_available_until = [0.0, 0.0]  # support two stacked rows
 
