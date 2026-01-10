@@ -1552,70 +1552,51 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         )
         
         # Store timing info in turns for subtitle sync
-        # TTD adds natural pauses between speakers that we need to account for
+        # Simple approach: distribute TTD duration proportionally by text length
         
-        # Calculate original turn durations
-        original_durations = []
-        for idx, turn in enumerate(dialogue_turns):
-            if idx >= len(inputs):
-                break
-            turn_start = turn.get("start", 0.0)
-            turn_end = turn.get("end", turn_start + 1.0)
-            turn_dur = max(0.1, turn_end - turn_start)
-            original_durations.append(turn_dur)
-        
-        total_original_speech = sum(original_durations)
-        
-        # Account for leading silence we added
         leading_sec = leading_silence_ms / 1000.0
         ttd_speech_duration = duration_sec - leading_sec
         
-        # TTD adds natural pauses between speakers
-        # Calculate how much time is "extra" due to TTD pauses
-        num_transitions = max(0, len(inputs) - 1)
-        ttd_pause_estimate = ttd_speech_duration - total_original_speech
-        pause_per_transition = max(0.2, ttd_pause_estimate / num_transitions) if num_transitions > 0 else 0.0
+        # Calculate character counts for each turn
+        char_counts = []
+        for idx, turn in enumerate(dialogue_turns):
+            if idx >= len(inputs):
+                break
+            text = inputs[idx]["text"]
+            char_counts.append(len(text))
         
-        # Clamp pause to reasonable range (0.2 - 3.0s per transition)
-        # TTD can add significant pauses between speakers, don't cap too aggressively
-        pause_per_transition = min(3.0, max(0.2, pause_per_transition))
+        total_chars = sum(char_counts)
         
         logger.info(
-            "TTD subtitle timing: total_original=%.2fs, ttd_duration=%.2fs, "
-            "estimated_pause_per_turn=%.2fs (%d transitions)",
-            total_original_speech,
+            "TTD subtitle timing: ttd_duration=%.2fs, total_chars=%d, %d turns",
             ttd_speech_duration,
-            pause_per_transition,
-            num_transitions,
+            total_chars,
+            len(char_counts),
         )
         
-        # Calculate how much we need to scale speech portions
-        # (TTD duration - pauses) / original speech duration
-        ttd_speech_only = ttd_speech_duration - (num_transitions * pause_per_transition)
-        speech_scale = ttd_speech_only / total_original_speech if total_original_speech > 0 else 1.0
-        
-        elapsed = leading_sec  # Start after leading silence
+        # Distribute TTD duration proportionally by character count
+        elapsed = leading_sec
         for idx, turn in enumerate(dialogue_turns):
-            if idx >= len(original_durations):
+            if idx >= len(char_counts):
                 break
             
-            # Add TTD pause before this turn (except first)
-            if idx > 0:
-                elapsed += pause_per_transition
+            # Proportional duration based on text length
+            char_ratio = char_counts[idx] / total_chars if total_chars > 0 else 1.0 / len(char_counts)
+            turn_duration = ttd_speech_duration * char_ratio
             
-            turn_duration = original_durations[idx] * speech_scale
             turn["tts_start_offset"] = elapsed
             turn["tts_duration"] = turn_duration
             turn["tts_end_offset"] = elapsed + turn_duration
             elapsed += turn_duration
             
             logger.debug(
-                "TTD subtitle turn %d: %.2f-%.2fs (%.2fs, pause_before=%.2f)",
+                "TTD subtitle turn %d: %.2f-%.2fs (%.2fs, %d chars, %.1f%%)",
                 idx,
                 turn["tts_start_offset"],
                 turn["tts_end_offset"],
                 turn["tts_duration"],
-                pause_per_transition if idx > 0 else 0.0,
+                char_counts[idx],
+                char_ratio * 100,
             )
         
         return str(output_path)
