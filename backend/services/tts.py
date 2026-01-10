@@ -1477,12 +1477,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 idx, inp["voice_id"], speed_val, inp["text"][:60]
             )
         
-        # Make TTD API request
-        # Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue
-        url = f"{self.base_url}/text-to-dialogue"
+        # Make TTD API request with timestamps for precise subtitle sync
+        # Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert-with-timestamps
+        url = f"{self.base_url}/text-to-dialogue/with-timestamps"
         headers = {
             "xi-api-key": self.api_key,
-            "Accept": "audio/mpeg",
+            "Accept": "application/json",
             "Content-Type": "application/json",
         }
         payload = {
@@ -1493,6 +1493,8 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         # Log full payload for debugging
         import json
         logger.info("TTD payload: %s", json.dumps(payload, ensure_ascii=False, indent=None)[:500])
+        
+        voice_segments = []  # Will hold timing info from API
         
         try:
             client_kwargs = {"timeout": self.request_timeout}
@@ -1509,7 +1511,31 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 response = client.post(url, headers=headers, json=payload)
             
             response.raise_for_status()
-            audio_bytes = response.content
+            
+            # Parse JSON response with timestamps
+            response_data = response.json()
+            audio_base64 = response_data.get("audio_base64", "")
+            voice_segments = response_data.get("voice_segments", [])
+            
+            logger.info(
+                "TTD with-timestamps response: %d voice_segments, audio_base64 length=%d",
+                len(voice_segments),
+                len(audio_base64),
+            )
+            
+            # Log voice segments for debugging
+            for vs in voice_segments:
+                logger.debug(
+                    "TTD voice_segment: input_idx=%d, %.2f-%.2fs, voice=%s",
+                    vs.get("dialogue_input_index", -1),
+                    vs.get("start_time_seconds", 0),
+                    vs.get("end_time_seconds", 0),
+                    vs.get("voice_id", "?")[:8],
+                )
+            
+            # Decode audio from base64
+            import base64
+            audio_bytes = base64.b64decode(audio_base64)
             
         except httpx.HTTPStatusError as http_exc:
             logger.error(
@@ -1552,52 +1578,83 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         )
         
         # Store timing info in turns for subtitle sync
-        # Simple approach: distribute TTD duration proportionally by text length
+        # Use precise voice_segments from ElevenLabs API
         
         leading_sec = leading_silence_ms / 1000.0
-        ttd_speech_duration = duration_sec - leading_sec
         
-        # Calculate character counts for each turn
-        char_counts = []
-        for idx, turn in enumerate(dialogue_turns):
-            if idx >= len(inputs):
-                break
-            text = inputs[idx]["text"]
-            char_counts.append(len(text))
-        
-        total_chars = sum(char_counts)
-        
-        logger.info(
-            "TTD subtitle timing: ttd_duration=%.2fs, total_chars=%d, %d turns",
-            ttd_speech_duration,
-            total_chars,
-            len(char_counts),
-        )
-        
-        # Distribute TTD duration proportionally by character count
-        elapsed = leading_sec
-        for idx, turn in enumerate(dialogue_turns):
-            if idx >= len(char_counts):
-                break
-            
-            # Proportional duration based on text length
-            char_ratio = char_counts[idx] / total_chars if total_chars > 0 else 1.0 / len(char_counts)
-            turn_duration = ttd_speech_duration * char_ratio
-            
-            turn["tts_start_offset"] = elapsed
-            turn["tts_duration"] = turn_duration
-            turn["tts_end_offset"] = elapsed + turn_duration
-            elapsed += turn_duration
-            
-            logger.debug(
-                "TTD subtitle turn %d: %.2f-%.2fs (%.2fs, %d chars, %.1f%%)",
-                idx,
-                turn["tts_start_offset"],
-                turn["tts_end_offset"],
-                turn["tts_duration"],
-                char_counts[idx],
-                char_ratio * 100,
+        if voice_segments:
+            # Use exact timing from API response
+            logger.info(
+                "TTD using %d voice_segments for subtitle timing (leading_silence=%.2fs)",
+                len(voice_segments),
+                leading_sec,
             )
+            
+            # Build mapping from dialogue_input_index to segment timing
+            segment_timing = {}
+            for vs in voice_segments:
+                input_idx = vs.get("dialogue_input_index", -1)
+                if input_idx >= 0:
+                    # Accumulate if multiple segments per input (shouldn't happen normally)
+                    if input_idx not in segment_timing:
+                        segment_timing[input_idx] = {
+                            "start": vs.get("start_time_seconds", 0),
+                            "end": vs.get("end_time_seconds", 0),
+                        }
+                    else:
+                        # Extend end time if there are multiple segments
+                        segment_timing[input_idx]["end"] = max(
+                            segment_timing[input_idx]["end"],
+                            vs.get("end_time_seconds", 0)
+                        )
+            
+            # Apply timing to dialogue turns
+            for idx, turn in enumerate(dialogue_turns):
+                if idx >= len(inputs):
+                    break
+                
+                timing = segment_timing.get(idx, {})
+                start_time = timing.get("start", 0) + leading_sec
+                end_time = timing.get("end", 0) + leading_sec
+                turn_duration = end_time - start_time
+                
+                turn["tts_start_offset"] = start_time
+                turn["tts_duration"] = turn_duration
+                turn["tts_end_offset"] = end_time
+                
+                logger.info(
+                    "TTD subtitle turn %d: %.2f-%.2fs (%.2fs) [from API]",
+                    idx,
+                    turn["tts_start_offset"],
+                    turn["tts_end_offset"],
+                    turn["tts_duration"],
+                )
+        else:
+            # Fallback: distribute proportionally by character count
+            logger.warning("TTD: No voice_segments in response, using character-based estimation")
+            
+            ttd_speech_duration = duration_sec - leading_sec
+            char_counts = []
+            for idx, turn in enumerate(dialogue_turns):
+                if idx >= len(inputs):
+                    break
+                text = inputs[idx]["text"]
+                char_counts.append(len(text))
+            
+            total_chars = sum(char_counts)
+            elapsed = leading_sec
+            
+            for idx, turn in enumerate(dialogue_turns):
+                if idx >= len(char_counts):
+                    break
+                
+                char_ratio = char_counts[idx] / total_chars if total_chars > 0 else 1.0 / len(char_counts)
+                turn_duration = ttd_speech_duration * char_ratio
+                
+                turn["tts_start_offset"] = elapsed
+                turn["tts_duration"] = turn_duration
+                turn["tts_end_offset"] = elapsed + turn_duration
+                elapsed += turn_duration
         
         return str(output_path)
 
