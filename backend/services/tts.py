@@ -1570,14 +1570,15 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         leading_sec = leading_silence_ms / 1000.0
         ttd_speech_duration = duration_sec - leading_sec
         
-        # TTD adds natural pauses between speakers (~0.3-0.5s each transition)
+        # TTD adds natural pauses between speakers
         # Calculate how much time is "extra" due to TTD pauses
         num_transitions = max(0, len(inputs) - 1)
         ttd_pause_estimate = ttd_speech_duration - total_original_speech
         pause_per_transition = max(0.2, ttd_pause_estimate / num_transitions) if num_transitions > 0 else 0.0
         
-        # Clamp pause to reasonable range (0.2 - 0.8s per transition)
-        pause_per_transition = min(0.8, max(0.2, pause_per_transition))
+        # Clamp pause to reasonable range (0.2 - 3.0s per transition)
+        # TTD can add significant pauses between speakers, don't cap too aggressively
+        pause_per_transition = min(3.0, max(0.2, pause_per_transition))
         
         logger.info(
             "TTD subtitle timing: total_original=%.2fs, ttd_duration=%.2fs, "
