@@ -1203,6 +1203,13 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 "char_end": vs.get("character_end_index", 0),
             })
         
+        # Log segment ranges for debugging
+        for sr in segment_ranges:
+            logger.info(
+                "TTD voice_segment: input_idx=%d, char_range=[%d, %d)",
+                sr["input_idx"], sr["char_start"], sr["char_end"]
+            )
+        
         def get_input_idx_for_char(char_idx: int) -> int:
             """Find which dialogue input a character belongs to."""
             for sr in segment_ranges:
@@ -1254,13 +1261,25 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     "end": word_end,
                 })
         
-        # Log parsed words count
+        # Log parsed words count and first words of each input
         total_words = sum(len(w) for w in words_by_input.values())
         logger.info(
             "TTD parsed %d words from alignment across %d inputs",
             total_words,
             len(words_by_input),
         )
+        
+        # Log first 3 words of each input for debugging
+        for input_idx, words in sorted(words_by_input.items()):
+            first_words = [w["word"] for w in words[:3]]
+            last_words = [w["word"] for w in words[-2:]] if len(words) > 3 else []
+            logger.info(
+                "TTD input %d: %d words, first=[%s], last=[%s]",
+                input_idx,
+                len(words),
+                ", ".join(first_words),
+                ", ".join(last_words),
+            )
         
         return words_by_input
 
