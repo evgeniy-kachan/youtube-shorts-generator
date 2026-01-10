@@ -2,22 +2,31 @@
 """
 Standalone transcription script for venv-asr (NumPy 2.x + whisperx).
 Receives input JSON, transcribes audio, outputs results as JSON.
+
+Now includes BUILT-IN WhisperX diarization for better speaker assignment.
 """
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run WhisperX transcription")
+    parser = argparse.ArgumentParser(description="Run WhisperX transcription with diarization")
     parser.add_argument("--audio", required=True, help="Path to audio file")
     parser.add_argument("--model", default="large-v2", help="Whisper model name")
     parser.add_argument("--language", default="ru", help="Language code")
     parser.add_argument("--device", default="cuda", help="Device (cuda/cpu)")
     parser.add_argument("--compute_type", default="float16", help="Compute type")
     parser.add_argument("--output", required=True, help="Output JSON file path")
+    parser.add_argument("--diarize", action="store_true", help="Enable speaker diarization")
+    parser.add_argument("--num_speakers", type=int, default=2, help="Expected number of speakers")
+    parser.add_argument("--hf_token", default=None, help="HuggingFace token for diarization")
     args = parser.parse_args()
+
+    # Get HF token from env if not provided
+    hf_token = args.hf_token or os.getenv("HUGGINGFACE_TOKEN")
 
     try:
         import whisperx
@@ -41,7 +50,7 @@ def main():
         print("[transcribe.py] Transcribing...", file=sys.stderr)
         result = model.transcribe(audio, batch_size=16, language=args.language)
 
-        # Align (optional, for word-level timestamps)
+        # Align for word-level timestamps
         print("[transcribe.py] Aligning...", file=sys.stderr)
         model_a, metadata = whisperx.load_align_model(
             language_code=args.language,
@@ -56,28 +65,58 @@ def main():
             return_char_alignments=False,
         )
 
-        # Extract segments WITH word-level timestamps
+        # Run WhisperX BUILT-IN diarization (much better than separate Pyannote!)
+        diarize_segments = None
+        if args.diarize and hf_token:
+            print(f"[transcribe.py] Running WhisperX diarization (num_speakers={args.num_speakers})...", file=sys.stderr)
+            try:
+                diarize_model = whisperx.DiarizationPipeline(
+                    use_auth_token=hf_token,
+                    device=args.device,
+                )
+                diarize_segments = diarize_model(
+                    audio,
+                    min_speakers=args.num_speakers,
+                    max_speakers=args.num_speakers,
+                )
+                # Assign speakers to words
+                result = whisperx.assign_word_speakers(diarize_segments, result)
+                print(f"[transcribe.py] Diarization complete, speakers assigned to words", file=sys.stderr)
+            except Exception as diar_err:
+                print(f"[transcribe.py] Diarization failed: {diar_err}, continuing without speakers", file=sys.stderr)
+
+        # Extract segments WITH word-level timestamps AND speakers
         segments = []
         for seg in result.get("segments", []):
             # Extract word timestamps from WhisperX alignment
             words = []
             for w in seg.get("words", []):
-                words.append({
+                word_data = {
                     "word": w.get("word", ""),
                     "start": w.get("start", 0.0),
                     "end": w.get("end", 0.0),
-                })
+                }
+                # Include speaker if available (from diarization)
+                if "speaker" in w:
+                    word_data["speaker"] = w["speaker"]
+                words.append(word_data)
             
-            segments.append({
+            seg_data = {
                 "start": seg.get("start", 0.0),
                 "end": seg.get("end", 0.0),
                 "text": seg.get("text", "").strip(),
-                "words": words,  # Now we keep word-level timestamps!
-            })
+                "words": words,
+            }
+            # Include segment-level speaker if available
+            if "speaker" in seg:
+                seg_data["speaker"] = seg["speaker"]
+            
+            segments.append(seg_data)
 
         output_data = {
             "segments": segments,
             "language": args.language,
+            "diarization_enabled": args.diarize and hf_token is not None,
         }
 
         # Write output

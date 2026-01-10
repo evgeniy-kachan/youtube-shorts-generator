@@ -15,7 +15,11 @@ logger = logging.getLogger(__name__)
 class TranscriptionRunner:
     """Runs WhisperX transcription in a separate venv (venv-asr) to avoid NumPy conflicts."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        enable_diarization: bool = True,
+        num_speakers: int = 2,
+    ):
         self.enabled = os.getenv("EXTERNAL_TRANSCRIPTION_ENABLED", "0") == "1"
         self.python_path = os.getenv(
             "EXTERNAL_ASR_PY",
@@ -25,12 +29,17 @@ class TranscriptionRunner:
             "EXTERNAL_ASR_SCRIPT",
             "/opt/youtube-shorts-generator/backend/tools/transcribe.py"
         )
+        self.enable_diarization = enable_diarization
+        self.num_speakers = num_speakers
+        self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
 
         if self.enabled:
             logger.info(
-                "External transcription enabled: python=%s, script=%s",
+                "External transcription enabled: python=%s, script=%s, diarize=%s, num_speakers=%d",
                 self.python_path,
                 self.script_path,
+                self.enable_diarization,
+                self.num_speakers,
             )
         else:
             logger.warning(
@@ -46,12 +55,13 @@ class TranscriptionRunner:
         compute_type: str = "float16",
     ) -> dict[str, Any]:
         """
-        Run WhisperX transcription via subprocess.
+        Run WhisperX transcription with built-in diarization via subprocess.
 
         Returns:
             {
-                "segments": [{"start": float, "end": float, "text": str}, ...],
-                "language": str
+                "segments": [{"start": float, "end": float, "text": str, "speaker": str, "words": [...]}, ...],
+                "language": str,
+                "diarization_enabled": bool
             }
         """
         if not self.enabled:
@@ -76,8 +86,16 @@ class TranscriptionRunner:
                 "--compute_type", compute_type,
                 "--output", output_path,
             ]
+            
+            # Add diarization flags
+            if self.enable_diarization and self.hf_token:
+                cmd.extend([
+                    "--diarize",
+                    "--num_speakers", str(self.num_speakers),
+                    "--hf_token", self.hf_token,
+                ])
 
-            logger.info("Running external transcription: %s", " ".join(cmd))
+            logger.info("Running external transcription: %s", " ".join(cmd[:10]) + " ...")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
