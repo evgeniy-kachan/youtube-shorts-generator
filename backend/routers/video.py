@@ -254,11 +254,22 @@ def _scale_dialogue_offsets(dialogue: list[dict] | None, scale: float) -> None:
     """Scale cached TTS offsets/durations when we retime synthesized dialogue audio."""
     if not dialogue or not scale or abs(scale - 1.0) < 1e-3:
         return
-    for turn in dialogue:
+    for idx, turn in enumerate(dialogue):
+        old_start = turn.get("tts_start_offset")
+        old_end = turn.get("tts_end_offset")
         for key in ("tts_start_offset", "tts_end_offset", "tts_duration"):
             value = turn.get(key)
             if isinstance(value, (int, float)):
                 turn[key] = value * scale
+        new_start = turn.get("tts_start_offset")
+        new_end = turn.get("tts_end_offset")
+        logger.info(
+            "Scaled turn %d: %.2f-%.2fs -> %.2f-%.2fs (scale=%.3f)",
+            idx,
+            old_start or 0, old_end or 0,
+            new_start or 0, new_end or 0,
+            scale,
+        )
 
 
 def _refine_turn_boundaries(dialogue: list[dict] | None) -> None:
