@@ -1171,6 +1171,99 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
     Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert
     """
     
+    @staticmethod
+    def _parse_alignment_to_words(
+        alignment: dict,
+        voice_segments: list[dict],
+    ) -> dict[int, list[dict]]:
+        """
+        Parse ElevenLabs character alignment into word-level timestamps.
+        
+        Returns a dict mapping dialogue_input_index to list of word dicts:
+        {0: [{"word": "Привет", "start": 0.1, "end": 0.5}, ...], ...}
+        """
+        characters = alignment.get("characters", [])
+        char_starts = alignment.get("character_start_times_seconds", [])
+        char_ends = alignment.get("character_end_times_seconds", [])
+        
+        if not characters or len(characters) != len(char_starts) or len(characters) != len(char_ends):
+            logger.warning(
+                "TTD alignment data incomplete: chars=%d, starts=%d, ends=%d",
+                len(characters), len(char_starts), len(char_ends)
+            )
+            return {}
+        
+        # Build character-to-segment mapping from voice_segments
+        # voice_segments have character_start_index and character_end_index
+        segment_ranges = []
+        for vs in voice_segments:
+            segment_ranges.append({
+                "input_idx": vs.get("dialogue_input_index", -1),
+                "char_start": vs.get("character_start_index", 0),
+                "char_end": vs.get("character_end_index", 0),
+            })
+        
+        def get_input_idx_for_char(char_idx: int) -> int:
+            """Find which dialogue input a character belongs to."""
+            for sr in segment_ranges:
+                if sr["char_start"] <= char_idx < sr["char_end"]:
+                    return sr["input_idx"]
+            return -1
+        
+        # Parse characters into words with timestamps
+        words_by_input: dict[int, list[dict]] = {}
+        current_word = []
+        word_start_idx = 0
+        
+        for i, char in enumerate(characters):
+            if char == " " or char == "\n":
+                # Word boundary - save the word if we have one
+                if current_word:
+                    word_text = "".join(current_word)
+                    word_start = char_starts[word_start_idx]
+                    word_end = char_ends[i - 1] if i > 0 else char_starts[word_start_idx]
+                    
+                    input_idx = get_input_idx_for_char(word_start_idx)
+                    if input_idx >= 0:
+                        if input_idx not in words_by_input:
+                            words_by_input[input_idx] = []
+                        words_by_input[input_idx].append({
+                            "word": word_text,
+                            "start": word_start,
+                            "end": word_end,
+                        })
+                    
+                    current_word = []
+                word_start_idx = i + 1
+            else:
+                current_word.append(char)
+        
+        # Don't forget the last word
+        if current_word:
+            word_text = "".join(current_word)
+            word_start = char_starts[word_start_idx] if word_start_idx < len(char_starts) else 0
+            word_end = char_ends[-1] if char_ends else word_start
+            
+            input_idx = get_input_idx_for_char(word_start_idx)
+            if input_idx >= 0:
+                if input_idx not in words_by_input:
+                    words_by_input[input_idx] = []
+                words_by_input[input_idx].append({
+                    "word": word_text,
+                    "start": word_start,
+                    "end": word_end,
+                })
+        
+        # Log parsed words count
+        total_words = sum(len(w) for w in words_by_input.values())
+        logger.info(
+            "TTD parsed %d words from alignment across %d inputs",
+            total_words,
+            len(words_by_input),
+        )
+        
+        return words_by_input
+
     # Audio tags for emotional delivery
     EMOTION_TAGS = {
         # Positive emotions
@@ -1516,10 +1609,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             response_data = response.json()
             audio_base64 = response_data.get("audio_base64", "")
             voice_segments = response_data.get("voice_segments", [])
+            alignment = response_data.get("alignment", {})
             
             logger.info(
-                "TTD with-timestamps response: %d voice_segments, audio_base64 length=%d",
+                "TTD with-timestamps response: %d voice_segments, alignment=%d chars, audio_base64 length=%d",
                 len(voice_segments),
+                len(alignment.get("characters", [])),
                 len(audio_base64),
             )
             
@@ -1608,6 +1703,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             vs.get("end_time_seconds", 0)
                         )
             
+            # Parse character alignment into word-level timestamps
+            words_by_input = self._parse_alignment_to_words(alignment, voice_segments)
+            
             # Apply timing to dialogue turns
             for idx, turn in enumerate(dialogue_turns):
                 if idx >= len(inputs):
@@ -1622,12 +1720,34 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 turn["tts_duration"] = turn_duration
                 turn["tts_end_offset"] = end_time
                 
+                # Add word-level timestamps if available
+                if idx in words_by_input:
+                    # Adjust word timestamps for leading silence
+                    tts_words = []
+                    for w in words_by_input[idx]:
+                        tts_words.append({
+                            "word": w["word"],
+                            "start": w["start"] + leading_sec,
+                            "end": w["end"] + leading_sec,
+                        })
+                    turn["tts_words"] = tts_words
+                    logger.debug(
+                        "TTD turn %d: %d words with timestamps (first: %.2f-%.2fs, last: %.2f-%.2fs)",
+                        idx,
+                        len(tts_words),
+                        tts_words[0]["start"] if tts_words else 0,
+                        tts_words[0]["end"] if tts_words else 0,
+                        tts_words[-1]["start"] if tts_words else 0,
+                        tts_words[-1]["end"] if tts_words else 0,
+                    )
+                
                 logger.info(
-                    "TTD subtitle turn %d: %.2f-%.2fs (%.2fs) [from API]",
+                    "TTD subtitle turn %d: %.2f-%.2fs (%.2fs, %d words) [from API]",
                     idx,
                     turn["tts_start_offset"],
                     turn["tts_end_offset"],
                     turn["tts_duration"],
+                    len(turn.get("tts_words", [])),
                 )
         else:
             # Fallback: distribute proportionally by character count

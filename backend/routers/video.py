@@ -257,18 +257,31 @@ def _scale_dialogue_offsets(dialogue: list[dict] | None, scale: float) -> None:
     for idx, turn in enumerate(dialogue):
         old_start = turn.get("tts_start_offset")
         old_end = turn.get("tts_end_offset")
+        
+        # Scale turn-level timestamps
         for key in ("tts_start_offset", "tts_end_offset", "tts_duration"):
             value = turn.get(key)
             if isinstance(value, (int, float)):
                 turn[key] = value * scale
+        
+        # Scale word-level timestamps if present
+        tts_words = turn.get("tts_words")
+        if tts_words:
+            for word in tts_words:
+                if "start" in word:
+                    word["start"] *= scale
+                if "end" in word:
+                    word["end"] *= scale
+        
         new_start = turn.get("tts_start_offset")
         new_end = turn.get("tts_end_offset")
         logger.info(
-            "Scaled turn %d: %.2f-%.2fs -> %.2f-%.2fs (scale=%.3f)",
+            "Scaled turn %d: %.2f-%.2fs -> %.2f-%.2fs (scale=%.3f, %d words)",
             idx,
             old_start or 0, old_end or 0,
             new_start or 0, new_end or 0,
             scale,
+            len(tts_words) if tts_words else 0,
         )
 
 

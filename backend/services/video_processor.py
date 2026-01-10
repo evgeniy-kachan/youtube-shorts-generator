@@ -1052,61 +1052,113 @@ class VideoProcessor:
 
             relative_end = min(duration, max(relative_end, relative_start + 0.1))
 
-            word_chunks: List[List[str]] = []
-            chunk: List[str] = []
-            for word in words:
-                chunk.append(word)
-                if len(chunk) >= max_words_per_line:
-                    word_chunks.append(chunk)
-                    chunk = []
-            if chunk:
-                word_chunks.append(chunk)
-
-            total_words = len(words)
-            total_window = max(relative_end - relative_start, 0.1)
-            elapsed = relative_start
-
-            chunks_added = 0
-
-            for idx, chunk_words in enumerate(word_chunks):
-                chunk_word_count = len(chunk_words)
-                if total_words <= 0:
-                    chunk_duration = total_window / max(len(word_chunks), 1)
-                else:
-                    chunk_duration = total_window * (chunk_word_count / total_words)
-
-                if idx == len(word_chunks) - 1:
-                    chunk_duration = max(0.05, relative_end - elapsed)
-
-                start_time = elapsed
-                end_time = min(relative_end, start_time + chunk_duration)
-                elapsed = end_time
-
-                per_word = chunk_duration / chunk_word_count if chunk_word_count else 0.0
-                word_entries = []
-                for word_idx, word in enumerate(chunk_words):
-                    word_start = start_time + word_idx * per_word
-                    word_entries.append(
-                        {
-                            "word": word,
-                            "start": word_start,
-                            "end": min(end_time, word_start + per_word),
-                        }
-                    )
-
-                lane_idx = allocate_lane(start_time, end_time)
-
-                subtitles.append(
-                    {
-                        "start": start_time,
-                        "end": end_time,
-                        "text": " ".join(chunk_words),
+            # Check if we have precise word timestamps from ElevenLabs
+            tts_words = turn.get("tts_words")
+            
+            if tts_words and len(tts_words) > 0:
+                # Use precise word timestamps from ElevenLabs alignment
+                logger.debug(
+                    "Using %d ElevenLabs word timestamps for turn (speaker=%s)",
+                    len(tts_words), speaker_id
+                )
+                
+                # Build word entries with precise timestamps
+                # Chunk words while preserving their timestamps
+                word_idx = 0
+                chunks_added = 0
+                
+                while word_idx < len(tts_words):
+                    # Take up to max_words_per_line words
+                    chunk_end = min(word_idx + max_words_per_line, len(tts_words))
+                    chunk_tts_words = tts_words[word_idx:chunk_end]
+                    
+                    if not chunk_tts_words:
+                        break
+                    
+                    # Get timing from first and last word in chunk
+                    chunk_start = chunk_tts_words[0]["start"]
+                    chunk_end_time = chunk_tts_words[-1]["end"]
+                    
+                    # Build word entries
+                    word_entries = []
+                    for tw in chunk_tts_words:
+                        word_entries.append({
+                            "word": tw["word"],
+                            "start": tw["start"],
+                            "end": tw["end"],
+                        })
+                    
+                    lane_idx = allocate_lane(chunk_start, chunk_end_time)
+                    
+                    subtitles.append({
+                        "start": chunk_start,
+                        "end": chunk_end_time,
+                        "text": " ".join(tw["word"] for tw in chunk_tts_words),
                         "words": word_entries,
                         "speaker": speaker_id,
                         "color": speaker_palette.get(speaker_id),
                         "lane": lane_idx,
-                    }
-                )
+                    })
+                    chunks_added += 1
+                    word_idx = chunk_end
+            else:
+                # Fallback: distribute words proportionally (old behavior)
+                word_chunks: List[List[str]] = []
+                chunk: List[str] = []
+                for word in words:
+                    chunk.append(word)
+                    if len(chunk) >= max_words_per_line:
+                        word_chunks.append(chunk)
+                        chunk = []
+                if chunk:
+                    word_chunks.append(chunk)
+
+                total_words = len(words)
+                total_window = max(relative_end - relative_start, 0.1)
+                elapsed = relative_start
+
+                chunks_added = 0
+
+                for idx, chunk_words in enumerate(word_chunks):
+                    chunk_word_count = len(chunk_words)
+                    if total_words <= 0:
+                        chunk_duration = total_window / max(len(word_chunks), 1)
+                    else:
+                        chunk_duration = total_window * (chunk_word_count / total_words)
+
+                    if idx == len(word_chunks) - 1:
+                        chunk_duration = max(0.05, relative_end - elapsed)
+
+                    start_time = elapsed
+                    end_time = min(relative_end, start_time + chunk_duration)
+                    elapsed = end_time
+
+                    per_word = chunk_duration / chunk_word_count if chunk_word_count else 0.0
+                    word_entries = []
+                    for word_idx, word in enumerate(chunk_words):
+                        word_start = start_time + word_idx * per_word
+                        word_entries.append(
+                            {
+                                "word": word,
+                                "start": word_start,
+                                "end": min(end_time, word_start + per_word),
+                            }
+                        )
+
+                    lane_idx = allocate_lane(start_time, end_time)
+
+                    subtitles.append(
+                        {
+                            "start": start_time,
+                            "end": end_time,
+                            "text": " ".join(chunk_words),
+                            "words": word_entries,
+                            "speaker": speaker_id,
+                            "color": speaker_palette.get(speaker_id),
+                            "lane": lane_idx,
+                        }
+                    )
+                    chunks_added += 1
                 chunks_added += 1
 
             if subtitles and subtitles[-1]["end"] < relative_end:
