@@ -288,7 +288,7 @@ const SegmentsList = ({
   const [verticalMethod, setVerticalMethod] = useState('center_crop');
 
   // Style settings
-  const [subtitleAnimation, setSubtitleAnimation] = useState('bounce');
+  const [subtitleAnimation, setSubtitleAnimation] = useState('fade');
   const [subtitlePosition, setSubtitlePosition] = useState('mid_low');
   const [subtitleFont, setSubtitleFont] = useState('Montserrat Light');
   const [subtitleFontSize, setSubtitleFontSize] = useState(86);

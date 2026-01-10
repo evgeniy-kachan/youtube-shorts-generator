@@ -498,7 +498,7 @@ class VideoProcessor:
         subtitles: List[Dict],
         output_path: str,
         style: str = "capcut",
-        animation: str = "bounce",
+        animation: str = "fade",
         font_name: str = "Montserrat Light",
         font_size: int = 86,
         subtitle_position: str = "mid_low",
@@ -1206,7 +1206,7 @@ class VideoProcessor:
         subtitles: List[Dict],
         output_path: Path,
         style: str = "capcut",
-        animation: str = "bounce",
+        animation: str = "fade",
         font_name: str = "Montserrat Light",
         font_size: int = 86,
         subtitle_position: str = "mid_low",
@@ -1241,7 +1241,7 @@ class VideoProcessor:
                 'shadow': 0,
                 'alignment': 8,
                 'marginv': 450,
-                'animation': 'bounce',
+                'animation': 'fade',
             },
             'tiktok': {
                 'fontname': font_name,
@@ -1277,12 +1277,12 @@ class VideoProcessor:
                 'shadow': 0,
                 'alignment': 2,
                 'marginv': 70,
-                'animation': 'bounce',
+                'animation': 'fade',
             }
         }
         
         selected_style = {**styles.get(style, styles['capcut'])}
-        animation_style = animation or selected_style.get('animation', 'bounce')
+        animation_style = animation or selected_style.get('animation', 'fade')
         position_config = self.SUBTITLE_POSITIONS.get(
             subtitle_position,
             self.SUBTITLE_POSITIONS['mid_low'],
@@ -1290,8 +1290,14 @@ class VideoProcessor:
         selected_style['alignment'] = position_config.get('an', selected_style['alignment'])
         selected_style['marginv'] = position_config.get('marginv', selected_style['marginv'])
         
-        # Create ASS file
-        back_color = "&H55000000" if subtitle_background else "&H00000000"
+        # For subtitle background, use BorderStyle=3 (opaque box) instead of 1 (outline)
+        # BackColour only works with BorderStyle=3
+        if subtitle_background:
+            selected_style['borderstyle'] = 3
+            selected_style['outline'] = 8  # Padding around text
+            back_color = "&H80000000"  # Semi-transparent black (80 alpha)
+        else:
+            back_color = "&H00000000"
 
         ass_content = f"""[Script Info]
 Title: Generated Subtitles
@@ -1453,7 +1459,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             'simple_fade': rf"{{\an{an}{pos_tag}\fad(150,150){background_tags}{color_cmd}}}",
             'word_pop': rf"{{\an{an}{pos_tag}\fad(80,40){background_tags}{color_cmd}}}",
         }
-        return presets.get(animation, presets['bounce'])
+        return presets.get(animation, presets['fade'])
 
     def _get_word_animation_tag(
         self,

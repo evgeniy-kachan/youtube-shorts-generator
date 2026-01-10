@@ -52,8 +52,8 @@ class ProcessRequest(BaseModel):
         description="Method for vertical conversion: letterbox, center_crop"
     )
     subtitle_animation: str = Field(
-        default="bounce",
-        description="Subtitle animation preset: bounce, slide, spark"
+        default="fade",
+        description="Subtitle animation preset: fade, bounce, slide, spark"
     )
     subtitle_position: str = Field(
         default="mid_low",
@@ -118,7 +118,7 @@ class DubbingRequest(BaseModel):
         default="face_auto",
         description="Horizontal crop focus for center_crop method"
     )
-    subtitle_animation: str = Field(default="bounce", description="Subtitle animation")
+    subtitle_animation: str = Field(default="fade", description="Subtitle animation")
     subtitle_position: str = Field(default="mid_low", description="Subtitle position")
     subtitle_font: str = Field(default="Montserrat Light", description="Font family")
     subtitle_font_size: int = Field(default=86, description="Font size")

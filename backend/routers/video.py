@@ -643,7 +643,7 @@ def _process_segments_task(
     tts_provider: str = "local",
     voice_mix: str = "male_duo",
     vertical_method: str = "letterbox",
-    subtitle_animation: str = "bounce",
+    subtitle_animation: str = "fade",
     subtitle_position: str = "mid_low",
     subtitle_font: str = "Montserrat Light",
     subtitle_font_size: int = 86,
