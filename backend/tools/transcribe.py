@@ -70,7 +70,9 @@ def main():
         if args.diarize and hf_token:
             print(f"[transcribe.py] Running WhisperX diarization (num_speakers={args.num_speakers})...", file=sys.stderr)
             try:
-                diarize_model = whisperx.DiarizationPipeline(
+                from whisperx.diarize import DiarizationPipeline, assign_word_speakers
+                
+                diarize_model = DiarizationPipeline(
                     use_auth_token=hf_token,
                     device=args.device,
                 )
@@ -80,7 +82,7 @@ def main():
                     max_speakers=args.num_speakers,
                 )
                 # Assign speakers to words
-                result = whisperx.assign_word_speakers(diarize_segments, result)
+                result = assign_word_speakers(diarize_segments, result)
                 print(f"[transcribe.py] Diarization complete, speakers assigned to words", file=sys.stderr)
             except Exception as diar_err:
                 print(f"[transcribe.py] Diarization failed: {diar_err}, continuing without speakers", file=sys.stderr)
