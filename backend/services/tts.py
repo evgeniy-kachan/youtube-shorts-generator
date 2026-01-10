@@ -1218,12 +1218,21 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             return -1
         
         # Parse characters into words with timestamps
+        # Also split words at segment boundaries (ElevenLabs concatenates inputs without spaces)
         words_by_input: dict[int, list[dict]] = {}
         current_word = []
         word_start_idx = 0
+        prev_input_idx = -1
         
         for i, char in enumerate(characters):
-            if char == " " or char == "\n":
+            current_input_idx = get_input_idx_for_char(i)
+            
+            # Check if we crossed a segment boundary
+            crossed_boundary = (prev_input_idx >= 0 and 
+                               current_input_idx >= 0 and 
+                               current_input_idx != prev_input_idx)
+            
+            if char == " " or char == "\n" or crossed_boundary:
                 # Word boundary - save the word if we have one
                 if current_word:
                     word_text = "".join(current_word)
@@ -1241,9 +1250,18 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         })
                     
                     current_word = []
-                word_start_idx = i + 1
+                
+                # If crossed boundary (not space), start new word with current char
+                if crossed_boundary and char != " " and char != "\n":
+                    word_start_idx = i
+                    current_word.append(char)
+                else:
+                    word_start_idx = i + 1
             else:
                 current_word.append(char)
+            
+            if current_input_idx >= 0:
+                prev_input_idx = current_input_idx
         
         # Don't forget the last word
         if current_word:
