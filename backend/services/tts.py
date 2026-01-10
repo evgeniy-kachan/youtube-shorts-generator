@@ -1552,14 +1552,10 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         )
         
         # Store timing info in turns for subtitle sync
-        # Use original turn durations/ratios scaled to fit TTD output
-        # This preserves natural pacing better than character-based estimation
+        # TTD adds natural pauses between speakers that we need to account for
         
-        # Calculate original total duration (excluding leading gap)
+        # Calculate original turn durations
         original_durations = []
-        original_gaps = []  # gaps between turns
-        first_turn_start = dialogue_turns[0].get("start", 0.0) if dialogue_turns else 0.0
-        
         for idx, turn in enumerate(dialogue_turns):
             if idx >= len(inputs):
                 break
@@ -1567,44 +1563,58 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             turn_end = turn.get("end", turn_start + 1.0)
             turn_dur = max(0.1, turn_end - turn_start)
             original_durations.append(turn_dur)
-            
-            # Gap before this turn
-            if idx == 0:
-                original_gaps.append(0.0)  # First turn starts at 0 in output
-            else:
-                prev_end = dialogue_turns[idx - 1].get("end", 0.0)
-                gap = max(0.0, turn_start - prev_end)
-                original_gaps.append(gap)
         
-        total_original = sum(original_durations) + sum(original_gaps)
+        total_original_speech = sum(original_durations)
         
-        # Account for leading silence in TTD output
+        # Account for leading silence we added
         leading_sec = leading_silence_ms / 1000.0
-        ttd_speech_duration = duration_sec - leading_sec  # TTD audio without our leading silence
+        ttd_speech_duration = duration_sec - leading_sec
         
-        # Scale factor: how much to stretch/compress original timing
-        scale = ttd_speech_duration / total_original if total_original > 0 else 1.0
+        # TTD adds natural pauses between speakers (~0.3-0.5s each transition)
+        # Calculate how much time is "extra" due to TTD pauses
+        num_transitions = max(0, len(inputs) - 1)
+        ttd_pause_estimate = ttd_speech_duration - total_original_speech
+        pause_per_transition = max(0.2, ttd_pause_estimate / num_transitions) if num_transitions > 0 else 0.0
+        
+        # Clamp pause to reasonable range (0.2 - 0.8s per transition)
+        pause_per_transition = min(0.8, max(0.2, pause_per_transition))
+        
+        logger.info(
+            "TTD subtitle timing: total_original=%.2fs, ttd_duration=%.2fs, "
+            "estimated_pause_per_turn=%.2fs (%d transitions)",
+            total_original_speech,
+            ttd_speech_duration,
+            pause_per_transition,
+            num_transitions,
+        )
+        
+        # Calculate how much we need to scale speech portions
+        # (TTD duration - pauses) / original speech duration
+        ttd_speech_only = ttd_speech_duration - (num_transitions * pause_per_transition)
+        speech_scale = ttd_speech_only / total_original_speech if total_original_speech > 0 else 1.0
         
         elapsed = leading_sec  # Start after leading silence
         for idx, turn in enumerate(dialogue_turns):
             if idx >= len(original_durations):
                 break
             
-            # Add scaled gap before this turn
-            elapsed += original_gaps[idx] * scale
+            # Add TTD pause before this turn (except first)
+            if idx > 0:
+                elapsed += pause_per_transition
             
-            turn_duration = original_durations[idx] * scale
+            turn_duration = original_durations[idx] * speech_scale
             turn["tts_start_offset"] = elapsed
             turn["tts_duration"] = turn_duration
             turn["tts_end_offset"] = elapsed + turn_duration
             elapsed += turn_duration
             
             logger.debug(
-                "TTD subtitle timing turn %d: %.2f-%.2fs (%.2fs)",
+                "TTD subtitle turn %d: %.2f-%.2fs (%.2fs, pause_before=%.2f)",
                 idx,
                 turn["tts_start_offset"],
                 turn["tts_end_offset"],
                 turn["tts_duration"],
+                pause_per_transition if idx > 0 else 0.0,
             )
         
         return str(output_path)
