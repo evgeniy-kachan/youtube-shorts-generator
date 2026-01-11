@@ -306,6 +306,18 @@ const SegmentsList = ({
   // cropFocus is now always 'face_auto' for center_crop
   const cropFocus = verticalMethod === 'center_crop' ? 'face_auto' : 'center';
 
+  // Podcast style preset - check if currently active
+  const isPodcastStyleActive = useMemo(() => {
+    return (
+      subtitleFont === 'Montserrat Bold' &&
+      subtitleFontSize === 76 &&
+      subtitleAnimation === 'fade' &&
+      subtitlePosition === 'mid_low' &&
+      speakerColorMode === 'white' &&
+      subtitleBackground === false
+    );
+  }, [subtitleFont, subtitleFontSize, subtitleAnimation, subtitlePosition, speakerColorMode, subtitleBackground]);
+
   // Podcast style preset - applies recommended settings
   const applyPodcastStyle = () => {
     setSubtitleFont('Montserrat Bold');
@@ -696,19 +708,32 @@ const SegmentsList = ({
                   type="button"
                   disabled={loading}
                   onClick={applyPodcastStyle}
-                  className="w-full p-4 border-2 border-dashed border-purple-400 rounded-xl text-left transition hover:border-purple-600 hover:bg-purple-50 group"
+                  className={`w-full p-4 border-2 rounded-xl text-left transition group ${
+                    isPodcastStyleActive
+                      ? 'border-purple-600 bg-purple-100 ring-2 ring-purple-400'
+                      : 'border-dashed border-purple-400 hover:border-purple-600 hover:bg-purple-50'
+                  }`}
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="font-bold text-purple-700 text-lg">
+                      <div className="font-bold text-purple-700 text-lg flex items-center gap-2">
                         🎙️ Подкаст стиль
+                        {isPodcastStyleActive && (
+                          <span className="text-xs bg-purple-600 text-white px-2 py-0.5 rounded-full">
+                            активен
+                          </span>
+                        )}
                       </div>
                       <div className="text-sm text-gray-600 mt-1">
                         Montserrat Bold, 76px, Fade, белые субтитры для обоих спикеров
                       </div>
                     </div>
-                    <div className="text-purple-500 group-hover:text-purple-700 transition">
-                      Применить →
+                    <div className={`transition ${
+                      isPodcastStyleActive
+                        ? 'text-purple-600'
+                        : 'text-purple-500 group-hover:text-purple-700'
+                    }`}>
+                      {isPodcastStyleActive ? '✓' : 'Применить →'}
                     </div>
                   </div>
                 </button>
