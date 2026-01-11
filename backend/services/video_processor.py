@@ -1463,23 +1463,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         y = base_y - lane * lane_gap
         an = position_conf.get('an', 8)
         pos_tag = rf"\pos({x},{y})"
-        # Background is handled by BorderStyle=3 in the style definition
-        # Don't add inline tags that would override it
         color_cmd = color_tag or ""
         # For slide/mask animations we need both start/end Y positions
         slide_start_y = y + 220
         move_down_y = y + 100
+        
+        # \3a sets outline/box alpha: 00=opaque, FF=transparent
+        # Use ~70% transparent box when background is enabled
+        bg_alpha = r"\3a&HB0&" if subtitle_background else ""
+        
         presets = {
-            'bounce': rf"{{\an{an}{pos_tag}\fad(80,40){color_cmd}}}",
-            'slide': rf"{{\an{an}\move({x},{slide_start_y},{x},{y},0,260)\fad(60,60){color_cmd}}}",
-            'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{color_cmd}}}",
-            'fade': rf"{{\an{an}{pos_tag}\fad(100,100){color_cmd}}}",
-            'scale': rf"{{\an{an}{pos_tag}\fad(80,40){color_cmd}}}",
-            'karaoke': rf"{{\an{an}{pos_tag}\fad(80,40){color_cmd}}}",
-            'typewriter': rf"{{\an{an}{pos_tag}{color_cmd}}}",
-            'mask': rf"{{\an{an}\move({x},{move_down_y},{x},{y},0,300){color_cmd}}}",
-            'simple_fade': rf"{{\an{an}{pos_tag}\fad(150,150){color_cmd}}}",
-            'word_pop': rf"{{\an{an}{pos_tag}\fad(80,40){color_cmd}}}",
+            'bounce': rf"{{\an{an}{pos_tag}\fad(80,40){bg_alpha}{color_cmd}}}",
+            'slide': rf"{{\an{an}\move({x},{slide_start_y},{x},{y},0,260)\fad(60,60){bg_alpha}{color_cmd}}}",
+            'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{bg_alpha}{color_cmd}}}",
+            'fade': rf"{{\an{an}{pos_tag}\fad(100,100){bg_alpha}{color_cmd}}}",
+            'scale': rf"{{\an{an}{pos_tag}\fad(80,40){bg_alpha}{color_cmd}}}",
+            'karaoke': rf"{{\an{an}{pos_tag}\fad(80,40){bg_alpha}{color_cmd}}}",
+            'typewriter': rf"{{\an{an}{pos_tag}{bg_alpha}{color_cmd}}}",
+            'mask': rf"{{\an{an}\move({x},{move_down_y},{x},{y},0,300){bg_alpha}{color_cmd}}}",
+            'simple_fade': rf"{{\an{an}{pos_tag}\fad(150,150){bg_alpha}{color_cmd}}}",
+            'word_pop': rf"{{\an{an}{pos_tag}\fad(80,40){bg_alpha}{color_cmd}}}",
         }
         return presets.get(animation, presets['fade'])
 
