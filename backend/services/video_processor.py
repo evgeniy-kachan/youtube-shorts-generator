@@ -1391,7 +1391,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not words:
             return self._get_base_animation_tag(animation, position_conf)
 
-        if len(words) >= 6:
+        # Don't split into two lines when background is enabled
+        # because each line gets its own box which overlaps
+        if len(words) >= 6 and not subtitle_background:
             split_index = len(words) // 2
             text = " ".join(words[:split_index]) + r"\N" + " ".join(words[split_index:])
         else:

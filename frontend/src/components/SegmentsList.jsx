@@ -318,14 +318,25 @@ const SegmentsList = ({
     );
   }, [subtitleFont, subtitleFontSize, subtitleAnimation, subtitlePosition, speakerColorMode, subtitleBackground]);
 
-  // Podcast style preset - applies recommended settings
-  const applyPodcastStyle = () => {
-    setSubtitleFont('Montserrat Bold');
-    setSubtitleFontSize(76);
-    setSubtitleAnimation('fade');
-    setSubtitlePosition('mid_low');
-    setSpeakerColorMode('white');
-    setSubtitleBackground(false);
+  // Podcast style preset - toggle on/off
+  const togglePodcastStyle = () => {
+    if (isPodcastStyleActive) {
+      // Reset to defaults
+      setSubtitleFont('Montserrat Light');
+      setSubtitleFontSize(86);
+      setSubtitleAnimation('fade');
+      setSubtitlePosition('mid_low');
+      setSpeakerColorMode('colored');
+      setSubtitleBackground(false);
+    } else {
+      // Apply podcast style
+      setSubtitleFont('Montserrat Bold');
+      setSubtitleFontSize(76);
+      setSubtitleAnimation('fade');
+      setSubtitlePosition('mid_low');
+      setSpeakerColorMode('white');
+      setSubtitleBackground(false);
+    }
   };
 
   // Tabs: 'style', 'text', 'position'
@@ -707,7 +718,7 @@ const SegmentsList = ({
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={applyPodcastStyle}
+                  onClick={togglePodcastStyle}
                   className={`w-full p-4 border-2 rounded-xl text-left transition group ${
                     isPodcastStyleActive
                       ? 'border-purple-600 bg-purple-100 ring-2 ring-purple-400'
