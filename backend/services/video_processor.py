@@ -1308,10 +1308,11 @@ class VideoProcessor:
         # In BorderStyle=3: OutlineColour = box color, Outline = padding
         if subtitle_background:
             selected_style['borderstyle'] = 3
-            selected_style['outline'] = 12  # Padding around text
+            selected_style['outline'] = 14  # Padding around text (slightly larger)
             # OutlineColour becomes the box color in BorderStyle=3
             # Format: &HAABBGGRR (AA=alpha, BB=blue, GG=green, RR=red)
-            box_color = "&H90000000"  # Semi-transparent black (90 hex = ~56% opacity)
+            # Higher alpha = more transparent: 00=opaque, FF=invisible
+            box_color = "&HC0000000"  # More transparent black (C0 hex = ~75% transparent)
             back_color = "&H00000000"  # No shadow
         else:
             box_color = selected_style['outlinecolor']
