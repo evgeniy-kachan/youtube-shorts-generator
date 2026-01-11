@@ -670,6 +670,7 @@ class VideoProcessor:
         dialogue: list[dict] | None = None,
         preserve_background_audio: bool = False,
         crop_focus: str = "center",
+        speaker_color_mode: str = "colored",
     ) -> str:
         """
         End-to-end helper that cuts the source video, converts it to vertical format,
@@ -813,7 +814,7 @@ class VideoProcessor:
                 auto_center_ratio = None
 
             # Step 2: prepare basic subtitles
-            speaker_palette = self._assign_speaker_colors(dialogue_turns)
+            speaker_palette = self._assign_speaker_colors(dialogue_turns, speaker_color_mode)
             subtitles = self._generate_basic_subtitles(
                 text=text,
                 duration=duration,
@@ -877,15 +878,28 @@ class VideoProcessor:
         return video_stream.filter("ass", subtitle_arg)
 
     @staticmethod
-    def _assign_speaker_colors(dialogue: list[dict] | None) -> dict[str, str]:
+    def _assign_speaker_colors(
+        dialogue: list[dict] | None,
+        color_mode: str = "colored",
+    ) -> dict[str, str]:
         """
         Return a deterministic color palette for every speaker in the segment.
         Colors are stored in ASS format (AABBGGRR without the leading &H).
+        
+        Args:
+            dialogue: List of dialogue turns
+            color_mode: "colored" for different colors per speaker, "white" for all white
         """
-        palette = [
-            None,         # Primary speaker → белый
-            "004DC0FF",   # Второй спикер → насыщенный жёлто-оранжевый (#FFC04D)
-        ]
+        if color_mode == "white":
+            # All speakers get white (None = use default white)
+            palette = [None, None]
+        else:
+            # Colored mode - different colors for speakers
+            palette = [
+                None,         # Primary speaker → белый
+                "004DC0FF",   # Второй спикер → насыщенный жёлто-оранжевый (#FFC04D)
+            ]
+        
         assignment: dict[str, str] = {}
         if not dialogue:
             return assignment

@@ -71,6 +71,10 @@ class ProcessRequest(BaseModel):
         default=False,
         description="Enable background blur/box behind subtitles"
     )
+    speaker_color_mode: str = Field(
+        default="colored",
+        description="Speaker color mode: colored (different colors) or white (same white for all)"
+    )
     preserve_background_audio: bool = Field(
         default=True,
         description="Mix original track quietly under synthesized voice"

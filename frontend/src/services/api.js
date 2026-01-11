@@ -33,7 +33,8 @@ export const processSegments = async (
   subtitleFontSize = 86,
   subtitleBackground = false,
   preserveBackgroundAudio = true,
-  cropFocus = 'center'
+  cropFocus = 'center',
+  speakerColorMode = 'colored'
 ) => {
   const response = await api.post('/api/video/process', {
     video_id: videoId,
@@ -48,6 +49,7 @@ export const processSegments = async (
     subtitle_background: subtitleBackground,
     preserve_background_audio: preserveBackgroundAudio,
     crop_focus: cropFocus,
+    speaker_color_mode: speakerColorMode,
   });
   return response.data;
 };

@@ -650,6 +650,7 @@ def _process_segments_task(
     subtitle_background: bool = False,
     preserve_background_audio: bool = True,
     crop_focus: str = "center",
+    speaker_color_mode: str = "colored",
 ):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Preparing to render..."}
@@ -821,6 +822,7 @@ def _process_segments_task(
                 dialogue=segment.get('dialogue'),
                 preserve_background_audio=preserve_background_audio,
                 crop_focus=crop_focus,
+                speaker_color_mode=speaker_color_mode,
             )
             renderer.save_video(final_clip, output_path)
             
@@ -937,6 +939,7 @@ async def process_segments(request: ProcessRequest, background_tasks: Background
         request.subtitle_background,
         request.preserve_background_audio,
         request.crop_focus,
+        request.speaker_color_mode,
     )
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Processing task queued")
 
