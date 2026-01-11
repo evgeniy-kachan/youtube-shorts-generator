@@ -1351,8 +1351,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     color_tag,
                     lane,
                 )
+                ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}\n"
             else:
-                text = self._build_chunk_line(
+                # For chunk mode (especially with background), we may need to split
+                # into multiple dialogue lines with different Y positions
+                lines = self._build_chunk_lines(
                     subtitle,
                     animation_style,
                     position_config,
@@ -1360,8 +1363,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     color_tag,
                     lane,
                 )
-
-            ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}\n"
+                for line_text in lines:
+                    ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{line_text}\n"
         
         # Write to file
         output_path.write_text(ass_content, encoding='utf-8')
@@ -1374,7 +1377,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         centiseconds = int((seconds % 1) * 100)
         return f"{hours}:{minutes:02d}:{secs:02d}.{centiseconds:02d}"
     
-    def _build_chunk_line(
+    def _build_chunk_lines(
         self,
         subtitle: Dict,
         animation: str,
@@ -1382,24 +1385,60 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         subtitle_background: bool,
         color_tag: str = "",
         lane: int = 0,
-    ) -> str:
-        """Render text chunk with a chosen animation preset."""
+    ) -> List[str]:
+        """
+        Render text chunk(s) with a chosen animation preset.
+        Returns a list of formatted lines. When background is enabled and text
+        is long, returns two separate lines with different Y positions to prevent
+        overlapping background boxes.
+        """
         words = subtitle.get('text', '').split()
         if not words and subtitle.get('words'):
             words = [w.get('word', '') for w in subtitle['words']]
 
         if not words:
-            return self._get_base_animation_tag(animation, position_conf)
+            return [self._get_base_animation_tag(animation, position_conf, subtitle_background, color_tag, lane)]
 
-        # Don't split into two lines when background is enabled
-        # because each line gets its own box which overlaps
+        # When background is enabled and we have many words, split into two
+        # separate dialogue events with different Y positions
+        if len(words) >= 6 and subtitle_background:
+            split_index = len(words) // 2
+            line1_words = words[:split_index]
+            line2_words = words[split_index:]
+            
+            # Line spacing for background boxes (larger gap to prevent overlap)
+            line_spacing = 90  # pixels between lines
+            
+            # Create position config for each line
+            x = position_conf.get('x', 540)
+            base_y = position_conf.get('y', 1250)
+            lane_gap = 140
+            y = base_y - lane * lane_gap
+            
+            # Upper line (line 1) - slightly above center
+            y1 = y - line_spacing // 2
+            # Lower line (line 2) - slightly below center  
+            y2 = y + line_spacing // 2
+            
+            pos_conf_1 = {**position_conf, 'y': y1}
+            pos_conf_2 = {**position_conf, 'y': y2}
+            
+            tag1 = self._get_base_animation_tag(animation, pos_conf_1, subtitle_background, color_tag, lane=0)
+            tag2 = self._get_base_animation_tag(animation, pos_conf_2, subtitle_background, color_tag, lane=0)
+            
+            return [
+                f"{tag1}{' '.join(line1_words)}",
+                f"{tag2}{' '.join(line2_words)}",
+            ]
+        
+        # Normal case: single line (or two lines with \N when no background)
         if len(words) >= 6 and not subtitle_background:
             split_index = len(words) // 2
             text = " ".join(words[:split_index]) + r"\N" + " ".join(words[split_index:])
         else:
             text = " ".join(words)
 
-        return f"{self._get_base_animation_tag(animation, position_conf, subtitle_background, color_tag, lane)}{text}"
+        return [f"{self._get_base_animation_tag(animation, position_conf, subtitle_background, color_tag, lane)}{text}"]
 
     def _build_capcut_line(
         self,
