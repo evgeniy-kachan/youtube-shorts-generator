@@ -1339,7 +1339,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             color_tag = rf"\1c&H{color_value}&" if color_value else ""
 
             lane = subtitle.get('lane', 0)
-            if style == 'capcut':
+            # When background is enabled, use chunk-level animation (not word-by-word)
+            # because BorderStyle=3 creates separate boxes around each animated word
+            if style == 'capcut' and not subtitle_background:
                 text = self._build_capcut_line(
                     subtitle,
                     animation_style,
