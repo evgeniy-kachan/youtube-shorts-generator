@@ -751,10 +751,15 @@ class VideoProcessor:
 
             if method == "center_crop" and effective_crop_focus == "face_auto":
                 # === DIAGNOSTIC: what dialogue_turns are we passing? ===
+                def _fmt_turn(t):
+                    spk = t.get("speaker", "?")
+                    start = t.get("start") or t.get("tts_start_offset") or 0
+                    end = t.get("end") or t.get("tts_end_offset") or 0
+                    return (spk, f"{start:.1f}-{end:.1f}")
                 logger.info(
                     "DIAGNOSTIC: dialogue_turns passed to focus_timeline: len=%d, turns=%s",
                     len(dialogue_turns) if dialogue_turns else 0,
-                    [(t.get("speaker"), f"{t.get('start'):.1f}-{t.get('end'):.1f}") for t in (dialogue_turns or [])[:5]],
+                    [_fmt_turn(t) for t in (dialogue_turns or [])[:5]],
                 )
                 # === END DIAGNOSTIC ===
                 
