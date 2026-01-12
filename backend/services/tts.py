@@ -1,4 +1,5 @@
 """Text-to-Speech services."""
+import base64
 import io
 import logging
 import os
@@ -1099,6 +1100,148 @@ class ElevenLabsTTSService(BaseTTSService):
             logger.error("ElevenLabs API request failed: %s", exc)
             raise
 
+    def _request_audio_with_timestamps(
+        self, text: str, voice_override: str | None = None, speed: float = 1.0
+    ) -> tuple[bytes, list[dict]]:
+        """Call ElevenLabs TTS API with timestamps and return audio + word timings.
+        
+        Uses /text-to-speech/{voice_id}/with-timestamps endpoint.
+        
+        Args:
+            text: Text to synthesize
+            voice_override: Optional voice ID to use instead of default
+            speed: Speech speed multiplier (0.7-1.2, default 1.0)
+            
+        Returns:
+            Tuple of (audio_bytes, word_timestamps)
+            word_timestamps: [{"word": "Hello", "start": 0.1, "end": 0.4}, ...]
+        """
+        voice_id = voice_override or self.voice_id
+        url = f"{self.base_url}/text-to-speech/{voice_id}/with-timestamps"
+        headers = {
+            "xi-api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        # Clamp speed to ElevenLabs supported range
+        clamped_speed = max(0.7, min(1.2, speed))
+        voice_settings_with_speed = {**self.voice_settings, "speed": clamped_speed}
+        payload = {
+            "text": text,
+            "model_id": self.model_id,
+            "voice_settings": voice_settings_with_speed,
+        }
+
+        try:
+            client_kwargs = {"timeout": self.request_timeout}
+            transport = None
+            if self.proxy_url:
+                try:
+                    transport = httpx.HTTPTransport(proxy=self.proxy_url)
+                except TypeError:
+                    transport = None
+            if transport:
+                client_kwargs["transport"] = transport
+            with httpx.Client(**client_kwargs) as client:
+                response = client.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                )
+            response.raise_for_status()
+            
+            # Parse JSON response with audio (base64) and alignment
+            data = response.json()
+            audio_base64 = data.get("audio_base64", "")
+            alignment = data.get("alignment", {})
+            
+            # Decode audio from base64
+            audio_bytes = base64.b64decode(audio_base64)
+            
+            # Parse alignment into word timestamps
+            words = self._parse_single_speaker_alignment(alignment)
+            
+            logger.info(
+                "ElevenLabs TTS with timestamps: %d chars, %d words parsed",
+                len(text), len(words)
+            )
+            
+            return audio_bytes, words
+            
+        except httpx.HTTPStatusError as http_exc:
+            logger.error(
+                "ElevenLabs TTS with-timestamps API error (status=%s): %s",
+                http_exc.response.status_code,
+                http_exc.response.text,
+            )
+            raise
+        except httpx.HTTPError as exc:
+            logger.error("ElevenLabs TTS with-timestamps API request failed: %s", exc)
+            raise
+
+    @staticmethod
+    def _parse_single_speaker_alignment(alignment: dict) -> list[dict]:
+        """Parse ElevenLabs character alignment into word-level timestamps.
+        
+        Args:
+            alignment: Dict with characters, character_start_times_seconds, character_end_times_seconds
+            
+        Returns:
+            List of word dicts: [{"word": "Hello", "start": 0.1, "end": 0.4}, ...]
+        """
+        characters = alignment.get("characters", [])
+        char_starts = alignment.get("character_start_times_seconds", [])
+        char_ends = alignment.get("character_end_times_seconds", [])
+        
+        if not characters or len(characters) != len(char_starts) or len(characters) != len(char_ends):
+            logger.warning(
+                "TTS alignment data incomplete: chars=%d, starts=%d, ends=%d",
+                len(characters), len(char_starts), len(char_ends)
+            )
+            return []
+        
+        words = []
+        current_word = []
+        word_start_idx = 0
+        
+        for i, char in enumerate(characters):
+            if char == " " or char == "\n":
+                # Word boundary - save the word if we have one
+                if current_word:
+                    word_text = "".join(current_word)
+                    word_start = char_starts[word_start_idx]
+                    word_end = char_ends[i - 1] if i > 0 else char_starts[word_start_idx]
+                    
+                    words.append({
+                        "word": word_text,
+                        "start": word_start,
+                        "end": word_end,
+                    })
+                    
+                    current_word = []
+                word_start_idx = i + 1
+            else:
+                current_word.append(char)
+        
+        # Don't forget the last word
+        if current_word:
+            word_text = "".join(current_word)
+            word_start = char_starts[word_start_idx] if word_start_idx < len(char_starts) else 0
+            word_end = char_ends[-1] if char_ends else word_start
+            
+            words.append({
+                "word": word_text,
+                "start": word_start,
+                "end": word_end,
+            })
+        
+        if words:
+            logger.info(
+                "TTS parsed %d words, range: %.2f-%.2fs",
+                len(words), words[0]["start"], words[-1]["end"]
+            )
+        
+        return words
+
     def _decode_audio(self, audio_bytes: bytes) -> AudioSegment:
         """Convert returned MP3 bytes into an AudioSegment."""
         try:
@@ -1109,13 +1252,20 @@ class ElevenLabsTTSService(BaseTTSService):
 
     def synthesize(
         self, text: str, output_path: str, speaker: str | None = None, target_duration: float | None = None
-    ) -> str:
+    ) -> tuple[str, list[dict]]:
+        """Synthesize text with word-level timestamps.
+        
+        Returns:
+            Tuple of (output_path, word_timestamps)
+            word_timestamps: [{"word": "Hello", "start": 0.1, "end": 0.4}, ...]
+        """
         clean_text = self._sanitize_text(text)
         if not clean_text:
             raise ValueError("TTS input is empty after sanitization")
 
         chunks = self._chunk_text(clean_text)
         audio_segments: list[AudioSegment] = []
+        all_words: list[dict] = []
         voice_override = speaker or self.voice_id
         
         # Calculate speed based on target duration (ElevenLabs native speed control)
@@ -1133,11 +1283,34 @@ class ElevenLabsTTSService(BaseTTSService):
                     speed, estimated_duration, target_duration
                 )
 
+        # Track cumulative duration for multi-chunk word timestamp adjustment
+        cumulative_duration = 0.0
+        
         for idx, chunk in enumerate(chunks, start=1):
-            logger.info("ElevenLabs: synthesizing chunk %s/%s (len=%s)", idx, len(chunks), len(chunk))
-            audio_bytes = self._request_audio_chunk(chunk, voice_override=voice_override, speed=speed)
+            logger.info("ElevenLabs: synthesizing chunk %s/%s (len=%s) with timestamps", idx, len(chunks), len(chunk))
+            
+            try:
+                audio_bytes, chunk_words = self._request_audio_with_timestamps(
+                    chunk, voice_override=voice_override, speed=speed
+                )
+            except Exception as e:
+                # Fallback to non-timestamp endpoint if with-timestamps fails
+                logger.warning("TTS with-timestamps failed, falling back: %s", e)
+                audio_bytes = self._request_audio_chunk(chunk, voice_override=voice_override, speed=speed)
+                chunk_words = []
+            
             segment_audio = self._decode_audio(audio_bytes)
             audio_segments.append(segment_audio)
+            
+            # Adjust word timestamps for multi-chunk scenario
+            for word in chunk_words:
+                all_words.append({
+                    "word": word["word"],
+                    "start": word["start"] + cumulative_duration,
+                    "end": word["end"] + cumulative_duration,
+                })
+            
+            cumulative_duration += len(segment_audio) / 1000.0  # AudioSegment length is in ms
 
         if not audio_segments:
             raise RuntimeError("ElevenLabs returned no audio segments")
@@ -1151,10 +1324,20 @@ class ElevenLabsTTSService(BaseTTSService):
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         combined.export(str(output_path), format="wav")
-        logger.info("ElevenLabs audio saved to %s", output_path)
-        return str(output_path)
+        
+        logger.info(
+            "ElevenLabs audio saved to %s (duration=%.2fs, %d words with timestamps)",
+            output_path, len(combined) / 1000.0, len(all_words)
+        )
+        
+        return str(output_path), all_words
 
-    def synthesize_and_save(self, text: str, output_path: str, speaker: str | None = None) -> str:
+    def synthesize_and_save(self, text: str, output_path: str, speaker: str | None = None) -> tuple[str, list[dict]]:
+        """Synthesize and save with word timestamps.
+        
+        Returns:
+            Tuple of (output_path, word_timestamps)
+        """
         return self.synthesize(text, output_path, speaker=speaker)
 
 

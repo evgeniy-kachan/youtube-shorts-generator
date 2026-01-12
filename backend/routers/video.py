@@ -727,7 +727,33 @@ def _process_segments_task(
                     primary_speaker = speaker_chain[0] if speaker_chain else None
                     voice_override = voice_plan.get(primary_speaker) or voice_plan.get("__default__")
                 
-                tts_service.synthesize_and_save(tts_text, audio_path, speaker=voice_override)
+                _, tts_words = tts_service.synthesize_and_save(tts_text, audio_path, speaker=voice_override)
+                
+                # Create pseudo-dialogue structure with word timestamps for single speaker
+                if tts_words:
+                    # Get audio duration for tts_end_offset
+                    try:
+                        temp_audio = AudioSegment.from_file(audio_path)
+                        single_audio_duration = temp_audio.duration_seconds or 0.0
+                    except Exception:
+                        single_audio_duration = tts_words[-1]["end"] if tts_words else 0.0
+                    
+                    pseudo_dialogue = [{
+                        "speaker": primary_speaker or "SPEAKER_0",
+                        "text": tts_text,
+                        "text_ru": tts_text,
+                        "tts_start_offset": 0.0,
+                        "tts_end_offset": single_audio_duration,
+                        "tts_duration": single_audio_duration,
+                        "tts_words": tts_words,
+                    }]
+                    segment['dialogue'] = pseudo_dialogue
+                    logger.info(
+                        "Created pseudo-dialogue for single-speaker %s with %d tts_words (%.2f-%.2fs)",
+                        segment['id'], len(tts_words),
+                        tts_words[0]["start"] if tts_words else 0,
+                        tts_words[-1]["end"] if tts_words else 0,
+                    )
             
             segment['audio_path'] = audio_path
             try:
