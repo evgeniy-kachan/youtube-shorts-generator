@@ -720,14 +720,48 @@ def _process_segments_task(
                 )
             else:
                 # Single speaker fallback (or no dialogue structure)
+                original_text = segment.get('text') or segment.get('text_en') or ''
                 tts_text = segment.get('text_ru_tts') or segment.get('text_ru')
+                
+                # Calculate target duration for isochronic translation
+                segment_start = float(segment.get('start_time', 0))
+                segment_end = float(segment.get('end_time', 0))
+                target_duration = max(0.5, segment_end - segment_start)
+                
+                # Apply isochronic translation if we have original English text
+                if original_text and target_duration > 1.0:
+                    try:
+                        from backend.services.translation import Translator
+                        translator = Translator()
+                        logger.info(
+                            "Running isochronic translation for single-speaker %s (%.1fs)",
+                            segment['id'], target_duration
+                        )
+                        tts_text = translator.translate_single_with_timing(
+                            text=original_text,
+                            target_duration=target_duration,
+                            context=segment.get('title', ''),
+                        )
+                        segment['text_ru'] = tts_text
+                        segment['text_ru_tts'] = tts_text
+                    except Exception as trans_exc:
+                        logger.warning(
+                            "Isochronic translation failed for single-speaker %s: %s",
+                            segment['id'], trans_exc
+                        )
+                
                 voice_override = None
                 if voice_plan:
                     speaker_chain = segment.get('speakers') or []
                     primary_speaker = speaker_chain[0] if speaker_chain else None
                     voice_override = voice_plan.get(primary_speaker) or voice_plan.get("__default__")
                 
-                _, tts_words = tts_service.synthesize_and_save(tts_text, audio_path, speaker=voice_override)
+                # Pass target_duration to ElevenLabs for speed control
+                _, tts_words = tts_service.synthesize_and_save(
+                    tts_text, audio_path, 
+                    speaker=voice_override,
+                    target_duration=target_duration,
+                )
                 
                 # Create pseudo-dialogue structure with word timestamps for single speaker
                 if tts_words:
@@ -749,10 +783,11 @@ def _process_segments_task(
                     }]
                     segment['dialogue'] = pseudo_dialogue
                     logger.info(
-                        "Created pseudo-dialogue for single-speaker %s with %d tts_words (%.2f-%.2fs)",
+                        "Created pseudo-dialogue for single-speaker %s with %d tts_words (%.2f-%.2fs, target=%.2fs)",
                         segment['id'], len(tts_words),
                         tts_words[0]["start"] if tts_words else 0,
                         tts_words[-1]["end"] if tts_words else 0,
+                        target_duration,
                     )
             
             segment['audio_path'] = audio_path

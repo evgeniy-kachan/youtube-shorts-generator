@@ -1332,13 +1332,21 @@ class ElevenLabsTTSService(BaseTTSService):
         
         return str(output_path), all_words
 
-    def synthesize_and_save(self, text: str, output_path: str, speaker: str | None = None) -> tuple[str, list[dict]]:
+    def synthesize_and_save(
+        self, text: str, output_path: str, speaker: str | None = None, target_duration: float | None = None
+    ) -> tuple[str, list[dict]]:
         """Synthesize and save with word timestamps.
+        
+        Args:
+            text: Text to synthesize
+            output_path: Where to save the audio file
+            speaker: Optional voice ID override
+            target_duration: Optional target duration for speed control
         
         Returns:
             Tuple of (output_path, word_timestamps)
         """
-        return self.synthesize(text, output_path, speaker=speaker)
+        return self.synthesize(text, output_path, speaker=speaker, target_duration=target_duration)
 
 
 class ElevenLabsTTDService(ElevenLabsTTSService):

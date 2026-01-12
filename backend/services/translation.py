@@ -340,3 +340,85 @@ class Translator:
                 if "text_ru" not in turn:
                     turn["text_ru"] = turn.get("text", "")
             return dialogue_turns
+
+    def translate_single_with_timing(
+        self, text: str, target_duration: float, context: str = ""
+    ) -> str:
+        """
+        Isochronic translation for single-speaker segments.
+        
+        Translates text to fit approximately the target duration when spoken.
+        
+        Args:
+            text: English text to translate
+            target_duration: Target duration in seconds for the spoken result
+            context: Optional context about the video/conversation
+            
+        Returns:
+            Russian translation optimized for target duration
+        """
+        if not text or not text.strip():
+            return text
+        
+        en_word_count = len(text.split())
+        # Target Russian words: ~2.5 words/second
+        target_ru_words = int(target_duration * 2.5)
+        
+        prompt = (
+            "You are a professional DUBBING translator. Your task is ISOCHRONIC translation - "
+            "the Russian voiceover must match the EXACT TIMING of the original English.\n\n"
+            "CRITICAL RULES:\n"
+            f"1. Target duration: {target_duration:.1f} seconds\n"
+            f"2. Russian speech rate: ~2.5 words/second → aim for ~{target_ru_words} Russian words\n"
+            "3. If the target is LONGER than natural translation - EXPAND naturally:\n"
+            "   - Add clarifying phrases\n"
+            "   - Use more descriptive language\n"
+            "   - Add natural filler words (ну, вот, значит, конечно)\n"
+            "4. If the target is SHORTER - keep it concise\n"
+            "5. Maintain the meaning and emotional tone\n"
+            "6. This is for voice dubbing - use natural conversational Russian\n\n"
+        )
+        
+        if context:
+            prompt += f"CONTEXT: {context}\n\n"
+        
+        prompt += (
+            f"ENGLISH TEXT ({en_word_count} words):\n{text}\n\n"
+            f"TARGET: ~{target_ru_words} Russian words to fill {target_duration:.1f} seconds\n\n"
+            "Respond ONLY with the Russian translation, nothing else."
+        )
+        
+        logger.info(
+            "Isochronic single-speaker translation: %.1fs target, %d EN words → ~%d RU words",
+            target_duration, en_word_count, target_ru_words
+        )
+        
+        try:
+            response_json = self.client.chat(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert dubbing translator who matches speech timing precisely. "
+                                   "Respond only with the translation, no explanations.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.4,
+            )
+            response_text = DeepSeekClient.extract_text(response_json)
+            
+            # Clean up response - remove quotes if present
+            translation = response_text.strip().strip('"').strip("'")
+            
+            ru_word_count = len(translation.split())
+            logger.info(
+                "Isochronic translation result: %d RU words (target %d, diff %+d)",
+                ru_word_count, target_ru_words, ru_word_count - target_ru_words
+            )
+            
+            return translation
+            
+        except Exception as exc:
+            logger.error("Isochronic single-speaker translation failed: %s", exc)
+            # Fallback: return original text
+            return text
