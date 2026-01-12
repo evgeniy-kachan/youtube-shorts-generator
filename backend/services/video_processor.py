@@ -1018,12 +1018,14 @@ class VideoProcessor:
         """
         # Debug: log incoming tts timing for each turn
         for idx, turn in enumerate(dialogue):
+            tts_words = turn.get("tts_words", [])
             logger.info(
-                "Subtitle input turn %d: tts_start=%.2f, tts_end=%.2f, tts_dur=%.2f",
+                "Subtitle input turn %d: tts_start=%.2f, tts_end=%.2f, tts_dur=%.2f, tts_words=%d",
                 idx,
                 turn.get("tts_start_offset", -1),
                 turn.get("tts_end_offset", -1),
                 turn.get("tts_duration", -1),
+                len(tts_words),
             )
         
         subtitles: List[Dict] = []
