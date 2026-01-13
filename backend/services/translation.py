@@ -237,10 +237,10 @@ class Translator:
         self, dialogue_turns: list[dict], segment_context: str = ""
     ) -> list[dict]:
         """
-        Second pass translation: isochronic translation with precise timings.
+        Two-stage translation: quality first, then expansion if needed.
         
-        Takes dialogue turns with start/end timestamps and translates each turn
-        to fit approximately the same duration as the original.
+        Stage 1: High-quality translation without timing constraints
+        Stage 2: Expand turns that are too short, maintaining meaning and context
         
         Args:
             dialogue_turns: List of turns with 'speaker', 'text', 'start', 'end'
@@ -252,43 +252,48 @@ class Translator:
         if not dialogue_turns:
             return dialogue_turns
         
-        # Build dialogue representation with timings
+        logger.info("Two-stage translation: %d turns", len(dialogue_turns))
+        
+        # ===== STAGE 1: Quality translation =====
+        dialogue_turns = self._translate_quality_first(dialogue_turns, segment_context)
+        
+        # ===== STAGE 2: Expand short turns =====
+        dialogue_turns = self._expand_short_turns(dialogue_turns, segment_context)
+        
+        return dialogue_turns
+    
+    def _translate_quality_first(
+        self, dialogue_turns: list[dict], segment_context: str = ""
+    ) -> list[dict]:
+        """
+        Stage 1: Translate for quality without timing constraints.
+        """
+        # Build dialogue representation
         dialogue_parts = []
         for i, turn in enumerate(dialogue_turns):
-            start = turn.get("start", 0.0)
-            end = turn.get("end", 0.0)
-            duration = end - start
             text = turn.get("text", "")
             speaker = turn.get("speaker", f"Speaker_{i}")
-            word_count = len(text.split())
             
             dialogue_parts.append(
-                f"Turn {i} [{speaker}] ({duration:.1f}s, {word_count} words):\n"
-                f"  EN: {text}"
+                f"Turn {i} [{speaker}]:\n  EN: {text}"
             )
         
         dialogue_str = "\n\n".join(dialogue_parts)
         
         prompt = (
-            "You are a professional DUBBING translator. Your task is ISOCHRONIC translation - "
-            "the Russian voiceover must match the EXACT TIMING of the original English.\n\n"
-            "CRITICAL RULES:\n"
-            "1. Each turn has a DURATION in seconds. Your Russian translation must be speakable "
-            "in approximately that same time.\n"
-            "2. If a turn is LONG (>10s) - you can EXPAND the translation, add natural phrases.\n"
-            "3. If a turn is SHORT (<3s) - keep it concise.\n"
-            "4. Russian speech rate: ~2.5 words/second. Calculate accordingly.\n"
-            "   Example: 6.0s turn → aim for ~15 Russian words\n"
-            "   Example: 18.0s turn → aim for ~45 Russian words\n"
-            "5. Maintain natural conversational Russian. This is for voice dubbing.\n"
-            "6. Keep the meaning and emotional tone of the original.\n\n"
+            "You are a professional translator specializing in natural, conversational Russian.\n\n"
+            "Translate the following dialogue to Russian:\n"
+            "- Maintain natural conversational flow\n"
+            "- Preserve the exact meaning and tone\n"
+            "- Use clear, precise language (avoid filler words)\n"
+            "- Keep context and coherence between turns\n\n"
         )
         
         if segment_context:
             prompt += f"CONTEXT: {segment_context}\n\n"
         
         prompt += (
-            f"DIALOGUE TO TRANSLATE:\n{dialogue_str}\n\n"
+            f"DIALOGUE:\n{dialogue_str}\n\n"
             "Respond ONLY with valid JSON:\n"
             '{\n  "translations": [\n'
             '    {"turn": 0, "text_ru": "..."},\n'
@@ -297,48 +302,177 @@ class Translator:
             '  ]\n}\n'
         )
         
-        logger.info("Isochronic translation: %d turns", len(dialogue_turns))
+        logger.info("Stage 1: Quality translation for %d turns", len(dialogue_turns))
         
         try:
             response_json = self.client.chat(
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert dubbing translator who matches speech timing precisely.",
+                        "content": "You are an expert translator who produces natural, precise Russian translations. "
+                                   "Focus on quality and meaning, not length.",
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.3,  # Lower temperature for more consistent output
+                temperature=0.3,
             )
             response_text = DeepSeekClient.extract_text(response_json)
             parsed = DeepSeekClient.extract_json(response_text)
             translations = parsed.get("translations", [])
             
-            # Apply translations to turns
+            # Apply translations
             for item in translations:
                 turn_idx = item.get("turn")
                 text_ru = item.get("text_ru", "")
                 if turn_idx is not None and 0 <= turn_idx < len(dialogue_turns):
                     dialogue_turns[turn_idx]["text_ru"] = text_ru
                     
-                    # Log comparison
-                    original = dialogue_turns[turn_idx]
-                    duration = original.get("end", 0) - original.get("start", 0)
-                    en_words = len(original.get("text", "").split())
+                    # Log result
+                    duration = dialogue_turns[turn_idx].get("end", 0) - dialogue_turns[turn_idx].get("start", 0)
                     ru_words = len(text_ru.split())
+                    estimated_duration = ru_words / 2.5  # Russian speech rate
+                    
                     logger.info(
-                        "Turn %d: %.1fs | EN %d words → RU %d words (target ~%d)",
-                        turn_idx, duration, en_words, ru_words, int(duration * 2.5)
+                        "Stage 1 Turn %d: %.1fs target | %d RU words (est. %.1fs) %s",
+                        turn_idx, duration, ru_words, estimated_duration,
+                        "✓" if estimated_duration >= duration * 0.8 else "⚠ SHORT"
                     )
             
             return dialogue_turns
             
         except Exception as exc:
-            logger.error("Isochronic translation failed: %s", exc, exc_info=True)
-            # Fallback: keep original text_ru if exists, or use English
+            logger.error("Stage 1 translation failed: %s", exc, exc_info=True)
             for turn in dialogue_turns:
                 if "text_ru" not in turn:
                     turn["text_ru"] = turn.get("text", "")
+            return dialogue_turns
+    
+    def _expand_short_turns(
+        self, dialogue_turns: list[dict], segment_context: str = ""
+    ) -> list[dict]:
+        """
+        Stage 2: Expand turns that are too short for their target duration.
+        """
+        # Identify turns that need expansion
+        turns_to_expand = []
+        for i, turn in enumerate(dialogue_turns):
+            text_ru = turn.get("text_ru", "")
+            if not text_ru:
+                continue
+            
+            duration = turn.get("end", 0) - turn.get("start", 0)
+            ru_words = len(text_ru.split())
+            estimated_duration = ru_words / 2.5
+            
+            # Need expansion if translation is <80% of target duration
+            if estimated_duration < duration * 0.8 and duration > 2.0:
+                target_words = int(duration * 2.5)
+                missing_words = target_words - ru_words
+                turns_to_expand.append({
+                    "index": i,
+                    "current_ru": text_ru,
+                    "duration": duration,
+                    "current_words": ru_words,
+                    "target_words": target_words,
+                    "missing_words": missing_words,
+                })
+        
+        if not turns_to_expand:
+            logger.info("Stage 2: No turns need expansion")
+            return dialogue_turns
+        
+        logger.info("Stage 2: Expanding %d short turns", len(turns_to_expand))
+        
+        # Build expansion request with context
+        expansion_parts = []
+        for item in turns_to_expand:
+            idx = item["index"]
+            turn = dialogue_turns[idx]
+            
+            # Get context from neighbors
+            prev_text = dialogue_turns[idx - 1].get("text_ru", "") if idx > 0 else ""
+            next_text = dialogue_turns[idx + 1].get("text_ru", "") if idx < len(dialogue_turns) - 1 else ""
+            
+            context_lines = []
+            if prev_text:
+                context_lines.append(f"  Previous: \"{prev_text}\"")
+            context_lines.append(f"  Current: \"{item['current_ru']}\" ({item['current_words']} words)")
+            if next_text:
+                context_lines.append(f"  Next: \"{next_text}\"")
+            
+            expansion_parts.append(
+                f"Turn {idx} (need {item['target_words']} words, have {item['current_words']}):\n" +
+                "\n".join(context_lines)
+            )
+        
+        expansion_str = "\n\n".join(expansion_parts)
+        
+        prompt = (
+            "You are expanding Russian translations to match speech timing.\n\n"
+            "CRITICAL RULES:\n"
+            "1. PRESERVE THE EXACT MEANING - never change the core message\n"
+            "2. Add ONLY:\n"
+            "   - Clarifying details that enhance understanding\n"
+            "   - More descriptive words (e.g. 'видео' → 'видео в реальном времени')\n"
+            "   - Natural transitions between ideas\n"
+            "3. NEVER add filler words (ну, вот, в общем-то)\n"
+            "4. Maintain coherence with previous/next turns\n"
+            "5. Keep the conversational tone natural\n\n"
+        )
+        
+        if segment_context:
+            prompt += f"CONTEXT: {segment_context}\n\n"
+        
+        prompt += (
+            f"TURNS TO EXPAND:\n{expansion_str}\n\n"
+            "Respond ONLY with valid JSON:\n"
+            '{\n  "expansions": [\n'
+            '    {"turn": 0, "text_ru": "expanded version"},\n'
+            '    ...\n'
+            '  ]\n}\n'
+        )
+        
+        try:
+            response_json = self.client.chat(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert at expanding translations while preserving meaning. "
+                                   "Add only meaningful details, never filler words.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.4,
+            )
+            response_text = DeepSeekClient.extract_text(response_json)
+            parsed = DeepSeekClient.extract_json(response_text)
+            expansions = parsed.get("expansions", [])
+            
+            # Apply expansions
+            for item in expansions:
+                turn_idx = item.get("turn")
+                expanded_text = item.get("text_ru", "")
+                if turn_idx is not None and 0 <= turn_idx < len(dialogue_turns):
+                    old_text = dialogue_turns[turn_idx].get("text_ru", "")
+                    dialogue_turns[turn_idx]["text_ru"] = expanded_text
+                    
+                    # Log expansion
+                    old_words = len(old_text.split())
+                    new_words = len(expanded_text.split())
+                    duration = dialogue_turns[turn_idx].get("end", 0) - dialogue_turns[turn_idx].get("start", 0)
+                    target_words = int(duration * 2.5)
+                    
+                    logger.info(
+                        "Stage 2 Turn %d: %d → %d words (target %d) | %.1fs",
+                        turn_idx, old_words, new_words, target_words, duration
+                    )
+                    logger.debug("  Old: %s", old_text)
+                    logger.debug("  New: %s", expanded_text)
+            
+            return dialogue_turns
+            
+        except Exception as exc:
+            logger.error("Stage 2 expansion failed: %s", exc, exc_info=True)
             return dialogue_turns
 
     def translate_single_with_timing(
