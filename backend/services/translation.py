@@ -330,7 +330,9 @@ class Translator:
                     # Log result
                     duration = dialogue_turns[turn_idx].get("end", 0) - dialogue_turns[turn_idx].get("start", 0)
                     ru_words = len(text_ru.split())
-                    estimated_duration = ru_words / 2.5  # Russian speech rate
+                    # ElevenLabs speaks ~1.7 words/sec at speed=1.2, we can speed up 1.2x more
+                    # Effective rate: 1.7 * 1.2 = 2.04 words/sec, use 1.8 for safety margin
+                    estimated_duration = ru_words / 1.8  # Conservative estimate for ElevenLabs
                     
                     logger.info(
                         "Stage 1 Turn %d: %.1fs target | %d RU words (est. %.1fs) %s",
@@ -362,11 +364,13 @@ class Translator:
             
             duration = turn.get("end", 0) - turn.get("start", 0)
             ru_words = len(text_ru.split())
-            estimated_duration = ru_words / 2.5
+            # Use same conservative rate as Stage 1
+            estimated_duration = ru_words / 1.8
             
-            # Need expansion if translation is <80% of target duration
-            if estimated_duration < duration * 0.8 and duration > 2.0:
-                target_words = int(duration * 2.5)
+            # Need expansion if translation is <70% of target duration (very conservative)
+            # With ElevenLabs' slow rate, rarely need expansion
+            if estimated_duration < duration * 0.7 and duration > 3.0:
+                target_words = int(duration * 1.8)
                 missing_words = target_words - ru_words
                 turns_to_expand.append({
                     "index": i,

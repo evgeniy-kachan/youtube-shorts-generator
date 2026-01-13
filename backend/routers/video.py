@@ -762,22 +762,11 @@ def _process_segments_task(
             voice_plan = _build_voice_plan(segments_to_process, voice_mix)
         output_dir = get_output_dir(video_id)
         
-        logger.info(
-            "DIAG: tts_provider=%s, voice_plan=%s, num_segments=%d",
-            tts_provider, "SET" if voice_plan else "NONE", len(segments_to_process)
-        )
-        
         for segment in segments_to_process:
             audio_path = os.path.join(output_dir, f"{segment['id']}.wav")
             
             # Check if we have a dialogue structure for multi-speaker synthesis
             has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
-            dialogue_len = len(segment.get('dialogue') or [])
-            
-            logger.info(
-                "DIAG: segment=%s, has_dialogue=%s, dialogue_len=%d, voice_plan=%s",
-                segment['id'], has_dialogue, dialogue_len, "SET" if voice_plan else "NONE"
-            )
             
             if has_dialogue and voice_plan:
                 # Debug: check if words are present
@@ -919,10 +908,10 @@ def _process_segments_task(
 
             # Tempo adjustment for audio that's too long
             # - Single-speaker: allow up to 4x tempo (more aggressive)
-            # - Multi-speaker: limit to 1.2x (ElevenLabs-like, preserves voice quality)
+            # - Multi-speaker: limit to 1.4x (combined with ElevenLabs 1.2x = 1.68x total)
             if audio_duration > original_duration + 0.2:
                 before_duration = audio_duration
-                max_tempo = 1.2 if has_dialogue else 4.0  # Voice-safe limit for dialogue
+                max_tempo = 1.4 if has_dialogue else 4.0  # Voice-safe limit for dialogue
                 
                 logger.info(
                     "Applying tempo adjustment for %s: %.2fs -> %.2fs (max_tempo=%.1f)%s",
