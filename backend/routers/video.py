@@ -285,6 +285,91 @@ def _scale_dialogue_offsets(dialogue: list[dict] | None, scale: float) -> None:
         )
 
 
+def _split_words_by_pauses(words: list[dict], pause_threshold: float = 0.4) -> list[list[dict]]:
+    """
+    Split word-level timestamps into phrases based on pauses.
+    
+    Args:
+        words: List of word dicts with 'word', 'start', 'end' keys
+        pause_threshold: Minimum pause duration (seconds) to split on
+        
+    Returns:
+        List of phrase groups (each phrase is a list of words)
+    """
+    if not words:
+        return []
+    
+    phrases = []
+    current_phrase = []
+    
+    for i, word in enumerate(words):
+        current_phrase.append(word)
+        
+        # Check if there's a pause after this word
+        if i < len(words) - 1:
+            current_end = word.get("end", 0)
+            next_start = words[i + 1].get("start", 0)
+            pause_duration = next_start - current_end
+            
+            if pause_duration >= pause_threshold:
+                # Significant pause detected - end current phrase
+                phrases.append(current_phrase)
+                current_phrase = []
+    
+    # Add final phrase if not empty
+    if current_phrase:
+        phrases.append(current_phrase)
+    
+    return phrases
+
+
+def _create_pseudo_dialogue_from_words(
+    words: list[dict],
+    speaker: str,
+    segment_start: float,
+    pause_threshold: float = 0.4,
+) -> list[dict]:
+    """
+    Create pseudo-dialogue structure from word timestamps by detecting pauses.
+    
+    This allows single-speaker segments to be processed like multi-speaker dialogue,
+    preserving natural pauses in speech.
+    
+    Args:
+        words: List of word dicts with 'word', 'start', 'end' keys
+        speaker: Speaker ID for all turns
+        segment_start: Start time of the segment (for absolute timing)
+        pause_threshold: Minimum pause duration to create new turn
+        
+    Returns:
+        List of dialogue turns with 'speaker', 'text', 'start', 'end', 'words'
+    """
+    phrases = _split_words_by_pauses(words, pause_threshold)
+    
+    if not phrases:
+        return []
+    
+    dialogue = []
+    for phrase_words in phrases:
+        if not phrase_words:
+            continue
+        
+        # Extract text and timing from phrase
+        text = " ".join(w.get("word", "").strip() for w in phrase_words).strip()
+        start = phrase_words[0].get("start", 0)
+        end = phrase_words[-1].get("end", 0)
+        
+        dialogue.append({
+            "speaker": speaker,
+            "text": text,
+            "start": start,
+            "end": end,
+            "words": phrase_words,
+        })
+    
+    return dialogue
+
+
 def _refine_turn_boundaries(dialogue: list[dict] | None) -> None:
     """
     Refine turn start/end times using word-level timestamps from WhisperX.
@@ -719,76 +804,96 @@ def _process_segments_task(
                     base_start=segment.get('start_time'),
                 )
             else:
-                # Single speaker fallback (or no dialogue structure)
-                original_text = segment.get('text') or segment.get('text_en') or ''
-                tts_text = segment.get('text_ru_tts') or segment.get('text_ru')
-                
-                # Calculate target duration for isochronic translation
+                # Single speaker - split by pauses to preserve natural rhythm
+                segment_words = segment.get('words') or []
+                speaker_chain = segment.get('speakers') or []
+                primary_speaker = speaker_chain[0] if speaker_chain else "SPEAKER_0"
                 segment_start = float(segment.get('start_time', 0))
-                segment_end = float(segment.get('end_time', 0))
-                target_duration = max(0.5, segment_end - segment_start)
                 
-                # Apply isochronic translation if we have original English text
-                if original_text and target_duration > 1.0:
-                    try:
-                        from backend.services.translation import Translator
-                        translator = Translator()
-                        logger.info(
-                            "Running isochronic translation for single-speaker %s (%.1fs)",
-                            segment['id'], target_duration
-                        )
-                        tts_text = translator.translate_single_with_timing(
-                            text=original_text,
-                            target_duration=target_duration,
-                            context=segment.get('title', ''),
-                        )
-                        segment['text_ru'] = tts_text
-                        segment['text_ru_tts'] = tts_text
-                    except Exception as trans_exc:
-                        logger.warning(
-                            "Isochronic translation failed for single-speaker %s: %s",
-                            segment['id'], trans_exc
-                        )
-                
-                voice_override = None
-                if voice_plan:
-                    speaker_chain = segment.get('speakers') or []
-                    primary_speaker = speaker_chain[0] if speaker_chain else None
-                    voice_override = voice_plan.get(primary_speaker) or voice_plan.get("__default__")
-                
-                # Pass target_duration to ElevenLabs for speed control
-                _, tts_words = tts_service.synthesize_and_save(
-                    tts_text, audio_path, 
-                    speaker=voice_override,
-                    target_duration=target_duration,
-                )
-                
-                # Create pseudo-dialogue structure with word timestamps for single speaker
-                if tts_words:
-                    # Get audio duration for tts_end_offset
-                    try:
-                        temp_audio = AudioSegment.from_file(audio_path)
-                        single_audio_duration = temp_audio.duration_seconds or 0.0
-                    except Exception:
-                        single_audio_duration = tts_words[-1]["end"] if tts_words else 0.0
-                    
-                    pseudo_dialogue = [{
-                        "speaker": primary_speaker or "SPEAKER_0",
-                        "text": tts_text,
-                        "text_ru": tts_text,
-                        "tts_start_offset": 0.0,
-                        "tts_end_offset": single_audio_duration,
-                        "tts_duration": single_audio_duration,
-                        "tts_words": tts_words,
-                    }]
-                    segment['dialogue'] = pseudo_dialogue
+                if segment_words:
+                    # Create pseudo-dialogue by detecting pauses (like multi-speaker)
                     logger.info(
-                        "Created pseudo-dialogue for single-speaker %s with %d tts_words (%.2f-%.2fs, target=%.2fs)",
-                        segment['id'], len(tts_words),
-                        tts_words[0]["start"] if tts_words else 0,
-                        tts_words[-1]["end"] if tts_words else 0,
-                        target_duration,
+                        "Splitting single-speaker %s into pseudo-turns by pauses (%d words)",
+                        segment['id'], len(segment_words)
                     )
+                    pseudo_dialogue = _create_pseudo_dialogue_from_words(
+                        words=segment_words,
+                        speaker=primary_speaker,
+                        segment_start=segment_start,
+                        pause_threshold=0.4,  # 400ms pause = new turn
+                    )
+                    
+                    if pseudo_dialogue:
+                        segment['dialogue'] = pseudo_dialogue
+                        logger.info(
+                            "Created %d pseudo-turns for single-speaker %s (preserving pauses)",
+                            len(pseudo_dialogue), segment['id']
+                        )
+                        
+                        # Now process exactly like multi-speaker
+                        has_dialogue = True
+                        
+                        # Refine boundaries
+                        _refine_turn_boundaries(segment['dialogue'])
+                        
+                        # Apply isochronic translation per turn
+                        try:
+                            translator = Translator()
+                            logger.info(f"Running isochronic translation for single-speaker {segment['id']} ({len(pseudo_dialogue)} turns)")
+                            segment['dialogue'] = translator.translate_with_timings(
+                                dialogue_turns=segment['dialogue'],
+                                segment_context=segment.get('title', ''),
+                            )
+                        except Exception as trans_exc:
+                            logger.warning("Isochronic translation failed for single-speaker: %s", trans_exc)
+                        
+                        # Synthesize with TTD (preserves pauses)
+                        logger.info(f"Synthesizing single-speaker dialogue for {segment['id']}")
+                        tts_service.synthesize_dialogue(
+                            dialogue_turns=segment['dialogue'],
+                            output_path=audio_path,
+                            voice_map=voice_plan or {primary_speaker: tts_service.voice_id},
+                            base_start=segment.get('start_time'),
+                        )
+                    else:
+                        logger.warning("Failed to create pseudo-dialogue for %s, falling back to simple synthesis", segment['id'])
+                        has_dialogue = False
+                
+                # Fallback: if no words available, use old single-block approach
+                if not has_dialogue:
+                    logger.info("Using fallback single-block synthesis for %s", segment['id'])
+                    tts_text = segment.get('text_ru_tts') or segment.get('text_ru') or segment.get('text', '')
+                    
+                    voice_override = None
+                    if voice_plan:
+                        voice_override = voice_plan.get(primary_speaker) or voice_plan.get("__default__")
+                    
+                    segment_end = float(segment.get('end_time', 0))
+                    target_duration = max(0.5, segment_end - segment_start)
+                    
+                    _, tts_words = tts_service.synthesize_and_save(
+                        tts_text, audio_path,
+                        speaker=voice_override,
+                        target_duration=target_duration,
+                    )
+                    
+                    # Create minimal pseudo-dialogue for compatibility
+                    if tts_words:
+                        try:
+                            temp_audio = AudioSegment.from_file(audio_path)
+                            single_audio_duration = temp_audio.duration_seconds or 0.0
+                        except Exception:
+                            single_audio_duration = tts_words[-1]["end"] if tts_words else 0.0
+                        
+                        segment['dialogue'] = [{
+                            "speaker": primary_speaker,
+                            "text": tts_text,
+                            "text_ru": tts_text,
+                            "tts_start_offset": 0.0,
+                            "tts_end_offset": single_audio_duration,
+                            "tts_duration": single_audio_duration,
+                            "tts_words": tts_words,
+                        }]
             
             segment['audio_path'] = audio_path
             try:
