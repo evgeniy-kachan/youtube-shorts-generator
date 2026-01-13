@@ -1268,20 +1268,9 @@ class ElevenLabsTTSService(BaseTTSService):
         all_words: list[dict] = []
         voice_override = speaker or self.voice_id
         
-        # Calculate speed based on target duration (ElevenLabs native speed control)
+        # Speed adjustment is handled by FFmpeg tempo in video.py (0.7-1.4x range)
+        # ElevenLabs speed parameter is unreliable, so we generate at natural speed
         speed = 1.0
-        if target_duration and target_duration > 0:
-            # Estimate natural duration: ~2.5 words/sec for Russian
-            word_count = len(clean_text.split())
-            estimated_duration = max(0.5, word_count / 2.5)
-            speed = estimated_duration / target_duration
-            # ElevenLabs supports 0.7-1.2
-            speed = max(0.7, min(1.2, speed))
-            if abs(speed - 1.0) > 0.05:
-                logger.info(
-                    "ElevenLabs: using speed=%.2f (estimated %.1fs → target %.1fs)",
-                    speed, estimated_duration, target_duration
-                )
 
         # Track cumulative duration for multi-chunk word timestamp adjustment
         cumulative_duration = 0.0
@@ -1574,11 +1563,10 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         return text
 
-    def _calculate_dialogue_speed(self, dialogue_turns: list[dict]) -> float:
+    def _log_dialogue_timeline(self, dialogue_turns: list[dict]) -> None:
         """
-        Calculate unified speed for entire dialogue based on original vs translated duration.
-        
-        Returns speed multiplier (0.7-1.2) to fit Russian translation into original timeline.
+        Log timeline comparison between original and translated dialogue for debugging.
+        Speed adjustment is handled by FFmpeg tempo in video.py.
         """
         # Log full timeline for debugging
         logger.info("=" * 70)
@@ -1618,32 +1606,23 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         logger.info("-" * 70)
         
         if total_original_duration <= 0 or total_translated_words <= 0:
-            logger.info("TTD: No valid durations, using speed=1.0")
-            return 1.0
+            logger.info("TTD: No valid durations for timeline comparison")
+            return
         
-        # Estimate natural duration for Russian at ~2.5 words/sec
-        estimated_natural_duration = total_translated_words / 2.5
+        # Estimate natural duration for Russian at ~1.8 words/sec (ElevenLabs actual rate)
+        estimated_natural_duration = total_translated_words / 1.8
         
-        # Speed = how much to speed up/slow down
-        # If RU takes longer than original → speed > 1.0 to compress
-        # If RU takes shorter than original → speed < 1.0 to expand
-        # Formula: speed = natural_duration / target_duration
-        # 
-        # Also compensate for TTD's natural inter-speaker pauses (~10%)
-        target_duration = total_original_duration * 0.90  # Reserve 10% for TTD pauses
-        
-        speed = estimated_natural_duration / target_duration
-        
-        # Clamp to ElevenLabs range (0.7-1.2)
-        clamped_speed = max(0.7, min(1.2, speed))
+        # Calculate what FFmpeg tempo will need to apply
+        required_tempo = estimated_natural_duration / total_original_duration
         
         logger.info(
-            "TTD TOTAL: %d RU words | Original: %.1fs | RU natural: %.1fs | Speed: %.2f (clamped: %.2f)",
-            total_translated_words, total_original_duration, estimated_natural_duration, speed, clamped_speed
+            "TTD TOTAL: %d RU words | Original: %.1fs | Est. generated: %.1fs | Required tempo: %.2fx",
+            total_translated_words, total_original_duration, estimated_natural_duration, required_tempo
         )
+        if required_tempo > 1.4:
+            logger.warning("TTD: Audio will be clamped to 1.4x tempo (%.1fs extra)", 
+                          estimated_natural_duration - total_original_duration * 1.4)
         logger.info("=" * 70)
-        
-        return clamped_speed
 
     def _calculate_gaps(self, dialogue_turns: list[dict]) -> list[float]:
         """
@@ -1772,9 +1751,11 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         Returns:
             Path to the saved audio file
         """
-        # Calculate unified speed for entire dialogue (maintains consistent rhythm)
-        speed = self._calculate_dialogue_speed(dialogue_turns)
+        # Log timeline info for debugging (speed adjustment is handled by FFmpeg in video.py)
+        self._log_dialogue_timeline(dialogue_turns)
         
+        # Generate at natural speed - FFmpeg tempo 0.7-1.4x will adjust in video.py
+        speed = 1.0
         inputs, gaps = self._prepare_ttd_inputs(dialogue_turns, voice_map, add_emotions, speed=speed)
         
         if not inputs:
