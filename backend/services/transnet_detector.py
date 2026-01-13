@@ -354,7 +354,7 @@ class TransNetV2Detector:
     def __init__(
         self,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
-        threshold: float = 0.10,  # Ultra-sensitive to catch subtle scene changes
+        threshold: float = 0.05,  # Very low threshold to catch camera switches
     ):
         """
         Initialize TransNetV2 detector.
