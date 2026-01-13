@@ -12,8 +12,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Temporarily suppress verbose face detection logs (set to INFO to re-enable)
-logger.setLevel(logging.WARNING)
+# Face detection logs enabled for debugging crop issues
+logger.setLevel(logging.INFO)
 
 
 class SimpleTracker:

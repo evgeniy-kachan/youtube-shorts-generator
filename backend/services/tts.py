@@ -1387,7 +1387,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         # Log segment ranges for debugging
         for sr in segment_ranges:
-            logger.info(
+            logger.debug(
                 "TTD voice_segment: input_idx=%d, char_range=[%d, %d)",
                 sr["input_idx"], sr["char_start"], sr["char_end"]
             )
@@ -1461,9 +1461,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     "end": word_end,
                 })
         
-        # Log parsed words count and first words of each input
+        # Log parsed words count (debug level for detailed logs)
         total_words = sum(len(w) for w in words_by_input.values())
-        logger.info(
+        logger.debug(
             "TTD parsed %d words from alignment across %d inputs",
             total_words,
             len(words_by_input),
@@ -1473,7 +1473,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         for input_idx, words in sorted(words_by_input.items()):
             first_words = [w["word"] for w in words[:3]]
             last_words = [w["word"] for w in words[-2:]] if len(words) > 3 else []
-            logger.info(
+            logger.debug(
                 "TTD input %d: %d words, first=[%s], last=[%s]",
                 input_idx,
                 len(words),
@@ -1571,9 +1571,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         Speed adjustment is handled by FFmpeg tempo in video.py.
         """
         # Log full timeline for debugging
-        logger.info("=" * 70)
-        logger.info("TTD TIMELINE COMPARISON")
-        logger.info("=" * 70)
+        logger.debug("=" * 70)
+        logger.debug("TTD TIMELINE COMPARISON")
+        logger.debug("=" * 70)
         
         total_original_duration = 0.0
         total_translated_words = 0
@@ -1593,22 +1593,22 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             # Estimate natural duration for Russian (2.5 words/sec)
             est_ru_duration = words_ru / 2.5 if words_ru > 0 else 0.0
             
-            logger.info(
+            logger.debug(
                 "Turn %d [%s] %.1f-%.1fs (%.1fs):",
                 idx, speaker, start, end, duration
             )
-            logger.info("  EN (%d words): %s", words_en, text_en[:80] + ("..." if len(text_en) > 80 else ""))
-            logger.info("  RU (%d words): %s", words_ru, text_ru[:80] + ("..." if len(text_ru) > 80 else ""))
-            logger.info("  Original: %.1fs | RU natural: %.1fs | Diff: %+.1fs", duration, est_ru_duration, est_ru_duration - duration)
+            logger.debug("  EN (%d words): %s", words_en, text_en[:80] + ("..." if len(text_en) > 80 else ""))
+            logger.debug("  RU (%d words): %s", words_ru, text_ru[:80] + ("..." if len(text_ru) > 80 else ""))
+            logger.debug("  Original: %.1fs | RU natural: %.1fs | Diff: %+.1fs", duration, est_ru_duration, est_ru_duration - duration)
             
             if duration > 0:
                 total_original_duration += duration
             total_translated_words += words_ru
         
-        logger.info("-" * 70)
+        logger.debug("-" * 70)
         
         if total_original_duration <= 0 or total_translated_words <= 0:
-            logger.info("TTD: No valid durations for timeline comparison")
+            logger.debug("TTD: No valid durations for timeline comparison")
             return
         
         # Estimate natural duration for Russian at ~1.8 words/sec (ElevenLabs actual rate)
@@ -1617,14 +1617,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         # Calculate what FFmpeg tempo will need to apply
         required_tempo = estimated_natural_duration / total_original_duration
         
-        logger.info(
+        logger.debug(
             "TTD TOTAL: %d RU words | Original: %.1fs | Est. generated: %.1fs | Required tempo: %.2fx",
             total_translated_words, total_original_duration, estimated_natural_duration, required_tempo
         )
         if required_tempo > 1.4:
             logger.warning("TTD: Audio will be clamped to 1.4x tempo (%.1fs extra)", 
                           estimated_natural_duration - total_original_duration * 1.4)
-        logger.info("=" * 70)
+        logger.debug("=" * 70)
 
     def _calculate_gaps(self, dialogue_turns: list[dict]) -> list[float]:
         """
@@ -1772,17 +1772,16 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             list(set(inp["voice_id"] for inp in inputs)),
         )
         
-        # Log the inputs for debugging
+        # Log the inputs for debugging (debug level)
         for idx, inp in enumerate(inputs):
             vs = inp.get("voice_settings", {})
             speed_val = vs.get("speed", 1.0) if vs else 1.0
-            logger.info(
+            logger.debug(
                 "TTD input %d: voice=%s, speed=%.2f, text=%s",
                 idx, inp["voice_id"], speed_val, inp["text"][:60]
             )
         
         # Make TTD API request with timestamps for precise subtitle sync
-        # Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert-with-timestamps
         url = f"{self.base_url}/text-to-dialogue/with-timestamps"
         headers = {
             "xi-api-key": self.api_key,
@@ -1793,10 +1792,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             "inputs": inputs,  # Array of {text, voice_id, voice_settings}
             "output_format": "mp3_44100_128",  # High quality
         }
-        
-        # Log full payload for debugging
-        import json
-        logger.info("TTD payload: %s", json.dumps(payload, ensure_ascii=False, indent=None)[:500])
         
         voice_segments = []  # Will hold timing info from API
         
@@ -1952,7 +1947,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         tts_words[-1]["end"] if tts_words else 0,
                     )
                 
-                logger.info(
+                logger.debug(
                     "TTD subtitle turn %d: %.2f-%.2fs (%.2fs, %d words) [from API]",
                     idx,
                     turn["tts_start_offset"],
