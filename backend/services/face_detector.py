@@ -720,7 +720,7 @@ class FaceDetector:
     
     # Face-jump detection constants
     FACE_JUMP_SAMPLE_INTERVAL = 1.5  # Sample face position every 1.5 seconds
-    FACE_JUMP_THRESHOLD = 0.25  # 25% position change = camera switch
+    FACE_JUMP_THRESHOLD = 0.15  # 15% position change = camera switch (lowered from 25%)
     MIN_SUBSCENE_DURATION = 2.0  # Minimum duration for a sub-scene (seconds)
     
     def _detect_face_jumps(
