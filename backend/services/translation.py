@@ -415,9 +415,8 @@ class Translator:
             "   - Clarifying details that enhance understanding\n"
             "   - More descriptive words (e.g. 'видео' → 'видео в реальном времени')\n"
             "   - Natural transitions between ideas\n"
-            "3. NEVER add filler words (ну, вот, в общем-то)\n"
-            "4. Maintain coherence with previous/next turns\n"
-            "5. Keep the conversational tone natural\n\n"
+            "3. Maintain coherence with previous/next turns\n"
+            "4. Keep the conversational tone natural\n\n"
         )
         
         if segment_context:
@@ -438,7 +437,7 @@ class Translator:
                     {
                         "role": "system",
                         "content": "You are an expert at expanding translations while preserving meaning. "
-                                   "Add only meaningful details, never filler words.",
+                                   "Add only meaningful details.",
                     },
                     {"role": "user", "content": prompt},
                 ],
