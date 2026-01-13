@@ -424,38 +424,46 @@ def _speed_match_audio_duration(
     audio_path: str,
     current_duration: float,
     target_duration: float,
-    max_tempo: float = 4.0,
+    max_tempo: float = 1.4,
+    min_tempo: float = 0.7,
 ) -> bool:
     """
-    Use ffmpeg atempo filters to speed up (shorten) an audio track so it fits within
-    the visual segment duration, keeping pitch natural.
+    Use ffmpeg atempo filters to adjust audio duration to match target.
     
     Args:
         audio_path: Path to audio file to modify
         current_duration: Current audio duration in seconds
         target_duration: Target duration to match
-        max_tempo: Maximum tempo multiplier (default 4.0, use 1.2 for voice-safe limits)
+        max_tempo: Maximum tempo (speed up limit, default 1.4)
+        min_tempo: Minimum tempo (slow down limit, default 0.7)
     """
     if not audio_path or current_duration <= 0 or target_duration <= 0:
         return False
 
     tempo = current_duration / target_duration
-    if tempo <= 1.02:
-        return False  # difference is negligible
     
-    # Clamp tempo to max allowed (for voice quality)
-    if tempo > max_tempo:
+    # Skip if difference is negligible (within 2%)
+    if 0.98 <= tempo <= 1.02:
+        return False
+    
+    # Clamp tempo to allowed range (for voice quality)
+    original_tempo = tempo
+    tempo = max(min_tempo, min(max_tempo, tempo))
+    
+    if abs(tempo - original_tempo) > 0.01:
         logger.info(
-            "Clamping tempo from %.2f to %.2f for %s (voice-safe limit)",
+            "Clamping tempo from %.2f to %.2f for %s (voice-safe range: %.1f-%.1fx)",
+            original_tempo,
             tempo,
-            max_tempo,
             audio_path,
+            min_tempo,
+            max_tempo,
         )
-        tempo = max_tempo
     
-    if tempo > 4.0:
+    # Hard limit safety check
+    if tempo > 4.0 or tempo < 0.5:
         logger.warning(
-            "Skipping tempo adjustment for %s (tempo=%.2f exceeds hard limit).",
+            "Skipping tempo adjustment for %s (tempo=%.2f outside hard limits 0.5-4.0).",
             audio_path,
             tempo,
         )
@@ -466,10 +474,21 @@ def _speed_match_audio_duration(
         audio_stream = ffmpeg.input(audio_path).audio
         filters: list[float] = []
         remaining = tempo
-        while remaining > 2.0:
-            filters.append(2.0)
-            remaining /= 2.0
-        filters.append(remaining)
+        
+        # FFmpeg atempo filter range: 0.5 - 2.0
+        # For values outside this range, chain multiple filters
+        if remaining > 1.0:
+            # Speed up: chain 2.0x filters until remaining < 2.0
+            while remaining > 2.0:
+                filters.append(2.0)
+                remaining /= 2.0
+            filters.append(remaining)
+        else:
+            # Slow down: chain 0.5x filters until remaining > 0.5
+            while remaining < 0.5:
+                filters.append(0.5)
+                remaining /= 0.5
+            filters.append(remaining)
 
         for factor in filters:
             audio_stream = audio_stream.filter("atempo", factor)
@@ -487,9 +506,11 @@ def _speed_match_audio_duration(
             .run(quiet=True, capture_stdout=True, capture_stderr=True)
         )
         os.replace(temp_path, audio_path)
+        action = "sped up" if tempo > 1.0 else "slowed down"
         logger.info(
-            "Compressed audio %s by tempo %.2f to match target duration %.2fs",
+            "Audio %s %s by tempo %.2f to match target duration %.2fs",
             audio_path,
+            action,
             tempo,
             target_duration,
         )
@@ -906,23 +927,21 @@ def _process_segments_task(
 
             original_duration = max(0.1, float(segment.get('end_time', 0)) - float(segment.get('start_time', 0)))
 
-            # Tempo adjustment for audio that's too long
-            # - Single-speaker: allow up to 4x tempo (more aggressive)
-            # - Multi-speaker: limit to 1.6x (ElevenLabs speed param seems ineffective for TTD)
-            if audio_duration > original_duration + 0.2:
+            # Tempo adjustment: keep audio within 0.7x-1.4x of original duration
+            # This maintains voice quality while allowing reasonable sync adjustments
+            duration_diff = abs(audio_duration - original_duration)
+            if duration_diff > 0.2:  # More than 200ms difference
                 before_duration = audio_duration
-                max_tempo = 1.6 if has_dialogue else 4.0  # Voice-safe limit for dialogue
                 
                 logger.info(
-                    "Applying tempo adjustment for %s: %.2fs -> %.2fs (max_tempo=%.1f)%s",
+                    "Applying tempo adjustment for %s: %.2fs -> %.2fs (range: 0.7x-1.4x)%s",
                     segment['id'],
                     audio_duration,
                     original_duration,
-                    max_tempo,
                     " [multi-speaker]" if has_dialogue else "",
                 )
                 
-                if _speed_match_audio_duration(audio_path, audio_duration, original_duration, max_tempo=max_tempo):
+                if _speed_match_audio_duration(audio_path, audio_duration, original_duration, max_tempo=1.4, min_tempo=0.7):
                     try:
                         audio_segment = AudioSegment.from_file(audio_path)
                         audio_duration = audio_segment.duration_seconds or original_duration
