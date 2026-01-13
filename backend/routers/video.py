@@ -908,10 +908,10 @@ def _process_segments_task(
 
             # Tempo adjustment for audio that's too long
             # - Single-speaker: allow up to 4x tempo (more aggressive)
-            # - Multi-speaker: limit to 1.4x (combined with ElevenLabs 1.2x = 1.68x total)
+            # - Multi-speaker: limit to 1.6x (ElevenLabs speed param seems ineffective for TTD)
             if audio_duration > original_duration + 0.2:
                 before_duration = audio_duration
-                max_tempo = 1.4 if has_dialogue else 4.0  # Voice-safe limit for dialogue
+                max_tempo = 1.6 if has_dialogue else 4.0  # Voice-safe limit for dialogue
                 
                 logger.info(
                     "Applying tempo adjustment for %s: %.2fs -> %.2fs (max_tempo=%.1f)%s",
