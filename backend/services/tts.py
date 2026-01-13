@@ -1062,13 +1062,14 @@ class ElevenLabsTTSService(BaseTTSService):
             "Accept": "audio/mpeg",
             "Content-Type": "application/json",
         }
-        # Clamp speed to ElevenLabs supported range
-        clamped_speed = max(0.7, min(1.2, speed))
-        voice_settings_with_speed = {**self.voice_settings, "speed": clamped_speed}
+        # Only add speed if different from default (1.0) - we use FFmpeg for tempo adjustment
+        voice_settings_final = {**self.voice_settings}
+        if abs(speed - 1.0) > 0.02:
+            voice_settings_final["speed"] = max(0.7, min(1.2, speed))
         payload = {
             "text": text,
             "model_id": self.model_id,
-            "voice_settings": voice_settings_with_speed,
+            "voice_settings": voice_settings_final,
         }
 
         try:
@@ -1122,13 +1123,14 @@ class ElevenLabsTTSService(BaseTTSService):
             "xi-api-key": self.api_key,
             "Content-Type": "application/json",
         }
-        # Clamp speed to ElevenLabs supported range
-        clamped_speed = max(0.7, min(1.2, speed))
-        voice_settings_with_speed = {**self.voice_settings, "speed": clamped_speed}
+        # Only add speed if different from default (1.0) - we use FFmpeg for tempo adjustment
+        voice_settings_final = {**self.voice_settings}
+        if abs(speed - 1.0) > 0.02:
+            voice_settings_final["speed"] = max(0.7, min(1.2, speed))
         payload = {
             "text": text,
             "model_id": self.model_id,
-            "voice_settings": voice_settings_with_speed,
+            "voice_settings": voice_settings_final,
         }
 
         try:
