@@ -757,6 +757,11 @@ class FaceDetector:
         # Sample face positions throughout the scene
         samples: list[tuple[float, float]] = []  # (time, position)
         
+        logger.info(
+            "Face-jump sampling scene [%.2f-%.2f]s (%.1fs duration, interval=%.1fs)",
+            scene_start, scene_end, scene_duration, self.FACE_JUMP_SAMPLE_INTERVAL
+        )
+        
         sample_time = scene_start
         while sample_time < scene_end:
             frame_idx = int(sample_time * fps)
@@ -777,6 +782,14 @@ class FaceDetector:
                     best_face = max(faces, key=lambda f: f.get("score", 0) * f.get("area", 0))
                     position = best_face["center_x"] / frame_width
                     samples.append((sample_time, position))
+                    logger.info(
+                        "  Sample at %.2fs: face at %.1f%% (center_x=%.0f, frame_width=%d)",
+                        sample_time, position * 100, best_face["center_x"], frame_width
+                    )
+                else:
+                    logger.info("  Sample at %.2fs: no faces found", sample_time)
+            else:
+                logger.info("  Sample at %.2fs: frame read failed", sample_time)
             
             sample_time += self.FACE_JUMP_SAMPLE_INTERVAL
         
