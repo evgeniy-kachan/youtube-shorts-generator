@@ -718,6 +718,95 @@ class FaceDetector:
     NUM_DETECTIONS_PER_SCENE = 15  # 15 SCRFD detections spread EVENLY across entire scene
     CROP_WIDTH_PX = 1080  # Target crop width for 9:16 vertical video
     
+    # Face-jump detection constants
+    FACE_JUMP_SAMPLE_INTERVAL = 1.5  # Sample face position every 1.5 seconds
+    FACE_JUMP_THRESHOLD = 0.25  # 25% position change = camera switch
+    MIN_SUBSCENE_DURATION = 2.0  # Minimum duration for a sub-scene (seconds)
+    
+    def _detect_face_jumps(
+        self,
+        capture: cv2.VideoCapture,
+        scene_start: float,
+        scene_end: float,
+        fps: float,
+        frame_width: int,
+    ) -> list[float]:
+        """
+        Detect camera switches within a scene by tracking face position jumps.
+        
+        TransNetV2 misses camera switches in interviews where both shots have
+        similar lighting/background. This function detects them by sampling
+        face position and finding sudden jumps (>25%).
+        
+        Args:
+            capture: OpenCV video capture (already opened)
+            scene_start: Scene start time in seconds
+            scene_end: Scene end time in seconds
+            fps: Video frame rate
+            frame_width: Video frame width in pixels
+            
+        Returns:
+            List of timestamps where face position jumps were detected
+        """
+        scene_duration = scene_end - scene_start
+        
+        # Skip short scenes
+        if scene_duration < self.MIN_SUBSCENE_DURATION * 2:
+            return []
+        
+        # Sample face positions throughout the scene
+        samples: list[tuple[float, float]] = []  # (time, position)
+        
+        sample_time = scene_start
+        while sample_time < scene_end:
+            frame_idx = int(sample_time * fps)
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = capture.read()
+            
+            if ok and frame is not None:
+                faces = self._detect_faces(frame)
+                # Filter tiny faces
+                faces = [
+                    f for f in faces
+                    if f.get("w", 0) >= self.MIN_FACE_WIDTH_PX
+                    and f.get("area", 0) >= 0.0005 * f.get("width", 1) * f.get("height", 1)
+                ]
+                
+                if faces:
+                    # Use the largest face (highest score or largest area)
+                    best_face = max(faces, key=lambda f: f.get("score", 0) * f.get("area", 0))
+                    position = best_face["center_x"] / frame_width
+                    samples.append((sample_time, position))
+            
+            sample_time += self.FACE_JUMP_SAMPLE_INTERVAL
+        
+        if len(samples) < 2:
+            return []
+        
+        # Find jumps between consecutive samples
+        jump_times: list[float] = []
+        
+        for i in range(1, len(samples)):
+            prev_time, prev_pos = samples[i - 1]
+            curr_time, curr_pos = samples[i]
+            
+            jump = abs(curr_pos - prev_pos)
+            
+            if jump >= self.FACE_JUMP_THRESHOLD:
+                # Jump detected! Place boundary between samples
+                boundary_time = (prev_time + curr_time) / 2
+                
+                # Ensure minimum duration for sub-scenes
+                if boundary_time - scene_start >= self.MIN_SUBSCENE_DURATION and \
+                   scene_end - boundary_time >= self.MIN_SUBSCENE_DURATION:
+                    jump_times.append(boundary_time)
+                    logger.info(
+                        "Face-jump detected at %.2fs: %.1f%% -> %.1f%% (jump=%.1f%%)",
+                        boundary_time, prev_pos * 100, curr_pos * 100, jump * 100
+                    )
+        
+        return jump_times
+    
     def build_focus_timeline(
         self,
         video_path: str,
@@ -776,6 +865,34 @@ class FaceDetector:
             len(scene_boundaries) - 1,
             [f"{t:.2f}s" for t in scene_boundaries]
         )
+        
+        # ============================================================
+        # STEP 1.5: Face-jump detection within each TransNetV2 scene
+        # TransNetV2 misses camera switches in interviews (similar lighting/bg)
+        # Face-jump detects them by tracking face position changes
+        # ============================================================
+        additional_boundaries: list[float] = []
+        for i in range(len(scene_boundaries) - 1):
+            scene_start = scene_boundaries[i]
+            scene_end = scene_boundaries[i + 1]
+            
+            # Only check scenes longer than minimum threshold
+            if scene_end - scene_start > self.MIN_SUBSCENE_DURATION * 2:
+                face_jumps = self._detect_face_jumps(
+                    capture, scene_start, scene_end, fps, frame_width
+                )
+                additional_boundaries.extend(face_jumps)
+        
+        # Merge and sort all boundaries
+        if additional_boundaries:
+            all_boundaries = sorted(set(scene_boundaries + additional_boundaries))
+            logger.info(
+                "Face-jump: added %d boundaries, total %d scenes: %s",
+                len(additional_boundaries),
+                len(all_boundaries) - 1,
+                [f"{t:.2f}s" for t in all_boundaries]
+            )
+            scene_boundaries = all_boundaries
         
         # ============================================================
         # STEP 2: For each scene, do 7 consecutive detections at START
