@@ -1,5 +1,6 @@
 """Video processing service for cutting, adding audio and subtitles."""
 import os
+import re
 import ffmpeg
 import logging
 from pathlib import Path
@@ -11,6 +12,9 @@ from backend.services.face_detector import FaceDetector
 from backend.services.diarization_runner import get_diarization_runner
 
 logger = logging.getLogger(__name__)
+
+# Regex to remove emotion tags like [curiously], [excitedly], etc.
+EMOTION_TAG_PATTERN = re.compile(r'^\[[\w]+\]$')
 
 # Temporarily enable INFO for debugging subtitle timing
 logger.setLevel(logging.INFO)
@@ -1088,10 +1092,16 @@ class VideoProcessor:
                 word_idx = 0
                 chunks_added = 0
                 
-                while word_idx < len(tts_words):
+                # Filter out emotion tags like [curiously], [excitedly], etc.
+                filtered_tts_words = [
+                    tw for tw in tts_words 
+                    if not EMOTION_TAG_PATTERN.match(tw.get("word", ""))
+                ]
+                
+                while word_idx < len(filtered_tts_words):
                     # Take up to max_words_per_line words
-                    chunk_end = min(word_idx + max_words_per_line, len(tts_words))
-                    chunk_tts_words = tts_words[word_idx:chunk_end]
+                    chunk_end = min(word_idx + max_words_per_line, len(filtered_tts_words))
+                    chunk_tts_words = filtered_tts_words[word_idx:chunk_end]
                     
                     if not chunk_tts_words:
                         break
