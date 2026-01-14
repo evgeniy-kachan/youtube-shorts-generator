@@ -1865,6 +1865,100 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             audio = silence + audio
             logger.info("TTD: Added %.2fs leading silence", leading_silence_ms / 1000.0)
         
+        leading_sec = leading_silence_ms / 1000.0
+        
+        # ============================================================
+        # SYNC WITH ORIGINAL TIMINGS: Insert pauses between turns
+        # This ensures TTS audio matches original video timing
+        # ============================================================
+        cumulative_offset = 0.0  # Track how much time we've added
+        turn_offsets = [0.0] * len(dialogue_turns)  # Offset for each turn
+        
+        if voice_segments and len(gaps) > 1:
+            # Build segment timing from API response
+            segment_timing_raw = {}
+            for vs in voice_segments:
+                input_idx = vs.get("dialogue_input_index", -1)
+                if input_idx >= 0:
+                    if input_idx not in segment_timing_raw:
+                        segment_timing_raw[input_idx] = {
+                            "start": vs.get("start_time_seconds", 0),
+                            "end": vs.get("end_time_seconds", 0),
+                        }
+                    else:
+                        segment_timing_raw[input_idx]["end"] = max(
+                            segment_timing_raw[input_idx]["end"],
+                            vs.get("end_time_seconds", 0)
+                        )
+            
+            # Calculate how much silence to insert between each turn
+            # Gap[i] = original pause before turn i (from original video timing)
+            # We need to insert (gap[i] - actual_gap[i]) silence
+            
+            inserted_silences = []
+            for i in range(1, len(dialogue_turns)):
+                if i >= len(gaps):
+                    break
+                
+                original_gap = gaps[i]  # Gap from original video
+                
+                # Calculate actual gap in TTS audio
+                prev_timing = segment_timing_raw.get(i - 1, {})
+                curr_timing = segment_timing_raw.get(i, {})
+                prev_end = prev_timing.get("end", 0)
+                curr_start = curr_timing.get("start", prev_end)
+                actual_gap = max(0, curr_start - prev_end)
+                
+                # How much extra silence do we need?
+                extra_silence = max(0, original_gap - actual_gap)
+                
+                if extra_silence > 0.1:  # Only insert if > 100ms
+                    inserted_silences.append((i, extra_silence, original_gap, actual_gap))
+                    cumulative_offset += extra_silence
+                    
+                turn_offsets[i] = cumulative_offset
+            
+            # Actually insert silences into audio
+            if inserted_silences:
+                logger.info(
+                    "TTD SYNC: Inserting %d silences (total %.2fs) to match original timing",
+                    len(inserted_silences),
+                    sum(s[1] for s in inserted_silences),
+                )
+                
+                # Rebuild audio with inserted silences
+                # We need to cut and splice the audio
+                new_audio = AudioSegment.empty()
+                last_cut_ms = 0
+                
+                for turn_idx, extra_sec, orig_gap, actual_gap in inserted_silences:
+                    curr_timing = segment_timing_raw.get(turn_idx, {})
+                    cut_point_sec = curr_timing.get("start", 0) + leading_sec
+                    cut_point_ms = int(cut_point_sec * 1000)
+                    
+                    # Add audio up to cut point
+                    if cut_point_ms > last_cut_ms:
+                        new_audio += audio[last_cut_ms:cut_point_ms]
+                    
+                    # Insert silence
+                    silence_ms = int(extra_sec * 1000)
+                    new_audio += AudioSegment.silent(duration=silence_ms, frame_rate=self.sample_rate)
+                    
+                    logger.info(
+                        "  Turn %d: inserted %.2fs silence (original gap=%.2fs, TTS gap=%.2fs)",
+                        turn_idx, extra_sec, orig_gap, actual_gap
+                    )
+                    
+                    last_cut_ms = cut_point_ms
+                
+                # Add remaining audio
+                if last_cut_ms < len(audio):
+                    new_audio += audio[last_cut_ms:]
+                
+                audio = new_audio
+                logger.info("TTD SYNC: Audio extended from %.2fs to %.2fs", 
+                           len(audio) / 1000.0 - cumulative_offset, len(audio) / 1000.0)
+        
         # Save to file
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1879,9 +1973,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         )
         
         # Store timing info in turns for subtitle sync
-        # Use precise voice_segments from ElevenLabs API
-        
-        leading_sec = leading_silence_ms / 1000.0
+        # Use precise voice_segments from ElevenLabs API + our inserted silences
         
         if voice_segments:
             # Use exact timing from API response
@@ -1912,14 +2004,17 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             # Parse character alignment into word-level timestamps
             words_by_input = self._parse_alignment_to_words(alignment, voice_segments)
             
-            # Apply timing to dialogue turns
+            # Apply timing to dialogue turns (with inserted silence offsets)
             for idx, turn in enumerate(dialogue_turns):
                 if idx >= len(inputs):
                     break
                 
                 timing = segment_timing.get(idx, {})
-                start_time = timing.get("start", 0) + leading_sec
-                end_time = timing.get("end", 0) + leading_sec
+                # Add offset from inserted silences before this turn
+                offset = turn_offsets[idx] if idx < len(turn_offsets) else 0.0
+                
+                start_time = timing.get("start", 0) + leading_sec + offset
+                end_time = timing.get("end", 0) + leading_sec + offset
                 turn_duration = end_time - start_time
                 
                 turn["tts_start_offset"] = start_time
@@ -1928,13 +2023,13 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 
                 # Add word-level timestamps if available
                 if idx in words_by_input:
-                    # Adjust word timestamps for leading silence
+                    # Adjust word timestamps for leading silence + inserted silences
                     tts_words = []
                     for w in words_by_input[idx]:
                         tts_words.append({
                             "word": w["word"],
-                            "start": w["start"] + leading_sec,
-                            "end": w["end"] + leading_sec,
+                            "start": w["start"] + leading_sec + offset,
+                            "end": w["end"] + leading_sec + offset,
                         })
                     turn["tts_words"] = tts_words
                     logger.debug(
