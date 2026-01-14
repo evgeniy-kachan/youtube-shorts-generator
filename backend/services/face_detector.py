@@ -884,30 +884,28 @@ class FaceDetector:
         # TransNetV2 misses camera switches in interviews (similar lighting/bg)
         # Face-jump detects them by tracking face position changes
         # ============================================================
-        # TEMPORARILY DISABLED for debugging TTS sync issue
-        # additional_boundaries: list[float] = []
-        # for i in range(len(scene_boundaries) - 1):
-        #     scene_start = scene_boundaries[i]
-        #     scene_end = scene_boundaries[i + 1]
-        #     
-        #     # Only check scenes longer than minimum threshold
-        #     if scene_end - scene_start > self.MIN_SUBSCENE_DURATION * 2:
-        #         face_jumps = self._detect_face_jumps(
-        #             capture, scene_start, scene_end, fps, frame_width
-        #         )
-        #         additional_boundaries.extend(face_jumps)
-        # 
-        # # Merge and sort all boundaries
-        # if additional_boundaries:
-        #     all_boundaries = sorted(set(scene_boundaries + additional_boundaries))
-        #     logger.info(
-        #         "Face-jump: added %d boundaries, total %d scenes: %s",
-        #         len(additional_boundaries),
-        #         len(all_boundaries) - 1,
-        #         [f"{t:.2f}s" for t in all_boundaries]
-        #     )
-        #     scene_boundaries = all_boundaries
-        logger.info("Face-jump detection DISABLED for debugging")
+        additional_boundaries: list[float] = []
+        for i in range(len(scene_boundaries) - 1):
+            scene_start = scene_boundaries[i]
+            scene_end = scene_boundaries[i + 1]
+            
+            # Only check scenes longer than minimum threshold
+            if scene_end - scene_start > self.MIN_SUBSCENE_DURATION * 2:
+                face_jumps = self._detect_face_jumps(
+                    capture, scene_start, scene_end, fps, frame_width
+                )
+                additional_boundaries.extend(face_jumps)
+        
+        # Merge and sort all boundaries
+        if additional_boundaries:
+            all_boundaries = sorted(set(scene_boundaries + additional_boundaries))
+            logger.info(
+                "Face-jump: added %d boundaries, total %d scenes: %s",
+                len(additional_boundaries),
+                len(all_boundaries) - 1,
+                [f"{t:.2f}s" for t in all_boundaries]
+            )
+            scene_boundaries = all_boundaries
         
         # ============================================================
         # STEP 2: For each scene, do 7 consecutive detections at START
