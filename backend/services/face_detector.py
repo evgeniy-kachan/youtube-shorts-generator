@@ -719,7 +719,7 @@ class FaceDetector:
     CROP_WIDTH_PX = 1080  # Target crop width for 9:16 vertical video
     
     # Face-jump detection constants
-    FACE_JUMP_SAMPLE_INTERVAL = 0.5  # Sample face position every 0.5 seconds
+    FACE_JUMP_SAMPLE_INTERVAL = 0.2  # Sample face position every 0.2 seconds (more precise)
     FACE_JUMP_THRESHOLD = 0.15  # 15% position change = camera switch (lowered from 25%)
     MIN_SUBSCENE_DURATION = 2.0  # Minimum duration for a sub-scene (seconds)
     
