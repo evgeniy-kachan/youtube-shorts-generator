@@ -1483,7 +1483,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             rel_end = max(rel_start + 200.0, (word.get('end', chunk_start) - chunk_start) * 1000)
             highlight_start = int(rel_start)
             highlight_mid = int(min(rel_start + 160.0, chunk_duration * 1000))
-            highlight_end = int(min(rel_end, chunk_duration * 1000))
+            
+            # For the last word in chunk, extend visibility to end of chunk + 300ms buffer
+            # This prevents the last word from disappearing too quickly
+            is_last_word = (idx == len(words) - 1)
+            if is_last_word:
+                highlight_end = int(chunk_duration * 1000 + 300)  # +300ms buffer for readability
+            else:
+                highlight_end = int(min(rel_end, chunk_duration * 1000))
 
             tag = self._get_word_animation_tag(
                 animation,
