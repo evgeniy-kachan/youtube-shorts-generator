@@ -1477,18 +1477,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         rendered = [self._get_base_animation_tag(animation, position_conf, subtitle_background, color_tag, lane)]
         tokens: List[str] = []
-
+        
+        # Determine which words will be on the second line (after split)
+        # Words on second line need extended visibility since they appear later
+        split_index = len(words) // 2 if len(words) >= 6 else len(words)
+        
         for idx, word in enumerate(words):
             rel_start = max(0.0, (word.get('start', chunk_start) - chunk_start) * 1000)
             rel_end = max(rel_start + 200.0, (word.get('end', chunk_start) - chunk_start) * 1000)
             highlight_start = int(rel_start)
             highlight_mid = int(min(rel_start + 160.0, chunk_duration * 1000))
             
-            # For the last word in chunk, extend visibility to end of chunk + 700ms buffer
-            # This prevents the last word from disappearing too quickly
+            # Extend visibility for words that need more reading time:
+            # 1. Last word of chunk: +700ms buffer
+            # 2. Words on second line (idx >= split_index): +500ms buffer
+            # This ensures second line words stay visible longer
             is_last_word = (idx == len(words) - 1)
+            is_second_line = (idx >= split_index) and (len(words) >= 6)
+            
             if is_last_word:
-                highlight_end = int(chunk_duration * 1000 + 700)  # +700ms buffer for readability
+                highlight_end = int(chunk_duration * 1000 + 700)  # +700ms buffer for last word
+            elif is_second_line:
+                highlight_end = int(chunk_duration * 1000 + 500)  # +500ms buffer for second line
             else:
                 highlight_end = int(min(rel_end, chunk_duration * 1000))
 
