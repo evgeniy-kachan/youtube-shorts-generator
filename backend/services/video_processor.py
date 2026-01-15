@@ -925,7 +925,7 @@ class VideoProcessor:
         self,
         text: str,
         duration: float,
-        max_words_per_line: int = 6,
+        max_words_per_line: int = 4,
         dialogue: list[dict] | None = None,
         segment_start: float = 0.0,
         speaker_palette: dict[str, str] | None = None,
