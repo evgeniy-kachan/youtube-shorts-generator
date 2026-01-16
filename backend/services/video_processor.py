@@ -1505,7 +1505,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # For fade/fade_short: ALL words stay visible until end of chunk
             # This prevents words from disappearing too quickly
             # Also enforce minimum visibility time for readability
-            MIN_WORD_VISIBILITY = 800  # ms - minimum time a word should be visible
+            MIN_WORD_VISIBILITY = 900  # ms - minimum time a word should be visible
             
             if animation in ('fade', 'fade_short'):
                 # All words stay until chunk ends + buffer
