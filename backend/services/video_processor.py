@@ -1485,6 +1485,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # Words on second line need extended visibility since they appear later
         split_index = len(words) // 2 if len(words) >= 6 else len(words)
         
+        # Log chunk info for fade animations
+        if animation in ('fade', 'fade_short'):
+            logger.info(f"Chunk [{chunk_start:.2f}s - {chunk_end:.2f}s] dur={chunk_duration*1000:.0f}ms, {len(words)} words:")
+        
         for idx, word in enumerate(words):
             rel_start = max(0.0, (word.get('start', chunk_start) - chunk_start) * 1000)
             rel_end = max(rel_start + 200.0, (word.get('end', chunk_start) - chunk_start) * 1000)
@@ -1515,6 +1519,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 else:
                     highlight_end = int(min(rel_end, chunk_duration * 1000))
 
+            word_text = word.get('word', '')
+            visibility_ms = highlight_end - highlight_start
+            
+            # Log word timing for fade animations
+            if animation in ('fade', 'fade_short'):
+                flag = "⚠️SHORT" if visibility_ms < 400 else ""
+                logger.info(f"  [{idx}] '{word_text}' appear={highlight_start}ms visible={visibility_ms}ms {flag}")
+
             tag = self._get_word_animation_tag(
                 animation,
                 highlight_start,
@@ -1524,7 +1536,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 preserve_color=bool(color_tag),
             )
 
-            word_text = word.get('word', '')
             if idx != len(words) - 1:
                 word_text += " "
 
