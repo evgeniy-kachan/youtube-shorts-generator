@@ -1498,12 +1498,22 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             is_last_word = (idx == len(words) - 1)
             is_second_line = (idx >= split_index) and (len(words) >= 6)
             
-            if is_last_word:
-                highlight_end = int(chunk_duration * 1000 + 700)  # +700ms buffer for last word
-            elif is_second_line:
-                highlight_end = int(chunk_duration * 1000 + 500)  # +500ms buffer for second line
+            # For fade/fade_short: ALL words stay visible until end of chunk
+            # This prevents words from disappearing too quickly
+            if animation in ('fade', 'fade_short'):
+                # All words stay until chunk ends + buffer
+                if is_last_word:
+                    highlight_end = int(chunk_duration * 1000 + 700)  # +700ms for last word
+                else:
+                    highlight_end = int(chunk_duration * 1000 + 300)  # +300ms for all other words
             else:
-                highlight_end = int(min(rel_end, chunk_duration * 1000))
+                # Other animations: original behavior
+                if is_last_word:
+                    highlight_end = int(chunk_duration * 1000 + 700)
+                elif is_second_line:
+                    highlight_end = int(chunk_duration * 1000 + 500)
+                else:
+                    highlight_end = int(min(rel_end, chunk_duration * 1000))
 
             tag = self._get_word_animation_tag(
                 animation,
