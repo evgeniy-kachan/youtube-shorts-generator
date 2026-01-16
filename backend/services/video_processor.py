@@ -823,10 +823,13 @@ class VideoProcessor:
                 auto_center_ratio = None
 
             # Step 2: prepare basic subtitles
+            # fade_short uses 5 words per line for better readability
+            words_per_line = 5 if subtitle_animation == 'fade_short' else 4
             speaker_palette = self._assign_speaker_colors(dialogue_turns, speaker_color_mode)
             subtitles = self._generate_basic_subtitles(
                 text=text,
                 duration=duration,
+                max_words_per_line=words_per_line,
                 dialogue=dialogue_turns,
                 segment_start=start_time,
                 speaker_palette=speaker_palette,
@@ -1517,7 +1520,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             tokens.append(f"{tag}{word_text}")
 
-        if len(tokens) >= 6:
+        # fade_short: never split into 2 lines (optimized for short chunks)
+        # fade: split into 2 lines if 6+ words
+        if animation != 'fade_short' and len(tokens) >= 6:
             split_index = len(tokens) // 2
             tokens.insert(split_index, r"\N")
 
@@ -1552,6 +1557,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             'slide': rf"{{\an{an}\move({x},{slide_start_y},{x},{y},0,260)\fad(60,60){bg_alpha}{color_cmd}}}",
             'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{bg_alpha}{color_cmd}}}",
             'fade': rf"{{\an{an}{pos_tag}\fad(100,100){bg_alpha}{color_cmd}}}",
+            'fade_short': rf"{{\an{an}{pos_tag}\fad(100,100){bg_alpha}{color_cmd}}}",
             'scale': rf"{{\an{an}{pos_tag}\fad(80,40){bg_alpha}{color_cmd}}}",
             'karaoke': rf"{{\an{an}{pos_tag}\fad(80,40){bg_alpha}{color_cmd}}}",
             'typewriter': rf"{{\an{an}{pos_tag}{bg_alpha}{color_cmd}}}",
@@ -1596,7 +1602,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 rf"\t({start_ms},{mid_ms},\alpha&H00\1c&HFFFFFF\blur0)"
                 rf"\t({mid_ms},{end_ms},\alpha&H00)}}"
             )
-        if animation == 'fade':
+        if animation == 'fade' or animation == 'fade_short':
             return (
                 r"{\alpha&HFF"
                 rf"\t({start_ms},{mid_ms},\alpha&H00)"
