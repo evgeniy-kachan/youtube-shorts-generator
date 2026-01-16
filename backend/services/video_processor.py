@@ -1587,6 +1587,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{bg_alpha}{color_cmd}}}",
             'fade': rf"{{\an{an}{pos_tag}\fad(100,100){bg_alpha}{color_cmd}}}",
             'fade_short': rf"{{\an{an}{pos_tag}\fad(100,100){bg_alpha}{color_cmd}}}",
+            'readable': rf"{{\an{an}{pos_tag}\fad(200,200){bg_alpha}{color_cmd}}}",
             'scale': rf"{{\an{an}{pos_tag}\fad(80,40){bg_alpha}{color_cmd}}}",
             'karaoke': rf"{{\an{an}{pos_tag}\fad(80,40){bg_alpha}{color_cmd}}}",
             'typewriter': rf"{{\an{an}{pos_tag}{bg_alpha}{color_cmd}}}",
@@ -1637,6 +1638,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 rf"\t({start_ms},{mid_ms},\alpha&H00)"
                 rf"\t({mid_ms},{end_ms},)}}"
             )
+        if animation == 'readable':
+            # All words appear together at chunk start - no per-word animation
+            # Just return empty tag, the base animation handles fade in/out
+            return ""
         if animation == 'scale':
             return (
                 r"{\alpha&HFF\fscx90\fscy90"

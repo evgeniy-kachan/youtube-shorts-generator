@@ -802,7 +802,12 @@ const SegmentsList = ({
                         {
                           id: 'fade_short',
                           label: 'Fade Short',
-                          description: '5 слов, 1 строка',
+                          description: '4 слова, 1 строка',
+                        },
+                        {
+                          id: 'readable',
+                          label: 'Readable',
+                          description: 'Все слова сразу',
                         },
                         {
                           id: 'scale',

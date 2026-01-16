@@ -131,6 +131,13 @@ code {
   animation-timing-function: ease-in;
 }
 
+/* 4c. Readable (All words appear together, no per-word delay) */
+.anim-readable {
+  animation-name: wordFade;
+  animation-timing-function: ease-in;
+  animation-delay: 0s !important;
+}
+
 /* 5. Scale (Zoom in) */
 .anim-scale {
   transform-origin: center center;
