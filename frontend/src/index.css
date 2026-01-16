@@ -125,6 +125,12 @@ code {
   to { opacity: 1; }
 }
 
+/* 4b. Fade Short (Same as fade, optimized for single line) */
+.anim-fade_short {
+  animation-name: wordFade;
+  animation-timing-function: ease-in;
+}
+
 /* 5. Scale (Zoom in) */
 .anim-scale {
   transform-origin: center center;

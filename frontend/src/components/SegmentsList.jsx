@@ -799,6 +799,11 @@ const SegmentsList = ({
                           description: 'Прозрачность',
                         },
                         {
+                          id: 'fade_short',
+                          label: 'Fade Short',
+                          description: '5 слов, 1 строка',
+                        },
+                        {
                           id: 'scale',
                           label: 'Scale',
                           description: 'Увеличение',
