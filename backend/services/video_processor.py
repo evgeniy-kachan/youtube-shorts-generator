@@ -823,8 +823,8 @@ class VideoProcessor:
                 auto_center_ratio = None
 
             # Step 2: prepare basic subtitles
-            # fade_short uses 5 words per line for better readability
-            words_per_line = 5 if subtitle_animation == 'fade_short' else 4
+            # fade_short uses 4 words per line for better readability and edge margins
+            words_per_line = 4
             speaker_palette = self._assign_speaker_colors(dialogue_turns, speaker_color_mode)
             subtitles = self._generate_basic_subtitles(
                 text=text,
