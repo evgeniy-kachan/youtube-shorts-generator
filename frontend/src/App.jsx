@@ -177,6 +177,7 @@ function App() {
     speakerColorMode = 'colored'
   ) => {
     try {
+      console.log('[handleProcess] subtitleAnimation:', subtitleAnimation);
       setStage('processing');
       setProgress(0);
       setStatusMessage('Начинаем обработку...');

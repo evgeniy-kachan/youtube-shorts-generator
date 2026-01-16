@@ -368,6 +368,7 @@ const SegmentsList = ({
 
   const handleProcess = () => {
     if (selectedSegments.length > 0) {
+      console.log('[SegmentsList] Calling onProcess with subtitleAnimation:', subtitleAnimation);
       onProcess(
         selectedSegments,
         verticalMethod,
