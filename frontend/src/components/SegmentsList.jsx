@@ -780,19 +780,24 @@ const SegmentsList = ({
                     <div className="grid grid-cols-2 gap-3">
                       {[
                         {
-                          id: 'bounce',
-                          label: 'Bounce',
+                          id: 'highlight',
+                          label: 'Highlight',
+                          description: 'Подсветка слова',
+                        },
+                        {
+                          id: 'boxed',
+                          label: 'Boxed',
+                          description: 'Слова в рамках',
+                        },
+                        {
+                          id: 'bounce_word',
+                          label: 'Bounce Word',
                           description: 'Пружинящее',
                         },
                         {
-                          id: 'word_pop',
-                          label: 'Word Pop',
-                          description: 'Вылет из центра',
-                        },
-                        {
-                          id: 'slide',
-                          label: 'Slide Up',
-                          description: 'Выезд снизу',
+                          id: 'readable',
+                          label: 'Readable',
+                          description: 'Все слова сразу',
                         },
                         {
                           id: 'fade',
@@ -805,9 +810,14 @@ const SegmentsList = ({
                           description: '4 слова, 1 строка',
                         },
                         {
-                          id: 'readable',
-                          label: 'Readable',
-                          description: 'Все слова сразу',
+                          id: 'word_pop',
+                          label: 'Word Pop',
+                          description: 'Вылет из центра',
+                        },
+                        {
+                          id: 'slide',
+                          label: 'Slide Up',
+                          description: 'Выезд снизу',
                         },
                         {
                           id: 'scale',

@@ -64,24 +64,70 @@ code {
   opacity: 1 !important; /* Force visible for hover preview */
 }
 
-/* 1. Bounce (Word-by-Word) */
-.anim-bounce {
-  transform-origin: center bottom;
-  animation-name: wordBounce;
-  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+/* 1. Highlight (All words visible, current word highlighted in yellow) */
+.anim-highlight {
+  animation-name: wordHighlight;
+  animation-timing-function: ease-in-out;
 }
-@keyframes wordBounce {
+@keyframes wordHighlight {
   0% {
-    transform: scaleY(1.2);
-    opacity: 0;
+    color: #888;
+    opacity: 0.7;
+  }
+  30% {
+    color: #FFD700;
+    opacity: 1;
+    transform: scale(1.05);
   }
   100% {
-    transform: scaleY(1);
+    color: #fff;
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 2. Boxed (Word appears with border/box effect) */
+.anim-boxed {
+  animation-name: wordBoxed;
+  animation-timing-function: ease-out;
+}
+@keyframes wordBoxed {
+  0% {
+    opacity: 0;
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.6);
+  }
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
+  }
+}
+
+/* 3. Bounce Word (Word bounces in with scale effect) */
+.anim-bounce_word {
+  transform-origin: center center;
+  animation-name: wordBounceIn;
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes wordBounceIn {
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
     opacity: 1;
   }
 }
 
-/* 2. Slide (Word-by-Word from bottom) */
+/* 4. Slide (Word-by-Word from bottom) */
 .anim-slide {
   animation-name: wordSlide;
   animation-timing-function: ease-out;
@@ -97,7 +143,7 @@ code {
   }
 }
 
-/* 3. Spark (Glow effect) */
+/* 5. Spark (Glow effect) */
 .anim-spark {
   animation-name: wordSpark;
   animation-timing-function: ease-in-out;
@@ -115,7 +161,7 @@ code {
   }
 }
 
-/* 4. Fade (Simple appearance) */
+/* 6. Fade (Simple appearance) */
 .anim-fade {
   animation-name: wordFade;
   animation-timing-function: ease-in;
@@ -125,20 +171,20 @@ code {
   to { opacity: 1; }
 }
 
-/* 4b. Fade Short (Same as fade, optimized for single line) */
+/* 6b. Fade Short (Same as fade, optimized for single line) */
 .anim-fade_short {
   animation-name: wordFade;
   animation-timing-function: ease-in;
 }
 
-/* 4c. Readable (All words appear together, no per-word delay) */
+/* 6c. Readable (All words appear together, no per-word delay) */
 .anim-readable {
   animation-name: wordFade;
   animation-timing-function: ease-in;
   animation-delay: 0s !important;
 }
 
-/* 5. Scale (Zoom in) */
+/* 7. Scale (Zoom in) */
 .anim-scale {
   transform-origin: center center;
   animation-name: wordScale;

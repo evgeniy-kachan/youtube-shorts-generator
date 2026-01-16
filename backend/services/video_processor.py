@@ -1485,8 +1485,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # Words on second line need extended visibility since they appear later
         split_index = len(words) // 2 if len(words) >= 6 else len(words)
         
-        # Log chunk info for fade animations
-        if animation in ('fade', 'fade_short'):
+        # Animations that benefit from extended visibility (like fade)
+        EXTENDED_VISIBILITY_ANIMATIONS = ('fade', 'fade_short', 'highlight', 'boxed', 'bounce_word', 'readable')
+        
+        # Log chunk info for animations with word timing
+        if animation in EXTENDED_VISIBILITY_ANIMATIONS:
             logger.info(f"Chunk [{chunk_start:.2f}s - {chunk_end:.2f}s] dur={chunk_duration*1000:.0f}ms, {len(words)} words:")
         
         for idx, word in enumerate(words):
@@ -1502,12 +1505,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             is_last_word = (idx == len(words) - 1)
             is_second_line = (idx >= split_index) and (len(words) >= 6)
             
-            # For fade/fade_short: ALL words stay visible until end of chunk
-            # This prevents words from disappearing too quickly
-            # Also enforce minimum visibility time for readability
+            # Minimum visibility time for readability
             MIN_WORD_VISIBILITY = 1100  # ms - minimum time a word should be visible
             
-            if animation in ('fade', 'fade_short'):
+            if animation in EXTENDED_VISIBILITY_ANIMATIONS:
                 # All words stay until chunk ends + buffer
                 if is_last_word:
                     highlight_end = int(chunk_duration * 1000 + 700)  # +700ms for last word
@@ -1530,8 +1531,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             word_text = word.get('word', '')
             visibility_ms = highlight_end - highlight_start
             
-            # Log word timing for fade animations
-            if animation in ('fade', 'fade_short'):
+            # Log word timing for animations with extended visibility
+            if animation in EXTENDED_VISIBILITY_ANIMATIONS:
                 flag = "⚠️SHORT" if visibility_ms < 400 else ""
                 logger.info(f"  [{idx}] '{word_text}' appear={highlight_start}ms visible={visibility_ms}ms {flag}")
 
@@ -1582,12 +1583,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         bg_alpha = r"\3a&HB0&" if subtitle_background else ""
         
         presets = {
-            'bounce': rf"{{\an{an}{pos_tag}\fad(80,40){bg_alpha}{color_cmd}}}",
             'slide': rf"{{\an{an}\move({x},{slide_start_y},{x},{y},0,260)\fad(60,60){bg_alpha}{color_cmd}}}",
             'spark': rf"{{\an{an}{pos_tag}\fad(50,70)\blur2{bg_alpha}{color_cmd}}}",
             'fade': rf"{{\an{an}{pos_tag}\fad(100,100){bg_alpha}{color_cmd}}}",
             'fade_short': rf"{{\an{an}{pos_tag}\fad(100,100){bg_alpha}{color_cmd}}}",
             'readable': rf"{{\an{an}{pos_tag}\fad(200,200){bg_alpha}{color_cmd}}}",
+            'highlight': rf"{{\an{an}{pos_tag}\fad(150,150){bg_alpha}{color_cmd}}}",
+            'boxed': rf"{{\an{an}{pos_tag}\fad(100,100){bg_alpha}{color_cmd}}}",
+            'bounce_word': rf"{{\an{an}{pos_tag}\fad(80,80){bg_alpha}{color_cmd}}}",
             'scale': rf"{{\an{an}{pos_tag}\fad(80,40){bg_alpha}{color_cmd}}}",
             'karaoke': rf"{{\an{an}{pos_tag}\fad(80,40){bg_alpha}{color_cmd}}}",
             'typewriter': rf"{{\an{an}{pos_tag}{bg_alpha}{color_cmd}}}",
@@ -1605,15 +1608,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         end_ms: int,
         subtitle_background: bool,
         preserve_color: bool = False,
+        is_current_word: bool = False,
     ) -> str:
         # Background box is handled by BorderStyle=3 in the style definition
         # Word animations should not override \bord or \shad
-        if animation == 'bounce':
-            return (
-                r"{\alpha&HFF"
-                rf"\t({start_ms},{mid_ms},\alpha&H00\fscy120)"
-                rf"\t({mid_ms},{end_ms},\fscy100)}}"
-            )
         if animation == 'slide':
             return (
                 r"{\alpha&HFF"
@@ -1642,6 +1640,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # All words appear together at chunk start - no per-word animation
             # Just return empty tag, the base animation handles fade in/out
             return ""
+        if animation == 'highlight':
+            # All words visible from start, current word highlighted in yellow/orange
+            # Words start gray, become white when "active", current word is yellow
+            # \1c is primary fill color in BGR format
+            yellow = r"\1c&H00FFFF&"  # Yellow in BGR
+            white = r"\1c&HFFFFFF&"   # White
+            gray = r"\1c&HBBBBBB&"    # Light gray
+            return (
+                rf"{{{gray}"
+                rf"\t({start_ms},{start_ms + 80},{yellow})"
+                rf"\t({mid_ms},{end_ms},{white})}}"
+            )
+        if animation == 'boxed':
+            # Word appears with a box/border effect that highlights it
+            # Uses \bord for border thickness animation
+            return (
+                r"{\alpha&HFF\bord0"
+                rf"\t({start_ms},{mid_ms},\alpha&H00\bord4)"
+                rf"\t({mid_ms},{end_ms},\bord2)}}"
+            )
+        if animation == 'bounce_word':
+            # Word bounces in with scale effect - appears and grows slightly then settles
+            return (
+                r"{\alpha&HFF\fscx80\fscy80"
+                rf"\t({start_ms},{mid_ms},\alpha&H00\fscx115\fscy115)"
+                rf"\t({mid_ms},{end_ms},\fscx100\fscy100)}}"
+            )
         if animation == 'scale':
             return (
                 r"{\alpha&HFF\fscx90\fscy90"
@@ -1685,6 +1710,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 r"{\alpha&HFF"
                 rf"\t({start_ms},{mid_ms},\alpha&H00)}}"
             )
+        # Default fallback
         return (
             r"{\alpha&HFF"
             rf"\t({start_ms},{mid_ms},\alpha&H00\fscx118\fscy118)"
