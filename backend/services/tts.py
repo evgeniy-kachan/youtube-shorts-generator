@@ -1270,7 +1270,7 @@ class ElevenLabsTTSService(BaseTTSService):
         all_words: list[dict] = []
         voice_override = speaker or self.voice_id
         
-        # Speed adjustment is handled by FFmpeg tempo in video.py (0.7-1.4x range)
+        # Speed adjustment is handled by FFmpeg tempo in video.py (0.7-1.25x range)
         # ElevenLabs speed parameter is unreliable, so we generate at natural speed
         speed = 1.0
 
@@ -1621,9 +1621,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             "TTD TOTAL: %d RU words | Original: %.1fs | Est. generated: %.1fs | Required tempo: %.2fx",
             total_translated_words, total_original_duration, estimated_natural_duration, required_tempo
         )
-        if required_tempo > 1.4:
-            logger.warning("TTD: Audio will be clamped to 1.4x tempo (%.1fs extra)", 
-                          estimated_natural_duration - total_original_duration * 1.4)
+        if required_tempo > 1.25:
+            logger.warning("TTD: Audio will be clamped to 1.25x tempo (%.1fs extra)", 
+                          estimated_natural_duration - total_original_duration * 1.25)
         logger.debug("=" * 70)
 
     def _calculate_gaps(self, dialogue_turns: list[dict]) -> list[float]:

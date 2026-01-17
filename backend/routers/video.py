@@ -424,7 +424,7 @@ def _speed_match_audio_duration(
     audio_path: str,
     current_duration: float,
     target_duration: float,
-    max_tempo: float = 1.4,
+    max_tempo: float = 1.25,
     min_tempo: float = 0.7,
 ) -> bool:
     """
@@ -434,7 +434,7 @@ def _speed_match_audio_duration(
         audio_path: Path to audio file to modify
         current_duration: Current audio duration in seconds
         target_duration: Target duration to match
-        max_tempo: Maximum tempo (speed up limit, default 1.4)
+        max_tempo: Maximum tempo (speed up limit, default 1.25 - reduced from 1.4 to minimize artifacts)
         min_tempo: Minimum tempo (slow down limit, default 0.7)
     """
     if not audio_path or current_duration <= 0 or target_duration <= 0:
@@ -927,21 +927,21 @@ def _process_segments_task(
 
             original_duration = max(0.1, float(segment.get('end_time', 0)) - float(segment.get('start_time', 0)))
 
-            # Tempo adjustment: keep audio within 0.7x-1.4x of original duration
-            # This maintains voice quality while allowing reasonable sync adjustments
+            # Tempo adjustment: keep audio within 0.7x-1.25x of original duration
+            # Reduced from 1.4x to 1.25x to minimize audio artifacts (stuttering/cutting)
             duration_diff = abs(audio_duration - original_duration)
             if duration_diff > 0.2:  # More than 200ms difference
                 before_duration = audio_duration
                 
                 logger.info(
-                    "Applying tempo adjustment for %s: %.2fs -> %.2fs (range: 0.7x-1.4x)%s",
+                    "Applying tempo adjustment for %s: %.2fs -> %.2fs (range: 0.7x-1.25x)%s",
                     segment['id'],
                     audio_duration,
                     original_duration,
                     " [multi-speaker]" if has_dialogue else "",
                 )
                 
-                if _speed_match_audio_duration(audio_path, audio_duration, original_duration, max_tempo=1.4, min_tempo=0.7):
+                if _speed_match_audio_duration(audio_path, audio_duration, original_duration, max_tempo=1.25, min_tempo=0.7):
                     try:
                         audio_segment = AudioSegment.from_file(audio_path)
                         audio_duration = audio_segment.duration_seconds or original_duration
