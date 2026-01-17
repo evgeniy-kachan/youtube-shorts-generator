@@ -2066,6 +2066,25 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         audio.export(str(output_path), format="wav")
         
         duration_sec = len(audio) / 1000.0
+        
+        # Diagnostic: log last voice segment timing vs audio duration
+        if voice_segments:
+            last_vs = max(voice_segments, key=lambda x: x.get("end_time_seconds", 0))
+            last_vs_end = last_vs.get("end_time_seconds", 0) + leading_sec + cumulative_offset
+            logger.info(
+                "TTD DIAGNOSTIC: audio_duration=%.2fs, last_voice_segment_end=%.2fs (raw=%.2fs + leading=%.2fs + offset=%.2fs)",
+                duration_sec,
+                last_vs_end,
+                last_vs.get("end_time_seconds", 0),
+                leading_sec,
+                cumulative_offset,
+            )
+            # Log last input text
+            last_input_idx = last_vs.get("dialogue_input_index", -1)
+            if 0 <= last_input_idx < len(inputs):
+                last_text = inputs[last_input_idx].get("text", "")[:50]
+                logger.info("TTD DIAGNOSTIC: last turn text: '%s...'", last_text)
+        
         logger.info(
             "TTD: Dialogue saved to %s (duration=%.2fs, %d turns)",
             output_path,

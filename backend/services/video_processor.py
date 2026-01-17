@@ -536,6 +536,16 @@ class VideoProcessor:
         try:
             logger.info(f"Adding audio and subtitles to video")
             
+            # Diagnostic: log video and audio durations
+            video_duration = self._get_media_duration(video_path)
+            audio_duration = self._get_media_duration(audio_path)
+            logger.info(
+                "DIAGNOSTIC: video_duration=%.2fs, audio_duration=%.2fs, diff=%.2fs",
+                video_duration or 0,
+                audio_duration or 0,
+                (video_duration or 0) - (audio_duration or 0),
+            )
+            
             # Step 1: Convert to vertical if needed
             working_video = video_path
             if convert_to_vertical:
@@ -1038,6 +1048,19 @@ class VideoProcessor:
                 turn.get("tts_end_offset", -1),
                 turn.get("tts_duration", -1),
                 len(tts_words),
+            )
+        
+        # Diagnostic: log last turn details
+        if dialogue:
+            last_turn = dialogue[-1]
+            last_tts_words = last_turn.get("tts_words", [])
+            last_word = last_tts_words[-1] if last_tts_words else None
+            logger.info(
+                "DIAGNOSTIC last turn: text='%s', tts_end=%.2f, last_word='%s' end=%.2f",
+                (last_turn.get("text_ru") or last_turn.get("text", ""))[:30],
+                last_turn.get("tts_end_offset", -1),
+                last_word.get("word", "?") if last_word else "N/A",
+                last_word.get("end", -1) if last_word else -1,
             )
         
         subtitles: List[Dict] = []
