@@ -2245,6 +2245,27 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         start_time = offset + leading_sec
                     
                     end_time = start_time + estimated_duration
+                    
+                    # Check if we overlap with next turn and clamp if needed
+                    next_turn_start = None
+                    for next_idx in range(idx + 1, len(dialogue_turns)):
+                        next_timing = segment_timing.get(next_idx, {})
+                        next_offset = turn_offsets[next_idx] if next_idx < len(turn_offsets) else 0.0
+                        next_start = next_timing.get("start", 0) + leading_sec + next_offset
+                        if next_start > 0.1:  # Valid timing
+                            next_turn_start = next_start
+                            break
+                    
+                    if next_turn_start and end_time > next_turn_start - 0.1:
+                        # Clamp end_time to not overlap with next turn
+                        old_end = end_time
+                        end_time = next_turn_start - 0.1
+                        estimated_duration = max(0.3, end_time - start_time)
+                        logger.warning(
+                            "TTD turn %d: clamped end %.2f->%.2f to avoid overlap with next turn at %.2f",
+                            idx, old_end, end_time, next_turn_start
+                        )
+                    
                     turn_duration = estimated_duration
                     logger.warning(
                         "TTD turn %d: interpolated timing %.2f-%.2fs (%.2fs) using speaker rate %.2f w/s for '%s...'",
