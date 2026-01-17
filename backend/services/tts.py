@@ -2017,6 +2017,27 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 end_time = timing.get("end", 0) + leading_sec + offset
                 turn_duration = end_time - start_time
                 
+                # Fallback: if TTD didn't return timing for this turn, estimate from text length
+                if turn_duration < 0.1:
+                    text = inputs[idx]["text"] if idx < len(inputs) else ""
+                    word_count = len(text.split())
+                    # Estimate ~2.5 words per second for Russian speech
+                    estimated_duration = max(0.5, word_count / 2.5)
+                    
+                    # Use previous turn's end as start, or current offset
+                    if idx > 0:
+                        prev_end = dialogue_turns[idx - 1].get("tts_end_offset", offset)
+                        start_time = prev_end + 0.1  # small gap
+                    else:
+                        start_time = offset + leading_sec
+                    
+                    end_time = start_time + estimated_duration
+                    turn_duration = estimated_duration
+                    logger.warning(
+                        "TTD turn %d has no timing from API, estimated %.2f-%.2fs (%.2fs) from %d words",
+                        idx, start_time, end_time, turn_duration, word_count
+                    )
+                
                 turn["tts_start_offset"] = start_time
                 turn["tts_duration"] = turn_duration
                 turn["tts_end_offset"] = end_time
@@ -2041,6 +2062,26 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         tts_words[-1]["start"] if tts_words else 0,
                         tts_words[-1]["end"] if tts_words else 0,
                     )
+                else:
+                    # Generate estimated word timestamps if API didn't provide them
+                    text = inputs[idx]["text"] if idx < len(inputs) else ""
+                    words = text.split()
+                    if words and turn_duration > 0:
+                        per_word = turn_duration / len(words)
+                        tts_words = []
+                        for w_idx, word in enumerate(words):
+                            w_start = start_time + w_idx * per_word
+                            w_end = w_start + per_word
+                            tts_words.append({
+                                "word": word,
+                                "start": w_start,
+                                "end": w_end,
+                            })
+                        turn["tts_words"] = tts_words
+                        logger.debug(
+                            "TTD turn %d: generated %d estimated word timestamps (%.2f-%.2fs)",
+                            idx, len(tts_words), start_time, end_time
+                        )
                 
                 logger.debug(
                     "TTD subtitle turn %d: %.2f-%.2fs (%.2fs, %d words) [from API]",
