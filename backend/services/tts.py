@@ -2085,6 +2085,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             # Calculate how much silence to insert between each turn
             # Gap[i] = original pause before turn i (from original video timing)
             # We need to insert (gap[i] - actual_gap[i]) silence
+            #
+            # DISABLED: Silence insertion causes audio artifacts (stuttering/cutting)
+            # because ElevenLabs TTD generates continuous audio without gaps.
+            # When we cut and insert silence, we may cut in the middle of a word.
+            # Instead, we rely on FFmpeg tempo adjustment to match timing.
+            ENABLE_SILENCE_INSERTION = False
             
             inserted_silences = []
             for i in range(1, len(dialogue_turns)):
@@ -2103,14 +2109,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 # How much extra silence do we need?
                 extra_silence = max(0, original_gap - actual_gap)
                 
-                if extra_silence > 0.1:  # Only insert if > 100ms
+                if extra_silence > 0.1 and ENABLE_SILENCE_INSERTION:  # Only insert if > 100ms
                     inserted_silences.append((i, extra_silence, original_gap, actual_gap))
                     cumulative_offset += extra_silence
                     
                 turn_offsets[i] = cumulative_offset
             
             # Actually insert silences into audio
-            if inserted_silences:
+            if inserted_silences and ENABLE_SILENCE_INSERTION:
                 logger.info(
                     "TTD SYNC: Inserting %d silences (total %.2fs) to match original timing",
                     len(inserted_silences),
