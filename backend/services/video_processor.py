@@ -1038,6 +1038,32 @@ class VideoProcessor:
         Build subtitles directly from dialogue turns, preserving per-speaker timing
         and enabling color coding.
         """
+        # Summary: check timing quality
+        turns_with_timing = sum(1 for t in dialogue if t.get("tts_duration", 0) >= 0.1)
+        turns_with_words = sum(1 for t in dialogue if len(t.get("tts_words", [])) > 0)
+        total_turns = len(dialogue)
+        
+        # Check for overlapping turns (potential issue)
+        overlaps = []
+        for i in range(1, len(dialogue)):
+            prev_end = dialogue[i-1].get("tts_end_offset", 0)
+            curr_start = dialogue[i].get("tts_start_offset", 0)
+            if curr_start < prev_end - 0.05:  # 50ms tolerance
+                overlaps.append((i-1, i, prev_end - curr_start))
+        
+        logger.info(
+            "SUBTITLE TIMING STATUS: %d/%d turns have timing, %d/%d have word timestamps, %d overlaps",
+            turns_with_timing, total_turns, turns_with_words, total_turns, len(overlaps)
+        )
+        if overlaps:
+            for prev_idx, curr_idx, overlap_sec in overlaps[:5]:  # Show first 5
+                logger.warning(
+                    "  Overlap: turn %d ends at %.2fs, turn %d starts at %.2fs (overlap=%.2fs)",
+                    prev_idx, dialogue[prev_idx].get("tts_end_offset", 0),
+                    curr_idx, dialogue[curr_idx].get("tts_start_offset", 0),
+                    overlap_sec
+                )
+        
         # Debug: log incoming tts timing for each turn
         for idx, turn in enumerate(dialogue):
             tts_words = turn.get("tts_words", [])

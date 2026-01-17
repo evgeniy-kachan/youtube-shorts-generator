@@ -2306,6 +2306,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     turn["tts_duration"],
                     len(turn.get("tts_words", [])),
                 )
+            
+            # Summary log: timing source for each turn
+            api_timing_count = sum(1 for t in dialogue_turns if t.get("tts_duration", 0) >= 0.1 and idx < len(inputs))
+            interpolated_count = len(dialogue_turns) - api_timing_count
+            logger.info(
+                "TTD TIMING SUMMARY: %d turns from API, %d interpolated",
+                api_timing_count, interpolated_count
+            )
         else:
             # Fallback: distribute proportionally by character count
             logger.warning("TTD: No voice_segments in response, using character-based estimation")
