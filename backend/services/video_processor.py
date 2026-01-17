@@ -1064,17 +1064,14 @@ class VideoProcessor:
                     overlap_sec
                 )
         
-        # Debug: log incoming tts timing for each turn
-        for idx, turn in enumerate(dialogue):
-            tts_words = turn.get("tts_words", [])
-            logger.info(
-                "Subtitle input turn %d: tts_start=%.2f, tts_end=%.2f, tts_dur=%.2f, tts_words=%d",
-                idx,
-                turn.get("tts_start_offset", -1),
-                turn.get("tts_end_offset", -1),
-                turn.get("tts_duration", -1),
-                len(tts_words),
-            )
+        # Per-turn timing log disabled (enable for debugging)
+        # for idx, turn in enumerate(dialogue):
+        #     tts_words = turn.get("tts_words", [])
+        #     logger.info(
+        #         "Subtitle input turn %d: tts_start=%.2f, tts_end=%.2f, tts_dur=%.2f, tts_words=%d",
+        #         idx, turn.get("tts_start_offset", -1), turn.get("tts_end_offset", -1),
+        #         turn.get("tts_duration", -1), len(tts_words),
+        #     )
         
         # Diagnostic: log last turn details
         if dialogue:
@@ -1537,9 +1534,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # Animations that benefit from extended visibility (like fade)
         EXTENDED_VISIBILITY_ANIMATIONS = ('fade', 'fade_short', 'highlight', 'boxed', 'bounce_word', 'readable')
         
-        # Log chunk info for animations with word timing
-        if animation in EXTENDED_VISIBILITY_ANIMATIONS:
-            logger.info(f"Chunk [{chunk_start:.2f}s - {chunk_end:.2f}s] dur={chunk_duration*1000:.0f}ms, {len(words)} words:")
+        # Word timing logs disabled to reduce noise (enable for debugging)
         
         for idx, word in enumerate(words):
             rel_start = max(0.0, (word.get('start', chunk_start) - chunk_start) * 1000)
@@ -1580,10 +1575,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             word_text = word.get('word', '')
             visibility_ms = highlight_end - highlight_start
             
-            # Log word timing for animations with extended visibility
-            if animation in EXTENDED_VISIBILITY_ANIMATIONS:
-                flag = "⚠️SHORT" if visibility_ms < 400 else ""
-                logger.info(f"  [{idx}] '{word_text}' appear={highlight_start}ms visible={visibility_ms}ms {flag}")
+            # Word timing log disabled (enable for debugging)
+            # if animation in EXTENDED_VISIBILITY_ANIMATIONS:
+            #     flag = "⚠️SHORT" if visibility_ms < 400 else ""
+            #     logger.info(f"  [{idx}] '{word_text}' appear={highlight_start}ms visible={visibility_ms}ms {flag}")
 
             tag = self._get_word_animation_tag(
                 animation,

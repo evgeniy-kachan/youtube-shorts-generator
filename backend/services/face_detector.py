@@ -782,14 +782,6 @@ class FaceDetector:
                     best_face = max(faces, key=lambda f: f.get("score", 0) * f.get("area", 0))
                     position = best_face["center_x"] / frame_width
                     samples.append((sample_time, position))
-                    logger.info(
-                        "  Sample at %.2fs: face at %.1f%% (center_x=%.0f, frame_width=%d)",
-                        sample_time, position * 100, best_face["center_x"], frame_width
-                    )
-                else:
-                    logger.info("  Sample at %.2fs: no faces found", sample_time)
-            else:
-                logger.info("  Sample at %.2fs: frame read failed", sample_time)
             
             sample_time += self.FACE_JUMP_SAMPLE_INTERVAL
         
@@ -1300,60 +1292,8 @@ class FaceDetector:
         step = max(frame_count // max_samples, 1)
         sample_indices = list(range(0, frame_count, step))[:max_samples]
         
-        logger.info("=" * 60)
-        logger.info("POST-CROP DIAGNOSTIC for %s", video_path)
-        logger.info("=" * 60)
-        
-        for index in sample_indices:
-            capture.set(cv2.CAP_PROP_POS_FRAMES, index)
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                continue
-            
-            faces = self._detect_faces(frame)
-            frame_width = frame.shape[1]
-            frame_height = frame.shape[0]
-            
-            logger.info("Frame %d (resolution %dx%d): found %d faces", index, frame_width, frame_height, len(faces))
-            
-            if not faces:
-                logger.info("  No faces detected")
-                continue
-            
-            for i, f in enumerate(faces):
-                x = f["x"]
-                w = f["w"]
-                center_x = f["center_x"]
-                
-                # Check if face is cut off
-                left_cut = x < 0
-                right_cut = (x + w) > frame_width
-                
-                status = "OK"
-                if left_cut and right_cut:
-                    status = "CUT BOTH SIDES"
-                elif left_cut:
-                    status = "CUT LEFT"
-                elif right_cut:
-                    status = "CUT RIGHT"
-                
-                logger.info(
-                    "  Face %d: x=%.1f center_x=%.1f w=%.1f [%.1f - %.1f] score=%.2f | %s",
-                    i,
-                    x,
-                    center_x,
-                    w,
-                    x,
-                    x + w,
-                    f["score"],
-                    status,
-                )
-                logger.info(
-                    "    Position: %.1f%% from left (0%%=left edge, 50%%=center, 100%%=right edge)",
-                    (center_x / frame_width) * 100,
-                )
-        
-        logger.info("=" * 60)
+        # POST-CROP DIAGNOSTIC disabled to reduce log noise
+        # Enable for debugging face crop issues
         capture.release()
     
     def _get_primary_speaker(
