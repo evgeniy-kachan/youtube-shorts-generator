@@ -1626,6 +1626,77 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                           estimated_natural_duration - total_original_duration * 1.4)
         logger.debug("=" * 70)
 
+    def _calculate_optimal_el_speed(self, dialogue_turns: list[dict]) -> float:
+        """
+        Calculate optimal ElevenLabs speed parameter to minimize FFmpeg tempo adjustment.
+        
+        ElevenLabs supports speed 0.7-1.2, FFmpeg supports tempo 0.7-1.4.
+        By using EL speed, we can reduce the amount of FFmpeg tempo adjustment needed,
+        which reduces audio artifacts (stuttering, cutting).
+        
+        Strategy:
+        - Calculate required_tempo (how much we need to speed up/slow down)
+        - If required_tempo <= 1.2: use EL speed = required_tempo, FFmpeg tempo = 1.0
+        - If required_tempo > 1.2: use EL speed = 1.2, FFmpeg tempo = required_tempo / 1.2
+        - If required_tempo < 0.7: use EL speed = 0.7, FFmpeg tempo = required_tempo / 0.7
+        
+        Returns:
+            Optimal ElevenLabs speed (0.7-1.2)
+        """
+        # Calculate total original duration and translated words
+        total_original_duration = 0.0
+        total_translated_words = 0
+        
+        for turn in dialogue_turns:
+            duration = turn.get("end", 0) - turn.get("start", 0)
+            text_ru = turn.get("text_ru") or turn.get("text", "")
+            words_ru = len(text_ru.split())
+            
+            if duration > 0:
+                total_original_duration += duration
+            total_translated_words += words_ru
+        
+        if total_original_duration <= 0 or total_translated_words <= 0:
+            logger.debug("TTD: No valid durations, using default speed 1.0")
+            return 1.0
+        
+        # Estimate natural duration for Russian at ~1.8 words/sec (ElevenLabs actual rate)
+        estimated_natural_duration = total_translated_words / 1.8
+        
+        # Calculate what total tempo adjustment is needed
+        required_tempo = estimated_natural_duration / total_original_duration
+        
+        # ElevenLabs speed range: 0.7-1.2
+        EL_MIN_SPEED = 0.7
+        EL_MAX_SPEED = 1.2
+        
+        if required_tempo <= EL_MAX_SPEED and required_tempo >= EL_MIN_SPEED:
+            # ElevenLabs can handle it alone, no FFmpeg tempo needed
+            optimal_speed = required_tempo
+            logger.info(
+                "TTD: EL speed=%.2f can handle required tempo %.2fx alone (no FFmpeg adjustment)",
+                optimal_speed, required_tempo
+            )
+        elif required_tempo > EL_MAX_SPEED:
+            # Need to speed up more than EL can handle
+            # Use max EL speed, let FFmpeg handle the rest
+            optimal_speed = EL_MAX_SPEED
+            remaining_tempo = required_tempo / EL_MAX_SPEED
+            logger.info(
+                "TTD: EL speed=%.2f + FFmpeg tempo=%.2fx to achieve required %.2fx",
+                optimal_speed, remaining_tempo, required_tempo
+            )
+        else:
+            # Need to slow down more than EL can handle
+            optimal_speed = EL_MIN_SPEED
+            remaining_tempo = required_tempo / EL_MIN_SPEED
+            logger.info(
+                "TTD: EL speed=%.2f + FFmpeg tempo=%.2fx to achieve required %.2fx",
+                optimal_speed, remaining_tempo, required_tempo
+            )
+        
+        return optimal_speed
+
     def _calculate_gaps(self, dialogue_turns: list[dict]) -> list[float]:
         """
         Calculate gaps (pauses) between dialogue turns based on RELATIVE timestamps.
@@ -1921,11 +1992,15 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         """
         import time
         
-        # Log timeline info for debugging (speed adjustment is handled by FFmpeg in video.py)
+        # Log timeline info for debugging
         self._log_dialogue_timeline(dialogue_turns)
         
-        # Generate at natural speed - FFmpeg tempo 0.7-1.4x will adjust in video.py
-        speed = 1.0
+        # Calculate optimal ElevenLabs speed to reduce FFmpeg tempo adjustment
+        # ElevenLabs supports speed 0.7-1.2, FFmpeg supports tempo 0.7-1.4
+        # Strategy: use EL speed to get closer to target, let FFmpeg handle the rest
+        speed = self._calculate_optimal_el_speed(dialogue_turns)
+        logger.info("TTD: Using ElevenLabs speed=%.2f to reduce FFmpeg tempo adjustment", speed)
+        
         inputs, gaps = self._prepare_ttd_inputs(dialogue_turns, voice_map, add_emotions, speed=speed)
         
         if not inputs:
