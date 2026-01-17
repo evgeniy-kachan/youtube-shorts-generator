@@ -2121,34 +2121,37 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 last_cut_ms = 0
                 
                 for turn_idx, extra_sec, orig_gap, actual_gap in inserted_silences:
-                    # Get timing for PREVIOUS turn (where we should cut AFTER it ends)
+                    # Get timing for PREVIOUS turn and CURRENT turn
                     prev_timing = segment_timing_raw.get(turn_idx - 1, {})
                     curr_timing = segment_timing_raw.get(turn_idx, {})
                     
-                    # Cut point should be at the END of previous turn, not START of current
-                    # This ensures we don't cut off the end of the previous turn's audio
                     prev_end_sec = prev_timing.get("end", 0) + leading_sec
                     curr_start_sec = curr_timing.get("start", 0) + leading_sec
                     
-                    # Use the END of previous turn as cut point (safer)
-                    cut_point_sec = prev_end_sec
-                    cut_point_ms = int(cut_point_sec * 1000)
+                    # The gap in original TTS audio between prev turn end and curr turn start
+                    tts_gap_sec = max(0, curr_start_sec - prev_end_sec)
                     
-                    # Add audio up to cut point (end of previous turn)
+                    # We want to insert silence BETWEEN turns, not cut audio
+                    # Strategy: include all audio up to curr_start, then insert silence
+                    # This preserves any audio "tail" from the previous turn
+                    
+                    cut_point_ms = int(curr_start_sec * 1000)
+                    
+                    # Add audio from last cut to current turn start
                     if cut_point_ms > last_cut_ms:
                         new_audio += audio[last_cut_ms:cut_point_ms]
                     
-                    # Insert silence to fill the gap
+                    # Insert the required silence
                     silence_ms = int(extra_sec * 1000)
                     new_audio += AudioSegment.silent(duration=silence_ms, frame_rate=self.sample_rate)
                     
                     logger.info(
-                        "  Turn %d: inserted %.2fs silence at %.2fs (prev_end=%.2fs, curr_start=%.2fs, orig_gap=%.2fs)",
-                        turn_idx, extra_sec, cut_point_sec, prev_end_sec, curr_start_sec, orig_gap
+                        "  Turn %d: cut at %.2fs, inserted %.2fs silence (prev_end=%.2fs, curr_start=%.2fs, tts_gap=%.2fs, orig_gap=%.2fs)",
+                        turn_idx, curr_start_sec, extra_sec, prev_end_sec, curr_start_sec, tts_gap_sec, orig_gap
                     )
                     
-                    # Next cut should start from the beginning of current turn
-                    last_cut_ms = int(curr_start_sec * 1000)
+                    # Continue from curr_start (we've already included audio up to this point)
+                    last_cut_ms = cut_point_ms
                 
                 # Add remaining audio
                 if last_cut_ms < len(audio):
