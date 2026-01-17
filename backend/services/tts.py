@@ -1771,6 +1771,73 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         return audio_bytes, voice_segments, alignment
 
+    def _get_speaker_rate(
+        self,
+        voice_id: str | None,
+        segment_timing: dict[int, dict],
+        inputs: list[dict],
+        dialogue_turns: list[dict],
+    ) -> float:
+        """
+        Calculate personal speech rate for a speaker based on their valid turns.
+        
+        Instead of using fixed 2.5 words/sec, we analyze turns where this speaker
+        has valid timing and calculate their actual speech rate.
+        
+        Args:
+            voice_id: The voice ID to get rate for
+            segment_timing: Dict mapping input_idx to {start, end} timing
+            inputs: List of TTD inputs with voice_id and text
+            dialogue_turns: Original dialogue turns
+            
+        Returns:
+            Speech rate in words/second for this speaker (or default 2.5 if no data)
+        """
+        DEFAULT_RATE = 2.5  # Fallback rate
+        
+        if not voice_id or not segment_timing or not inputs:
+            return DEFAULT_RATE
+        
+        # Collect word counts and durations for this speaker's valid turns
+        total_words = 0
+        total_duration = 0.0
+        
+        for idx, inp in enumerate(inputs):
+            if inp.get("voice_id") != voice_id:
+                continue
+            
+            timing = segment_timing.get(idx, {})
+            duration = timing.get("end", 0) - timing.get("start", 0)
+            
+            # Only use turns with valid timing (> 0.1s)
+            if duration < 0.1:
+                continue
+            
+            text = inp.get("text", "")
+            # Remove emotion tags like [cheerfully] before counting words
+            clean_text = re.sub(r'\[[\w]+\]\s*', '', text)
+            word_count = len(clean_text.split())
+            
+            if word_count > 0:
+                total_words += word_count
+                total_duration += duration
+        
+        if total_words > 0 and total_duration > 0.1:
+            rate = total_words / total_duration
+            # Sanity check: speech rate should be between 1.5-4.0 words/sec
+            rate = max(1.5, min(4.0, rate))
+            logger.debug(
+                "Speaker %s rate: %.2f words/sec (from %d words in %.2fs)",
+                voice_id[:8] if voice_id else "?", rate, total_words, total_duration
+            )
+            return rate
+        
+        logger.debug(
+            "Speaker %s: no valid timing data, using default rate %.2f w/s",
+            voice_id[:8] if voice_id else "?", DEFAULT_RATE
+        )
+        return DEFAULT_RATE
+
     def _validate_ttd_timing(self, voice_segments: list[dict], num_inputs: int) -> tuple[bool, list[int]]:
         """
         Check if TTD API returned valid timing for most inputs.
@@ -2162,7 +2229,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 if turn_duration < 0.1:
                     text = inputs[idx]["text"] if idx < len(inputs) else ""
                     word_count = len(text.split())
-                    estimated_duration = max(0.5, word_count / 2.5)  # ~2.5 words/sec
+                    
+                    # Get speaker's personal speech rate from valid turns
+                    voice_id = inputs[idx].get("voice_id") if idx < len(inputs) else None
+                    speaker_rate = self._get_speaker_rate(
+                        voice_id, segment_timing, inputs, dialogue_turns
+                    )
+                    
+                    estimated_duration = max(0.5, word_count / speaker_rate)
                     
                     # Try to use previous turn's end as start
                     if idx > 0 and dialogue_turns[idx - 1].get("tts_end_offset"):
@@ -2173,8 +2247,8 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     end_time = start_time + estimated_duration
                     turn_duration = estimated_duration
                     logger.warning(
-                        "TTD turn %d: interpolated timing %.2f-%.2fs (%.2fs) for '%s...'",
-                        idx, start_time, end_time, turn_duration, text[:30]
+                        "TTD turn %d: interpolated timing %.2f-%.2fs (%.2fs) using speaker rate %.2f w/s for '%s...'",
+                        idx, start_time, end_time, turn_duration, speaker_rate, text[:30]
                     )
                 
                 turn["tts_start_offset"] = start_time
@@ -2204,7 +2278,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 else:
                     # Generate estimated word timestamps for turns without API timing
                     text = inputs[idx]["text"] if idx < len(inputs) else ""
-                    words = text.split()
+                    # Remove emotion tags before splitting
+                    clean_text = re.sub(r'\[[\w]+\]\s*', '', text)
+                    words = clean_text.split()
                     if words and turn_duration > 0:
                         per_word = turn_duration / len(words)
                         tts_words = []
