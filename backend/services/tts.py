@@ -2121,24 +2121,34 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 last_cut_ms = 0
                 
                 for turn_idx, extra_sec, orig_gap, actual_gap in inserted_silences:
+                    # Get timing for PREVIOUS turn (where we should cut AFTER it ends)
+                    prev_timing = segment_timing_raw.get(turn_idx - 1, {})
                     curr_timing = segment_timing_raw.get(turn_idx, {})
-                    cut_point_sec = curr_timing.get("start", 0) + leading_sec
+                    
+                    # Cut point should be at the END of previous turn, not START of current
+                    # This ensures we don't cut off the end of the previous turn's audio
+                    prev_end_sec = prev_timing.get("end", 0) + leading_sec
+                    curr_start_sec = curr_timing.get("start", 0) + leading_sec
+                    
+                    # Use the END of previous turn as cut point (safer)
+                    cut_point_sec = prev_end_sec
                     cut_point_ms = int(cut_point_sec * 1000)
                     
-                    # Add audio up to cut point
+                    # Add audio up to cut point (end of previous turn)
                     if cut_point_ms > last_cut_ms:
                         new_audio += audio[last_cut_ms:cut_point_ms]
                     
-                    # Insert silence
+                    # Insert silence to fill the gap
                     silence_ms = int(extra_sec * 1000)
                     new_audio += AudioSegment.silent(duration=silence_ms, frame_rate=self.sample_rate)
                     
                     logger.info(
-                        "  Turn %d: inserted %.2fs silence (original gap=%.2fs, TTS gap=%.2fs)",
-                        turn_idx, extra_sec, orig_gap, actual_gap
+                        "  Turn %d: inserted %.2fs silence at %.2fs (prev_end=%.2fs, curr_start=%.2fs, orig_gap=%.2fs)",
+                        turn_idx, extra_sec, cut_point_sec, prev_end_sec, curr_start_sec, orig_gap
                     )
                     
-                    last_cut_ms = cut_point_ms
+                    # Next cut should start from the beginning of current turn
+                    last_cut_ms = int(curr_start_sec * 1000)
                 
                 # Add remaining audio
                 if last_cut_ms < len(audio):
