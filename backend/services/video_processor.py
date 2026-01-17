@@ -537,8 +537,8 @@ class VideoProcessor:
             logger.info(f"Adding audio and subtitles to video")
             
             # Diagnostic: log video and audio durations
-            video_duration = self._get_media_duration(video_path)
-            audio_duration = self._get_media_duration(audio_path)
+            video_duration = self._probe_duration(video_path)
+            audio_duration = self._probe_duration(audio_path)
             logger.info(
                 "DIAGNOSTIC: video_duration=%.2fs, audio_duration=%.2fs, diff=%.2fs",
                 video_duration or 0,
