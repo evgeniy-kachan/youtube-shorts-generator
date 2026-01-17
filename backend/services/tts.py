@@ -1771,14 +1771,17 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         return audio_bytes, voice_segments, alignment
 
-    def _validate_ttd_timing(self, voice_segments: list[dict], num_inputs: int) -> bool:
+    def _validate_ttd_timing(self, voice_segments: list[dict], num_inputs: int) -> tuple[bool, list[int]]:
         """
-        Check if TTD API returned valid timing for all inputs.
+        Check if TTD API returned valid timing for most inputs.
         
-        Returns True if all inputs have timing with duration >= 0.1s
+        Returns:
+            Tuple of (is_valid, missing_indices)
+            - is_valid: True if at least 70% of inputs have timing
+            - missing_indices: List of input indices without valid timing
         """
         if not voice_segments:
-            return False
+            return False, list(range(num_inputs))
         
         # Build timing map
         segment_timing = {}
@@ -1804,14 +1807,18 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             if duration < 0.1:
                 missing_timing.append(idx)
         
+        # Accept if at least 70% have timing (allow some short phrases to be missing)
+        coverage = (num_inputs - len(missing_timing)) / num_inputs if num_inputs > 0 else 0
+        
         if missing_timing:
             logger.warning(
-                "TTD API returned incomplete timing: %d/%d inputs missing (indices: %s)",
-                len(missing_timing), num_inputs, missing_timing[:5]
+                "TTD API timing coverage: %.0f%% (%d/%d inputs missing, indices: %s)",
+                coverage * 100, len(missing_timing), num_inputs, missing_timing[:10]
             )
-            return False
         
-        return True
+        # Consider valid if we have at least 70% coverage
+        is_valid = coverage >= 0.7
+        return is_valid, missing_timing
 
     def synthesize_dialogue(
         self,
@@ -1903,30 +1910,44 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         vs.get("voice_id", "?")[:8],
                     )
                 
-                # Validate timing
-                if self._validate_ttd_timing(voice_segments, len(inputs)):
-                    logger.info("TTD API returned valid timing on attempt %d", attempt)
+                # Validate timing (now returns tuple with missing indices)
+                is_valid, missing_indices = self._validate_ttd_timing(voice_segments, len(inputs))
+                
+                if is_valid:
+                    if missing_indices:
+                        logger.info(
+                            "TTD API returned sufficient timing on attempt %d (missing %d indices, will interpolate)",
+                            attempt, len(missing_indices)
+                        )
+                    else:
+                        logger.info("TTD API returned complete timing on attempt %d", attempt)
                     break
                 else:
                     if attempt < max_attempts:
                         if attempt == 2:
                             # Wait 30 seconds before 3rd attempt
                             logger.warning(
-                                "TTD API returned incomplete timing (attempt %d), waiting 30s before retry...",
+                                "TTD API returned insufficient timing (attempt %d), waiting 30s before retry...",
                                 attempt
                             )
                             time.sleep(30)
                         else:
                             logger.warning(
-                                "TTD API returned incomplete timing (attempt %d), retrying immediately...",
+                                "TTD API returned insufficient timing (attempt %d), retrying immediately...",
                                 attempt
                             )
                     else:
-                        # 3rd attempt failed
-                        raise RuntimeError(
-                            "ElevenLabs TTD API не вернул корректные тайминги после 3 попыток. "
-                            "Пожалуйста, попробуйте позже."
-                        )
+                        # 3rd attempt failed - but if we have audio, try to proceed with fallback
+                        if audio_bytes and len(audio_bytes) > 1000:
+                            logger.warning(
+                                "TTD API timing incomplete after 3 attempts, proceeding with fallback estimation"
+                            )
+                            break
+                        else:
+                            raise RuntimeError(
+                                "ElevenLabs TTD API не вернул корректные тайминги после 3 попыток. "
+                                "Пожалуйста, попробуйте позже."
+                            )
                         
             except httpx.HTTPStatusError as http_exc:
                 logger.error(
@@ -2137,6 +2158,25 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 end_time = timing.get("end", 0) + leading_sec + offset
                 turn_duration = end_time - start_time
                 
+                # Fallback for missing timing: interpolate from neighbors or estimate
+                if turn_duration < 0.1:
+                    text = inputs[idx]["text"] if idx < len(inputs) else ""
+                    word_count = len(text.split())
+                    estimated_duration = max(0.5, word_count / 2.5)  # ~2.5 words/sec
+                    
+                    # Try to use previous turn's end as start
+                    if idx > 0 and dialogue_turns[idx - 1].get("tts_end_offset"):
+                        start_time = dialogue_turns[idx - 1]["tts_end_offset"] + 0.1
+                    else:
+                        start_time = offset + leading_sec
+                    
+                    end_time = start_time + estimated_duration
+                    turn_duration = estimated_duration
+                    logger.warning(
+                        "TTD turn %d: interpolated timing %.2f-%.2fs (%.2fs) for '%s...'",
+                        idx, start_time, end_time, turn_duration, text[:30]
+                    )
+                
                 turn["tts_start_offset"] = start_time
                 turn["tts_duration"] = turn_duration
                 turn["tts_end_offset"] = end_time
@@ -2161,6 +2201,26 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         tts_words[-1]["start"] if tts_words else 0,
                         tts_words[-1]["end"] if tts_words else 0,
                     )
+                else:
+                    # Generate estimated word timestamps for turns without API timing
+                    text = inputs[idx]["text"] if idx < len(inputs) else ""
+                    words = text.split()
+                    if words and turn_duration > 0:
+                        per_word = turn_duration / len(words)
+                        tts_words = []
+                        for w_idx, word in enumerate(words):
+                            w_start = start_time + w_idx * per_word
+                            w_end = w_start + per_word
+                            tts_words.append({
+                                "word": word,
+                                "start": w_start,
+                                "end": w_end,
+                            })
+                        turn["tts_words"] = tts_words
+                        logger.debug(
+                            "TTD turn %d: generated %d estimated word timestamps (%.2f-%.2fs)",
+                            idx, len(tts_words), start_time, end_time
+                        )
                 
                 logger.debug(
                     "TTD subtitle turn %d: %.2f-%.2fs (%.2fs, %d words) [from API]",
