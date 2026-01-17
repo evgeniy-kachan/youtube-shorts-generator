@@ -2275,6 +2275,10 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 turn["tts_start_offset"] = start_time
                 turn["tts_duration"] = turn_duration
                 turn["tts_end_offset"] = end_time
+                # Mark timing source based on whether we had valid API timing
+                api_timing = segment_timing.get(idx, {})
+                api_duration = api_timing.get("end", 0) - api_timing.get("start", 0)
+                turn["_timing_source"] = "api" if api_duration >= 0.1 else "interpolated"
                 
                 # Add word-level timestamps if available
                 if idx in words_by_input:
@@ -2329,12 +2333,30 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 )
             
             # Summary log: timing source for each turn
-            api_timing_count = sum(1 for t in dialogue_turns if t.get("tts_duration", 0) >= 0.1 and idx < len(inputs))
-            interpolated_count = len(dialogue_turns) - api_timing_count
+            api_count = sum(1 for t in dialogue_turns if t.get("_timing_source") == "api")
+            interp_count = sum(1 for t in dialogue_turns if t.get("_timing_source") == "interpolated")
             logger.info(
                 "TTD TIMING SUMMARY: %d turns from API, %d interpolated",
-                api_timing_count, interpolated_count
+                api_count, interp_count
             )
+            
+            # Detailed log for each turn timing
+            for idx, turn in enumerate(dialogue_turns):
+                if idx >= len(inputs):
+                    break
+                text = inputs[idx]["text"][:40]
+                source = turn.get("_timing_source", "unknown")
+                words = turn.get("tts_words", [])
+                word_range = f"words: {words[0]['start']:.2f}-{words[-1]['end']:.2f}" if words else "no words"
+                logger.info(
+                    "  Turn %d [%s]: %.2f-%.2fs (%.2fs) %s | '%s...'",
+                    idx, source,
+                    turn.get("tts_start_offset", 0),
+                    turn.get("tts_end_offset", 0),
+                    turn.get("tts_duration", 0),
+                    word_range,
+                    text
+                )
         else:
             # Fallback: distribute proportionally by character count
             logger.warning("TTD: No voice_segments in response, using character-based estimation")
