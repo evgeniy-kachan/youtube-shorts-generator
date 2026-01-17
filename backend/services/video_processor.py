@@ -1641,15 +1641,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # Just return empty tag, the base animation handles fade in/out
             return ""
         if animation == 'highlight':
-            # All words visible from start, current word highlighted in orange
-            # Words start gray, become white when "active", current word is orange
+            # All words visible from start, current word highlighted in gold/yellow
+            # Words start gray, become white when "active", current word is gold
             # \1c is primary fill color in BGR format
-            orange = r"\1c&H00A5FF&"  # Orange in BGR
+            gold = r"\1c&H45BAF4&"  # #F4BA45 in BGR
             white = r"\1c&HFFFFFF&"   # White
             gray = r"\1c&HBBBBBB&"    # Light gray
             return (
                 rf"{{{gray}"
-                rf"\t({start_ms},{start_ms + 80},{orange})"
+                rf"\t({start_ms},{start_ms + 80},{gold})"
                 rf"\t({mid_ms},{end_ms},{white})}}"
             )
         if animation == 'boxed':
