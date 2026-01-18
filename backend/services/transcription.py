@@ -105,6 +105,32 @@ class TranscriptionService:
                 len(segments),
                 diarization_enabled,
             )
+            
+            # DIARIZATION DIAGNOSTIC: Analyze speaker distribution
+            if diarization_enabled:
+                speaker_stats: dict[str, dict] = {}
+                for seg in segments:
+                    speaker = seg.get("speaker") or "UNKNOWN"
+                    if speaker not in speaker_stats:
+                        speaker_stats[speaker] = {"segments": 0, "words": 0, "duration": 0.0}
+                    speaker_stats[speaker]["segments"] += 1
+                    speaker_stats[speaker]["words"] += len(seg.get("words", []))
+                    speaker_stats[speaker]["duration"] += seg.get("end", 0) - seg.get("start", 0)
+                
+                logger.info("DIARIZATION STATS: %d unique speakers detected", len(speaker_stats))
+                for spk, stats in sorted(speaker_stats.items()):
+                    logger.info(
+                        "  %s: %d segments, %d words, %.1fs total",
+                        spk, stats["segments"], stats["words"], stats["duration"]
+                    )
+                
+                # Warn if only one speaker detected (might be diarization issue)
+                if len(speaker_stats) == 1:
+                    logger.warning(
+                        "DIARIZATION WARNING: Only 1 speaker detected! "
+                        "Expected %d speakers. Check if diarization is working correctly.",
+                        self.num_speakers
+                    )
 
             # Format segments (speakers already assigned by WhisperX!)
             formatted_segments = []

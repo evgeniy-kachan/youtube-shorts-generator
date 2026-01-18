@@ -278,6 +278,29 @@ class HighlightAnalyzer:
             # Build dialogue turns (group consecutive segments by same speaker)
             # Now also preserving word-level timestamps for phrase-level sync!
             dialogue = []
+            
+            # DIARIZATION DIAGNOSTIC: Log speaker changes in this chunk
+            if chunk_segments:
+                speaker_changes = []
+                prev_speaker = None
+                for seg_idx, seg in enumerate(chunk_segments):
+                    seg_speaker = seg.get("speaker")
+                    if seg_speaker != prev_speaker:
+                        speaker_changes.append((seg_idx, seg_speaker, seg.get("text", "")[:30]))
+                        prev_speaker = seg_speaker
+                
+                if len(speaker_changes) > 1:
+                    logger.debug(
+                        "DIARIZATION: Chunk has %d speaker changes: %s",
+                        len(speaker_changes) - 1,
+                        [(idx, spk, txt) for idx, spk, txt in speaker_changes]
+                    )
+                elif len(speaker_changes) == 1:
+                    logger.debug(
+                        "DIARIZATION: Chunk has single speaker: %s",
+                        speaker_changes[0][1]
+                    )
+            
             if chunk_segments:
                 first_seg = chunk_segments[0]
                 current_turn = {

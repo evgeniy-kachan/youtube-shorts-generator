@@ -786,6 +786,32 @@ def _process_segments_task(
         for segment in segments_to_process:
             audio_path = os.path.join(output_dir, f"{segment['id']}.wav")
             
+            # DIARIZATION DIAGNOSTIC: Log speaker info for this segment
+            dialogue = segment.get('dialogue') or []
+            speakers_in_segment = set()
+            for turn in dialogue:
+                spk = turn.get('speaker')
+                if spk:
+                    speakers_in_segment.add(spk)
+            
+            logger.info(
+                "DIARIZATION CHECK [%s]: %d turns, %d unique speakers: %s",
+                segment['id'],
+                len(dialogue),
+                len(speakers_in_segment),
+                list(speakers_in_segment)
+            )
+            
+            # Log first few words of each turn to help identify speaker changes
+            for i, turn in enumerate(dialogue[:5]):  # First 5 turns
+                turn_text = (turn.get('text') or turn.get('text_ru') or '')[:50]
+                logger.info(
+                    "  Turn %d [%s]: '%s...'",
+                    i, turn.get('speaker', '?'), turn_text
+                )
+            if len(dialogue) > 5:
+                logger.info("  ... and %d more turns", len(dialogue) - 5)
+            
             # Check if we have a dialogue structure for multi-speaker synthesis
             has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
             
