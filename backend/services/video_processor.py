@@ -1087,17 +1087,9 @@ class VideoProcessor:
             )
         
         subtitles: List[Dict] = []
-        lane_available_until = [0.0, 0.0]  # support two stacked rows
-
-        def allocate_lane(start_time: float, end_time: float) -> int:
-            tolerance = 0.03
-            for idx in range(len(lane_available_until)):
-                if start_time >= lane_available_until[idx] - tolerance:
-                    lane_available_until[idx] = end_time
-                    return idx
-            lane_idx = lane_available_until.index(min(lane_available_until))
-            lane_available_until[lane_idx] = end_time
-            return lane_idx
+        # NOTE: Lane allocation disabled - all subtitles now appear at same position
+        # Previously supported two stacked rows for overlapping subtitles
+        # lane_available_until = [0.0, 0.0]
 
         for turn in dialogue:
             raw_text = (turn.get("text_ru") or turn.get("text") or "").strip()
@@ -1168,7 +1160,7 @@ class VideoProcessor:
                             "end": tw["end"],
                         })
                     
-                    lane_idx = allocate_lane(chunk_start, chunk_end_time)
+                    lane_idx = 0  # All subtitles at same position
                     
                     subtitles.append({
                         "start": chunk_start,
@@ -1225,7 +1217,7 @@ class VideoProcessor:
                             }
                         )
 
-                    lane_idx = allocate_lane(start_time, end_time)
+                    lane_idx = 0  # All subtitles at same position
 
                     subtitles.append(
                         {
@@ -1242,8 +1234,7 @@ class VideoProcessor:
                 chunks_added += 1
 
             if subtitles and subtitles[-1]["end"] < relative_end:
-                lane_idx = subtitles[-1].get("lane", 0)
-                lane_available_until[lane_idx] = relative_end
+                # Extend last subtitle to cover remaining time
                 subtitles[-1]["end"] = relative_end
                 if subtitles[-1]["words"]:
                     subtitles[-1]["words"][-1]["end"] = relative_end
@@ -1266,7 +1257,7 @@ class VideoProcessor:
                             "end": min(relative_end, word_start + per_word),
                         }
                     )
-                lane_idx = allocate_lane(relative_start, relative_end)
+                lane_idx = 0  # All subtitles at same position
                 subtitles.append(
                     {
                         "start": relative_start,
