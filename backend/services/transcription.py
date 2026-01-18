@@ -12,6 +12,9 @@ from backend.config import (
     TEMP_DIR,
     WHISPERX_BATCH_SIZE,
     WHISPERX_ENABLE_DIARIZATION,
+    DIARIZATION_NUM_SPEAKERS,
+    DIARIZATION_MIN_SPEAKERS,
+    DIARIZATION_MAX_SPEAKERS,
 )
 from backend.services.transcription_runner import TranscriptionRunner
 
@@ -28,7 +31,9 @@ class TranscriptionService:
         compute_type: str = "float16",
         batch_size: int = WHISPERX_BATCH_SIZE,
         enable_diarization: bool = WHISPERX_ENABLE_DIARIZATION,
-        num_speakers: int = 2,
+        num_speakers: int = DIARIZATION_NUM_SPEAKERS,
+        min_speakers: int = DIARIZATION_MIN_SPEAKERS,
+        max_speakers: int = DIARIZATION_MAX_SPEAKERS,
         hf_token: Optional[str] = None,
     ):
         """
@@ -40,7 +45,9 @@ class TranscriptionService:
             compute_type: Computation type (float16, int8, float32)
             batch_size: Transcription batch size (unused in external runner)
             enable_diarization: Enable speaker diarization (built into WhisperX)
-            num_speakers: Expected number of speakers for diarization
+            num_speakers: Expected number of speakers (0 for auto-detect)
+            min_speakers: Min speakers for auto-detect mode
+            max_speakers: Max speakers for auto-detect mode
             hf_token: Hugging Face token for diarization model access
         """
         requested_device = device
@@ -58,23 +65,29 @@ class TranscriptionService:
         self.batch_size = batch_size
         self.enable_diarization = enable_diarization
         self.num_speakers = num_speakers
+        self.min_speakers = min_speakers
+        self.max_speakers = max_speakers
         self.hf_token = hf_token or HUGGINGFACE_TOKEN
 
         # Use WhisperX built-in diarization (assigns speakers at word level!)
         self.transcription_runner = TranscriptionRunner(
             enable_diarization=enable_diarization,
             num_speakers=num_speakers,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
         )
 
+        # Log diarization mode
+        diar_mode = f"fixed={num_speakers}" if num_speakers > 0 else f"auto [{min_speakers}-{max_speakers}]"
         logger.info(
             "TranscriptionService initialized: model=%s, device=%s (requested=%s), compute=%s, "
-            "diarization=%s (BUILT-IN WhisperX), num_speakers=%d",
+            "diarization=%s (BUILT-IN WhisperX), speakers=%s",
             model_name,
             self.device,
             requested_device,
             compute_type,
             enable_diarization,
-            num_speakers,
+            diar_mode,
         )
 
     def transcribe(self, audio_path: str, language: str = "en") -> List[Dict]:

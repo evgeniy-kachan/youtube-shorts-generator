@@ -19,6 +19,8 @@ class TranscriptionRunner:
         self,
         enable_diarization: bool = True,
         num_speakers: int = 2,
+        min_speakers: int = 1,
+        max_speakers: int = 4,
     ):
         self.enabled = os.getenv("EXTERNAL_TRANSCRIPTION_ENABLED", "0") == "1"
         self.python_path = os.getenv(
@@ -30,16 +32,19 @@ class TranscriptionRunner:
             "/opt/youtube-shorts-generator/backend/tools/transcribe.py"
         )
         self.enable_diarization = enable_diarization
-        self.num_speakers = num_speakers
+        self.num_speakers = num_speakers  # 0 = auto-detect
+        self.min_speakers = min_speakers
+        self.max_speakers = max_speakers
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
 
         if self.enabled:
+            mode = f"fixed={num_speakers}" if num_speakers > 0 else f"auto [{min_speakers}-{max_speakers}]"
             logger.info(
-                "External transcription enabled: python=%s, script=%s, diarize=%s, num_speakers=%d",
+                "External transcription enabled: python=%s, script=%s, diarize=%s, speakers=%s",
                 self.python_path,
                 self.script_path,
                 self.enable_diarization,
-                self.num_speakers,
+                mode,
             )
         else:
             logger.warning(
@@ -92,6 +97,8 @@ class TranscriptionRunner:
                 cmd.extend([
                     "--diarize",
                     "--num_speakers", str(self.num_speakers),
+                    "--min_speakers", str(self.min_speakers),
+                    "--max_speakers", str(self.max_speakers),
                     "--hf_token", self.hf_token,
                 ])
 

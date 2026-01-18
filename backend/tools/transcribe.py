@@ -21,7 +21,9 @@ def main():
     parser.add_argument("--compute_type", default="float16", help="Compute type")
     parser.add_argument("--output", required=True, help="Output JSON file path")
     parser.add_argument("--diarize", action="store_true", help="Enable speaker diarization")
-    parser.add_argument("--num_speakers", type=int, default=2, help="Expected number of speakers")
+    parser.add_argument("--num_speakers", type=int, default=2, help="Expected number of speakers (0 for auto-detect)")
+    parser.add_argument("--min_speakers", type=int, default=1, help="Min speakers for auto-detect mode")
+    parser.add_argument("--max_speakers", type=int, default=4, help="Max speakers for auto-detect mode")
     parser.add_argument("--hf_token", default=None, help="HuggingFace token for diarization")
     args = parser.parse_args()
 
@@ -68,7 +70,19 @@ def main():
         # Run WhisperX BUILT-IN diarization (much better than separate Pyannote!)
         diarize_segments = None
         if args.diarize and hf_token:
-            print(f"[transcribe.py] Running WhisperX diarization (num_speakers={args.num_speakers})...", file=sys.stderr)
+            # Determine speaker count mode
+            if args.num_speakers > 0:
+                # Fixed number of speakers (more accurate if known)
+                min_spk = args.num_speakers
+                max_spk = args.num_speakers
+                mode_str = f"fixed={args.num_speakers}"
+            else:
+                # Auto-detect mode (less accurate but flexible)
+                min_spk = args.min_speakers
+                max_spk = args.max_speakers
+                mode_str = f"auto [{min_spk}-{max_spk}]"
+            
+            print(f"[transcribe.py] Running WhisperX diarization (mode={mode_str})...", file=sys.stderr)
             try:
                 from whisperx.diarize import DiarizationPipeline, assign_word_speakers
                 
@@ -78,9 +92,16 @@ def main():
                 )
                 diarize_segments = diarize_model(
                     audio,
-                    min_speakers=args.num_speakers,
-                    max_speakers=args.num_speakers,
+                    min_speakers=min_spk,
+                    max_speakers=max_spk,
                 )
+                
+                # Log detected speakers
+                detected_speakers = set()
+                for seg in diarize_segments.itertracks(yield_label=True):
+                    detected_speakers.add(seg[2])
+                print(f"[transcribe.py] Diarization detected {len(detected_speakers)} speakers: {sorted(detected_speakers)}", file=sys.stderr)
+                
                 # Assign speakers to words
                 result = assign_word_speakers(diarize_segments, result)
                 print(f"[transcribe.py] Diarization complete, speakers assigned to words", file=sys.stderr)

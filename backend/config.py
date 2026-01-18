@@ -54,6 +54,14 @@ WHISPERX_BATCH_SIZE = int(os.getenv("WHISPERX_BATCH_SIZE", 16))
 WHISPERX_ENABLE_DIARIZATION = os.getenv("WHISPERX_ENABLE_DIARIZATION", "true").lower() in ("1", "true", "yes")
 HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 
+# Diarization Configuration (pyannote.audio via WhisperX)
+# Number of speakers: set to expected count for better accuracy
+# Use 0 for auto-detection (less accurate)
+DIARIZATION_NUM_SPEAKERS = int(os.getenv("DIARIZATION_NUM_SPEAKERS", 2))
+# Min/max speakers for auto-detection mode (when NUM_SPEAKERS=0)
+DIARIZATION_MIN_SPEAKERS = int(os.getenv("DIARIZATION_MIN_SPEAKERS", 1))
+DIARIZATION_MAX_SPEAKERS = int(os.getenv("DIARIZATION_MAX_SPEAKERS", 4))
+
 HIGHLIGHT_CONCURRENT_REQUESTS = int(os.getenv("HIGHLIGHT_CONCURRENT_REQUESTS", 3))
 HIGHLIGHT_SEGMENTS_PER_CHUNK = int(os.getenv("HIGHLIGHT_SEGMENTS_PER_CHUNK", 10))
 
