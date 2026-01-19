@@ -868,6 +868,9 @@ Set "needs_previous_context": true if the text:
 • OR references something unexplained ("he did it", "the politician left", "that's when")
 • OR feels like a continuation/punchline without setup
 • OR starts mid-sentence or mid-thought
+• OR (SEMANTIC CHECK) the "Previous topic" describes a story/event that THIS segment is clearly 
+  a conclusion or lesson from. Example: prev="How I failed my first business" + text="Now I always 
+  require prepayment" → the lesson loses impact without the failure story.
 
 Set "needs_next_context": true if the text:
 • ENDS mid-story (setup without punchline, buildup without payoff)
@@ -875,6 +878,9 @@ Set "needs_next_context": true if the text:
 • OR poses a question that isn't answered in this segment
 • OR ends with a teaser/promise without delivery
 • OR the "Next topic" clearly contains the missing resolution
+• OR (SEMANTIC CHECK) the segment is clearly a setup/problem statement and "Next topic" 
+  contains the solution/answer. Example: text="I was losing $50K/month" + next="How I turned 
+  it around" → the problem without the solution is incomplete.
 
 When EITHER flag is true:
 • Cap clip_worthiness at 0.25 (incomplete segments are not standalone clips)
