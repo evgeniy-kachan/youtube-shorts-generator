@@ -1,13 +1,13 @@
 import React, { useMemo, useState } from 'react';
 
 const CRITERIA_LABELS = {
-  emotional_intensity: 'Эмоциональность',
-  hook_potential: 'Сила начала',
-  key_value: 'Ценность',
-  story_moment: 'Сюжетность',
-  humor: 'Юмор',
-  dynamic_flow: 'Динамика',
-  clip_worthiness: 'Годится для клипа',
+  surprise_novelty: 'Неожиданность',
+  specificity_score: 'Конкретика',
+  personal_connection: 'Личная история',
+  actionability_score: 'Практичность',
+  clarity_simplicity: 'Понятность',
+  completeness_arc: 'Законченность',
+  hook_quality: 'Сила хука',
 };
 
 const SUBTITLE_POSITIONS = [
@@ -524,8 +524,25 @@ const SegmentsList = ({
                     </p>
 
                     <div className="flex flex-wrap gap-2">
-                      {Object.entries(segment.criteria_scores)
-                        .filter(([_, score]) => score > 0.6)
+                      {/* Context flags */}
+                      {segment.needs_previous_context && (
+                        <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-amber-100 text-amber-800">
+                          ⚠️ Нужен контекст до
+                        </span>
+                      )}
+                      {segment.needs_next_context && (
+                        <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-amber-100 text-amber-800">
+                          ⚠️ Нужен контекст после
+                        </span>
+                      )}
+                      {segment.merged_from_starts && (
+                        <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                          🔗 Объединён
+                        </span>
+                      )}
+                      {/* Criteria scores */}
+                      {Object.entries(segment.criteria_scores || {})
+                        .filter(([key, score]) => typeof score === 'number' && score > 0.6)
                         .slice(0, 5)
                         .map(([criterion, score]) => (
                           <span
@@ -533,7 +550,7 @@ const SegmentsList = ({
                             className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-700"
                           >
                             {CRITERIA_LABELS[criterion] ||
-                              criterion.replace('_', ' ')}
+                              criterion.replace(/_/g, ' ')}
                             : {(score * 100).toFixed(0)}%
                           </span>
                         ))}
