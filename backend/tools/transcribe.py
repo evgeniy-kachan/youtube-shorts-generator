@@ -97,9 +97,19 @@ def main():
                 )
                 
                 # Log detected speakers
+                # WhisperX returns a DataFrame with columns: start, end, speaker
                 detected_speakers = set()
-                for seg in diarize_segments.itertracks(yield_label=True):
-                    detected_speakers.add(seg[2])
+                if hasattr(diarize_segments, 'itertracks'):
+                    # pyannote Annotation object
+                    for seg in diarize_segments.itertracks(yield_label=True):
+                        detected_speakers.add(seg[2])
+                elif hasattr(diarize_segments, 'iterrows'):
+                    # pandas DataFrame
+                    for _, row in diarize_segments.iterrows():
+                        if 'speaker' in row:
+                            detected_speakers.add(row['speaker'])
+                else:
+                    print(f"[transcribe.py] Unknown diarization result type: {type(diarize_segments)}", file=sys.stderr)
                 print(f"[transcribe.py] Diarization detected {len(detected_speakers)} speakers: {sorted(detected_speakers)}", file=sys.stderr)
                 
                 # Assign speakers to words
