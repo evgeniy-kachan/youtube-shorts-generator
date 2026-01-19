@@ -107,6 +107,13 @@ class HighlightAnalyzer:
             # Analyze segments in parallel
             analyzed_segments = self._analyze_segments_parallel(potential_segments, max_parallel)
             
+            # Post-process: merge incomplete segments and re-score
+            analyzed_segments = self._merge_incomplete_segments(
+                analyzed_segments,
+                max_duration=max_duration,
+                max_parallel=max_parallel,
+            )
+            
             # Filter segments with good scores
             highlights = []
             scored_segments: list[tuple[int, dict, dict, float]] = []
@@ -174,6 +181,184 @@ class HighlightAnalyzer:
             results = [future.result() for future in futures]
         
         return results
+
+    def _merge_incomplete_segments(
+        self,
+        analyzed_segments: List[tuple],
+        max_duration: int = 180,
+        max_parallel: int = 4,
+    ) -> List[tuple]:
+        """
+        Merge adjacent incomplete segments and re-analyze them.
+        
+        Logic:
+        - If segment[i] has needs_next_context=True AND segment[i+1] has needs_previous_context=True
+          → merge them into one segment and re-analyze
+        - Also merge if segment[i].needs_next_context=True and scores suggest continuation
+        """
+        if len(analyzed_segments) < 2:
+            return analyzed_segments
+        
+        # Find merge candidates
+        merge_pairs = []
+        i = 0
+        while i < len(analyzed_segments) - 1:
+            seg_a, scores_a = analyzed_segments[i]
+            seg_b, scores_b = analyzed_segments[i + 1]
+            
+            needs_next = scores_a.get('needs_next_context', False)
+            needs_prev = scores_b.get('needs_previous_context', False)
+            
+            # Check if merged duration would be acceptable
+            merged_duration = seg_b['end'] - seg_a['start']
+            
+            # Merge conditions:
+            # 1. Direct link: A needs next AND B needs previous
+            # 2. A needs next and B is low-scored (likely continuation)
+            # 3. Both are low-scored and together might form a story
+            should_merge = False
+            merge_reason = ""
+            
+            if needs_next and needs_prev and merged_duration <= max_duration:
+                should_merge = True
+                merge_reason = "direct_link"
+            elif needs_next and merged_duration <= max_duration:
+                # A clearly needs continuation
+                score_a = self._calculate_highlight_score(scores_a)
+                score_b = self._calculate_highlight_score(scores_b)
+                if score_a < 0.35 and score_b < 0.35:
+                    should_merge = True
+                    merge_reason = "both_low_score"
+            elif needs_prev and merged_duration <= max_duration:
+                # B clearly needs context from A
+                score_a = self._calculate_highlight_score(scores_a)
+                if score_a < 0.40:
+                    should_merge = True
+                    merge_reason = "b_needs_context"
+            
+            if should_merge:
+                merge_pairs.append((i, i + 1, merge_reason))
+                logger.info(
+                    "MERGE CANDIDATE: segments %d+%d (%.1f-%.1fs, reason=%s, dur=%.1fs)",
+                    i, i + 1, seg_a['start'], seg_b['end'], merge_reason, merged_duration
+                )
+                i += 2  # Skip the next segment as it's being merged
+            else:
+                i += 1
+        
+        if not merge_pairs:
+            logger.info("No incomplete segments to merge")
+            return analyzed_segments
+        
+        logger.info(f"Found {len(merge_pairs)} segment pairs to merge")
+        
+        # Create merged segments
+        segments_to_reanalyze = []
+        merged_indices = set()
+        
+        for idx_a, idx_b, reason in merge_pairs:
+            seg_a, _ = analyzed_segments[idx_a]
+            seg_b, _ = analyzed_segments[idx_b]
+            
+            # Merge segment data
+            merged_segment = self._merge_two_segments(seg_a, seg_b)
+            segments_to_reanalyze.append((merged_segment, idx_a, idx_b))
+            merged_indices.add(idx_a)
+            merged_indices.add(idx_b)
+        
+        # Re-analyze merged segments in parallel
+        logger.info(f"Re-analyzing {len(segments_to_reanalyze)} merged segments...")
+        
+        def reanalyze(item):
+            merged_seg, idx_a, idx_b = item
+            new_scores = self._analyze_segment_with_llm(merged_seg)
+            new_highlight = self._calculate_highlight_score(new_scores)
+            logger.info(
+                "MERGED %d+%d: new_score=%.2f, needs_prev=%s, needs_next=%s",
+                idx_a, idx_b, new_highlight,
+                new_scores.get('needs_previous_context'),
+                new_scores.get('needs_next_context'),
+            )
+            return (merged_seg, new_scores, idx_a, idx_b)
+        
+        with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+            reanalyzed = list(executor.map(reanalyze, segments_to_reanalyze))
+        
+        # Build final list: replace merged pairs with single merged segment
+        result = []
+        i = 0
+        reanalyzed_map = {(r[2], r[3]): (r[0], r[1]) for r in reanalyzed}
+        
+        while i < len(analyzed_segments):
+            if i in merged_indices:
+                # Check if this is the start of a merged pair
+                for idx_a, idx_b, _ in merge_pairs:
+                    if idx_a == i:
+                        merged_seg, merged_scores = reanalyzed_map[(idx_a, idx_b)]
+                        result.append((merged_seg, merged_scores))
+                        i = idx_b + 1  # Skip past the merged pair
+                        break
+                else:
+                    # This index was part of a merge but not the start
+                    i += 1
+            else:
+                result.append(analyzed_segments[i])
+                i += 1
+        
+        logger.info(
+            "After merging: %d segments (was %d)",
+            len(result), len(analyzed_segments)
+        )
+        return result
+
+    def _merge_two_segments(self, seg_a: Dict, seg_b: Dict) -> Dict:
+        """Merge two segment dictionaries into one."""
+        # Merge speakers
+        speakers_a = seg_a.get('speakers', [])
+        speakers_b = seg_b.get('speakers', [])
+        merged_speakers = list(dict.fromkeys(speakers_a + speakers_b))  # Preserve order, remove dups
+        
+        # Merge dialogue
+        dialogue_a = list(seg_a.get('dialogue', []))
+        dialogue_b = list(seg_b.get('dialogue', []))
+        
+        # If last speaker of A == first speaker of B, merge those turns
+        if dialogue_a and dialogue_b:
+            if dialogue_a[-1].get('speaker') == dialogue_b[0].get('speaker'):
+                last_turn = dialogue_a.pop()
+                first_turn = dialogue_b.pop(0)
+                merged_turn = {
+                    "speaker": last_turn.get('speaker'),
+                    "text": (last_turn.get('text', '') + ' ' + first_turn.get('text', '')).strip(),
+                    "start": last_turn.get('start'),
+                    "end": first_turn.get('end'),
+                    "words": (last_turn.get('words') or []) + (first_turn.get('words') or []),
+                }
+                dialogue_a.append(merged_turn)
+        
+        merged_dialogue = dialogue_a + dialogue_b
+        
+        # Merge words
+        words_a = seg_a.get('words', [])
+        words_b = seg_b.get('words', [])
+        merged_words = words_a + words_b
+        
+        # Determine primary speaker
+        primary_speaker = seg_a.get('primary_speaker') or seg_b.get('primary_speaker', 'Unknown')
+        
+        return {
+            'start': seg_a['start'],
+            'end': seg_b['end'],
+            'duration': seg_b['end'] - seg_a['start'],
+            'text': (seg_a.get('text', '') + ' ' + seg_b.get('text', '')).strip(),
+            'speakers': merged_speakers,
+            'dialogue': merged_dialogue,
+            'words': merged_words,
+            'primary_speaker': primary_speaker,
+            'prev_topic': seg_a.get('prev_topic', 'Unknown'),
+            'next_topic': seg_b.get('next_topic', 'Unknown'),
+            '_merged_from': [seg_a.get('start'), seg_b.get('start')],  # Debug info
+        }
     
     def _create_time_windows(self, segments: List[Dict], min_duration: int, max_duration: int) -> List[Dict]:
         """
@@ -478,9 +663,14 @@ class HighlightAnalyzer:
             'words': segment.get('words', []),
             'highlight_score': highlight_score,
             'criteria_scores': scores,
+            'needs_previous_context': scores.get('needs_previous_context', False),
+            'needs_next_context': scores.get('needs_next_context', False),
         }
         if is_fallback:
             payload['is_fallback'] = True
+        # Add debug info if segment was merged
+        if segment.get('_merged_from'):
+            payload['merged_from_starts'] = segment['_merged_from']
         return payload
 
     def _analyze_segment_with_llm(self, segment: Dict) -> Dict[str, float]:
@@ -504,37 +694,96 @@ IMPORTANT:
 - Use ONLY the provided text. Do not invent context.
 - Reward specificity: numbers, clear takeaways, step-by-step advice.
 - Penalize fluff, clichés, or passages that require too much surrounding context.
-- Prefer self-contained arcs (question → insight/answer). If the fragment stops right after a question, teaser, or promise and the response is missing, treat it as incomplete: cap clip_worthiness at 0.20 and push other scores down.
-- Use "Next topic" to decide whether the immediate continuation likely contains the missing answer. Until that continuation is included, assume the current fragment is incomplete and score it conservatively.
+- Prefer self-contained arcs (question → insight/answer).
+
+SEGMENT BOUNDARY DETECTION (CRITICAL):
+
+Set "needs_previous_context": true if the text:
+• STARTS with connectors: "And", "So", "That's why", "But", "Because", "Then", "He said", "She replied"
+  (Russian: "И", "А", "Так что", "Поэтому", "Но", "Потому что", "Тогда", "Он сказал", "Она ответила")
+• OR references something unexplained ("he did it", "the politician left", "that's when")
+• OR feels like a continuation/punchline without setup
+• OR starts mid-sentence or mid-thought
+
+Set "needs_next_context": true if the text:
+• ENDS mid-story (setup without punchline, buildup without payoff)
+• OR ends with cliffhangers: "and then—", "that's when—", "what happened next..."
+• OR poses a question that isn't answered in this segment
+• OR ends with a teaser/promise without delivery
+• OR the "Next topic" clearly contains the missing resolution
+
+When EITHER flag is true:
+• Cap clip_worthiness at 0.25 (incomplete segments are not standalone clips)
+• The segment may still have high other scores if the content itself is good
+
+CALIBRATION EXAMPLES:
+
+=== HIGH SCORES (0.7–0.9) — Strong viral potential ===
+
+Example (scores ~0.85, flags: false/false):
+"I was $400K in debt at 28. Here's what saved me: I called every creditor 
+and negotiated 60% settlements. Then I built a side business doing exactly 
+what got me fired — but for myself. In 18 months I was debt-free."
+Why: Specific numbers, clear arc (problem → action → result), actionable steps.
+
+Example (scores ~0.75, flags: false/false):
+"Everyone says 'follow your passion.' That's terrible advice. Follow your 
+skills. I hated accounting but I was good at it. Built a $5M firm in 4 years."
+Why: Contrarian take, specific outcome, challenges common wisdom.
+
+=== MEDIUM SCORES (0.4–0.6) ===
+
+Example (scores ~0.50, flags: false/false):
+"In sales, it's all about relationships. You have to genuinely care about 
+the client's problems. The best salespeople I know spend 80% of time listening."
+Why: True but generic. No specific story or metrics. Common advice.
+
+=== LOW SCORES — Incomplete segments ===
+
+Example (scores ~0.20, flags: true/false — needs_previous_context):
+"And said: 'Ready.' The politician left satisfied. Do you do the same 
+with politicians? I noticed when I get involved in politics, it ends badly."
+Why: Starts with "And said" — missing the setup. Who said ready? About what?
+
+Example (scores ~0.25, flags: false/true — needs_next_context):
+"He made a gesture as if working on scaffolding, dropped some dust, 
+but didn't change anything—"
+Why: Setup without punchline. The payoff is clearly in the next segment.
+
+Example (scores ~0.15, flags: true/false):
+"Yeah, exactly. I totally agree. That's a great point. You know..."
+Why: Filler content, requires previous context, no standalone value.
 
 TEXT:
 "{segment['text']}"
 
-Score each dimension from 0.0–1.0 (clip is acceptable when highlight_score ≥ 0.30):
+Score each dimension from 0.0–1.0:
 
 1. emotional_intensity — strength of emotions, surprise, tension, inspiration.
 2. hook_potential — how strongly the beginning grabs attention.
 3. business_value — density of practical business insight (tactics, metrics, lessons).
 4. actionable_value — clarity/usefulness of advice, steps, or frameworks.
-5. clip_worthiness — suitability as a standalone viral clip viewers will watch fully.
+5. clip_worthiness — suitability as a standalone viral clip (cap at 0.25 if incomplete).
+6. needs_previous_context — true/false: does this segment need the previous one?
+7. needs_next_context — true/false: does this segment need the next one?
 
 SCORING RULES:
-- 0.0 = completely absent
-- 1.0 = extremely strong
-- Use decimal values (e.g., 0.35, 0.72).
-- Be strict and realistic; high scores only when clearly deserved.
-- If the story feels unfinished (question without answer, buildup without payoff), keep highlight_score < 0.30.
+- 0.0 = completely absent, 1.0 = extremely strong
+- Use decimal values (e.g., 0.35, 0.72)
+- Be strict and realistic; high scores only when clearly deserved
+- If EITHER needs_*_context is true → cap clip_worthiness ≤ 0.25
 
 OUTPUT FORMAT:
-Respond ONLY with valid JSON (no explanations, no markdown). Correct format example:
+Respond ONLY with valid JSON (no explanations, no markdown):
 {{
   "emotional_intensity": 0.0,
   "hook_potential": 0.0,
   "business_value": 0.0,
   "actionable_value": 0.0,
-  "clip_worthiness": 0.0
-}}
-If the format is violated, the response is invalid."""
+  "clip_worthiness": 0.0,
+  "needs_previous_context": false,
+  "needs_next_context": false
+}}"""
 
         try:
             response_json = self.client.chat(
@@ -553,9 +802,23 @@ If the format is violated, the response is invalid."""
             
             # Validate scores
             for key in scores:
-                if not isinstance(scores[key], (int, float)):
-                    scores[key] = 0.0
-                scores[key] = max(0.0, min(1.0, float(scores[key])))
+                # Handle boolean flags
+                if key in ('needs_previous_context', 'needs_next_context'):
+                    if not isinstance(scores[key], bool):
+                        # Try to interpret string/int as bool
+                        scores[key] = str(scores[key]).lower() in ('true', '1', 'yes')
+                else:
+                    if not isinstance(scores[key], (int, float)):
+                        scores[key] = 0.0
+                    scores[key] = max(0.0, min(1.0, float(scores[key])))
+            
+            # Ensure boolean flags exist
+            scores.setdefault('needs_previous_context', False)
+            scores.setdefault('needs_next_context', False)
+            
+            # Enforce clip_worthiness cap for incomplete segments
+            if scores.get('needs_previous_context') or scores.get('needs_next_context'):
+                scores['clip_worthiness'] = min(scores.get('clip_worthiness', 0), 0.25)
             
             return scores
             
@@ -568,6 +831,8 @@ If the format is violated, the response is invalid."""
                 'business_value': 0.5,
                 'actionable_value': 0.5,
                 'clip_worthiness': 0.5,
+                'needs_previous_context': False,
+                'needs_next_context': False,
             }
     
     def _calculate_highlight_score(self, scores: Dict[str, float]) -> float:
