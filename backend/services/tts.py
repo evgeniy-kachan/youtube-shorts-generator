@@ -2489,6 +2489,32 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     word_range,
                     text
                 )
+                
+                # For long turns (>15 words), show word timing distribution
+                if len(words) > 15:
+                    # Show first 3, middle gap, and last 3 words
+                    first_words = words[:3]
+                    last_words = words[-3:]
+                    middle_idx = len(words) // 2
+                    middle_word = words[middle_idx] if middle_idx < len(words) else None
+                    
+                    first_info = ", ".join([f"'{w['word']}'@{w['start']:.2f}" for w in first_words])
+                    last_info = ", ".join([f"'{w['word']}'@{w['start']:.2f}" for w in last_words])
+                    mid_info = f"'{middle_word['word']}'@{middle_word['start']:.2f}" if middle_word else "?"
+                    
+                    # Calculate gaps between consecutive words
+                    gaps = []
+                    for i in range(1, len(words)):
+                        gap = words[i]['start'] - words[i-1]['end']
+                        if gap > 0.3:  # Significant gap
+                            gaps.append(f"gap@{words[i-1]['end']:.2f}-{words[i]['start']:.2f}={gap:.2f}s")
+                    
+                    logger.info(
+                        "    WORD DIST (%d words): [%s] ... [%s] ... [%s]",
+                        len(words), first_info, mid_info, last_info
+                    )
+                    if gaps:
+                        logger.warning("    GAPS in turn %d: %s", idx, ", ".join(gaps[:5]))
         else:
             # Fallback: distribute proportionally by character count
             logger.warning("TTD: No voice_segments in response, using character-based estimation")
