@@ -90,7 +90,7 @@ class HighlightAnalyzer:
                 max_duration=max_duration,
                 segments_per_chunk=HIGHLIGHT_SEGMENTS_PER_CHUNK,
             )
-            self._attach_context_metadata(potential_segments)
+            self._attach_context_metadata(potential_segments, video_duration=video_duration)
             logger.info(
                 "Prepared %d merged candidates from %d raw Whisper segments (chunk=%s)",
                 len(potential_segments),
@@ -636,12 +636,32 @@ class HighlightAnalyzer:
             snippet += "..."
         return snippet
 
-    def _attach_context_metadata(self, segments: list[dict]) -> None:
+    def _attach_context_metadata(self, segments: list[dict], video_duration: float = 0) -> None:
+        """
+        Attach context metadata to each segment.
+        
+        Args:
+            segments: List of merged segments
+            video_duration: Total video duration to detect true end of video
+        """
         for idx, segment in enumerate(segments):
             prev_text = segments[idx - 1]['text'] if idx > 0 else None
             next_text = segments[idx + 1]['text'] if idx + 1 < len(segments) else None
+            
             segment['prev_topic'] = self._sanitize_topic_text(prev_text, PREV_TOPIC_MAX_WORDS)
             segment['next_topic'] = self._sanitize_topic_text(next_text, NEXT_TOPIC_MAX_WORDS)
+            
+            # Mark if this is truly the first/last segment of the video
+            # (vs just the edge of our merged chunks list)
+            is_first_segment = idx == 0 and segment['start'] < 5.0  # Within first 5 seconds
+            is_last_segment = (
+                idx + 1 >= len(segments) and 
+                video_duration > 0 and 
+                (video_duration - segment['end']) < 5.0  # Within last 5 seconds
+            )
+            
+            segment['is_video_start'] = is_first_segment
+            segment['is_video_end'] = is_last_segment
 
             primary_speaker = None
             if segment.get('speakers'):
@@ -689,12 +709,23 @@ CONTEXT:
 Previous topic: {segment.get('prev_topic', 'Unknown')}
 Next topic: {segment.get('next_topic', 'Unknown')}
 Speaker: {segment.get('primary_speaker', 'Unknown')}
+Is video start: {segment.get('is_video_start', False)}
+Is video end: {segment.get('is_video_end', False)}
 
 IMPORTANT:
 - Use ONLY the provided text. Do not invent context.
 - Reward specificity: numbers, clear takeaways, step-by-step advice.
 - Penalize fluff, clichés, or passages that require too much surrounding context.
 - Prefer self-contained arcs (question → insight/answer).
+
+HANDLING "UNKNOWN" CONTEXT:
+• If "Previous topic" = "Unknown" BUT "Is video start" = False:
+  → There IS previous content, we just didn't include it. Be careful with needs_previous_context.
+• If "Next topic" = "Unknown" BUT "Is video end" = False:
+  → There IS more content after this! If segment ends on a cliffhanger, continuation likely EXISTS.
+  → Do NOT assume the story is unfinished — check "Is video end" first.
+• If "Is video end" = True AND segment ends incomplete:
+  → The video truly ends here. Cap clip_worthiness at 0.20.
 
 SEGMENT BOUNDARY DETECTION (CRITICAL):
 
