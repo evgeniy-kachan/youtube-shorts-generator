@@ -14,29 +14,12 @@ from backend.services.deepseek_client import DeepSeekClient
 logger = logging.getLogger(__name__)
 
 
-HIGHLIGHT_SCORE_THRESHOLD = 0.30
-MIN_HIGHLIGHTS = 3
-MAX_HIGHLIGHTS = 45
-TARGET_HIGHLIGHT_INTERVAL_MIN = 3  # Aim for ~1 clip every 3 minutes
+HIGHLIGHT_SCORE_THRESHOLD = 0.30   # Minimum score to be considered "good"
+MIN_HIGHLIGHTS = 3                  # Always try to return at least this many
+MAX_HIGHLIGHTS = 45                 # Never return more than this
+FALLBACK_MIN_SCORE = 0.20           # Fallback segments must be at least this good
 PREV_TOPIC_MAX_WORDS = 50
 NEXT_TOPIC_MAX_WORDS = 30
-
-
-def determine_target_highlights(video_duration: float) -> int:
-    """Derive how many highlights we should surface for a given clip length."""
-    if video_duration <= 0:
-        return MIN_HIGHLIGHTS
-
-    minutes = video_duration / 60.0
-    if TARGET_HIGHLIGHT_INTERVAL_MIN > 0:
-        dynamic_target = math.ceil(minutes / TARGET_HIGHLIGHT_INTERVAL_MIN)
-    else:
-        dynamic_target = MIN_HIGHLIGHTS
-
-    target = max(MIN_HIGHLIGHTS, dynamic_target)
-    if MAX_HIGHLIGHTS:
-        target = min(target, MAX_HIGHLIGHTS)
-    return target
 
 
 class HighlightAnalyzer:
@@ -74,14 +57,12 @@ class HighlightAnalyzer:
         """
         try:
             video_duration = segments[-1]['end'] if segments else 0.0
-            target_highlights = determine_target_highlights(video_duration)
             logger.info(
-                "Video duration %.1fs (~%.1f min) -> target highlights: %d (min=%d, max=%d)",
+                "Video duration %.1fs (~%.1f min), quality threshold=%.2f, fallback threshold=%.2f",
                 video_duration,
                 video_duration / 60 if video_duration else 0.0,
-                target_highlights,
-                MIN_HIGHLIGHTS,
-                MAX_HIGHLIGHTS,
+                HIGHLIGHT_SCORE_THRESHOLD,
+                FALLBACK_MIN_SCORE,
             )
             # Merge consecutive Whisper segments into larger candidates to limit LLM calls
             potential_segments = self._merge_segments(
@@ -115,7 +96,7 @@ class HighlightAnalyzer:
                 original_segments=segments,  # Pass original for dynamic expansion
             )
             
-            # Filter segments with good scores
+            # Filter segments with good scores (>= HIGHLIGHT_SCORE_THRESHOLD)
             highlights = []
             scored_segments: list[tuple[int, dict, dict, float]] = []
             for i, (segment, scores) in enumerate(analyzed_segments):
@@ -125,18 +106,35 @@ class HighlightAnalyzer:
                 if highlight_score >= HIGHLIGHT_SCORE_THRESHOLD:
                     highlights.append(self._build_highlight_payload(i, segment, scores, highlight_score))
 
-            if len(highlights) < target_highlights and scored_segments:
+            good_count = len(highlights)
+            logger.info(
+                "Found %d segments with score >= %.2f (threshold)",
+                good_count, HIGHLIGHT_SCORE_THRESHOLD
+            )
+
+            # If we have fewer than MIN_HIGHLIGHTS, add fallbacks (but only if score >= FALLBACK_MIN_SCORE)
+            if len(highlights) < MIN_HIGHLIGHTS and scored_segments:
                 existing_ids = {item['id'] for item in highlights}
                 fallback_candidates = sorted(
                     scored_segments,
                     key=lambda tpl: tpl[3],
                     reverse=True,
                 )
+                fallback_added = 0
                 for idx, segment, scores, highlight_score in fallback_candidates:
-                    if len(highlights) >= target_highlights:
+                    # Stop if we've reached MIN_HIGHLIGHTS
+                    if len(highlights) >= MIN_HIGHLIGHTS:
                         break
+                    # Skip if already included
                     if f"segment_{idx}" in existing_ids:
                         continue
+                    # Only add if score is at least FALLBACK_MIN_SCORE
+                    if highlight_score < FALLBACK_MIN_SCORE:
+                        logger.info(
+                            "Stopping fallback: segment %d score %.2f < %.2f threshold",
+                            idx, highlight_score, FALLBACK_MIN_SCORE
+                        )
+                        break
                     highlights.append(
                         self._build_highlight_payload(
                             idx,
@@ -147,10 +145,18 @@ class HighlightAnalyzer:
                         )
                     )
                     existing_ids.add(f"segment_{idx}")
+                    fallback_added += 1
+                
+                if fallback_added > 0:
+                    logger.info(
+                        "Added %d fallback segments (score >= %.2f) to reach minimum",
+                        fallback_added, FALLBACK_MIN_SCORE
+                    )
             
             # Sort by highlight score
             highlights.sort(key=lambda x: x['highlight_score'], reverse=True)
 
+            # Cap at MAX_HIGHLIGHTS
             if MAX_HIGHLIGHTS and len(highlights) > MAX_HIGHLIGHTS:
                 logger.info(
                     "Trimming highlight list from %d to top %d entries per MAX_HIGHLIGHTS.",
@@ -159,7 +165,10 @@ class HighlightAnalyzer:
                 )
                 highlights = highlights[:MAX_HIGHLIGHTS]
             
-            logger.info(f"Found {len(highlights)} interesting segments")
+            logger.info(
+                "Final result: %d highlights (%d good + %d fallback)",
+                len(highlights), good_count, len(highlights) - good_count
+            )
             return highlights
             
         except Exception as e:
