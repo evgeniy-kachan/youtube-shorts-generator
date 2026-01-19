@@ -2322,13 +2322,22 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         if idx > 0 and dialogue_turns[idx - 1].get("tts_end_offset"):
                             prev_end = dialogue_turns[idx - 1]["tts_end_offset"]
                         
-                        # Place immediately after previous turn with 0.3s duration
+                        # Place immediately after previous turn
                         start_time = prev_end + 0.05
                         end_time = start_time + 0.3
                         
+                        # But also check we don't overlap with NEXT turn!
+                        if next_turn_start and end_time > next_turn_start - 0.05:
+                            end_time = next_turn_start - 0.05
+                            # Ensure minimum 0.1s duration
+                            if end_time - start_time < 0.1:
+                                # Truly no room - make it minimal
+                                end_time = start_time + 0.1
+                        
                         logger.warning(
-                            "TTD turn %d: NO ROOM between turns! Forcing %.2f-%.2f (0.3s) after prev_end=%.2f",
-                            idx, start_time, end_time, prev_end
+                            "TTD turn %d: NO ROOM! Forcing %.2f-%.2f (%.2fs) after prev_end=%.2f, next_start=%.2f",
+                            idx, start_time, end_time, end_time - start_time, prev_end, 
+                            next_turn_start if next_turn_start else -1
                         )
                     
                     estimated_duration = end_time - start_time
@@ -2398,6 +2407,41 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     turn["tts_duration"],
                     len(turn.get("tts_words", [])),
                 )
+            
+            # POST-PROCESSING: Fix any remaining overlaps
+            # This handles cases where API timing itself has overlaps
+            overlap_fixes = 0
+            for idx in range(1, len(dialogue_turns)):
+                if idx >= len(inputs):
+                    break
+                prev_turn = dialogue_turns[idx - 1]
+                curr_turn = dialogue_turns[idx]
+                
+                prev_end = prev_turn.get("tts_end_offset", 0)
+                curr_start = curr_turn.get("tts_start_offset", 0)
+                
+                if prev_end > curr_start + 0.01:  # Overlap detected (1ms tolerance)
+                    # Fix by pushing current turn start to prev_end + small gap
+                    overlap = prev_end - curr_start
+                    new_start = prev_end + 0.05
+                    old_start = curr_start
+                    curr_turn["tts_start_offset"] = new_start
+                    
+                    # Also adjust word timestamps if present
+                    shift = new_start - old_start
+                    if "tts_words" in curr_turn:
+                        for w in curr_turn["tts_words"]:
+                            w["start"] += shift
+                            w["end"] += shift
+                    
+                    overlap_fixes += 1
+                    logger.warning(
+                        "TTD OVERLAP FIX turn %d: shifted start %.2f->%.2f (was overlapping turn %d by %.2fs)",
+                        idx, old_start, new_start, idx - 1, overlap
+                    )
+            
+            if overlap_fixes > 0:
+                logger.info("TTD: Fixed %d overlapping turns", overlap_fixes)
             
             # Summary log: timing source for each turn
             api_count = sum(1 for t in dialogue_turns if t.get("_timing_source") == "api")
