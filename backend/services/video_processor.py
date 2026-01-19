@@ -1073,18 +1073,33 @@ class VideoProcessor:
         #         turn.get("tts_duration", -1), len(tts_words),
         #     )
         
-        # Diagnostic: log last turn details
+        # Diagnostic: log subtitle coverage
         if dialogue:
+            first_turn = dialogue[0]
             last_turn = dialogue[-1]
             last_tts_words = last_turn.get("tts_words", [])
             last_word = last_tts_words[-1] if last_tts_words else None
+            
+            subtitle_start = first_turn.get("tts_start_offset", 0)
+            subtitle_end = last_turn.get("tts_end_offset", 0)
+            subtitle_coverage = subtitle_end - subtitle_start
+            
             logger.info(
-                "DIAGNOSTIC last turn: text='%s', tts_end=%.2f, last_word='%s' end=%.2f",
-                (last_turn.get("text_ru") or last_turn.get("text", ""))[:30],
-                last_turn.get("tts_end_offset", -1),
+                "SUBTITLE COVERAGE: %d turns, %.2f-%.2fs (%.2fs coverage), last_word='%s' end=%.2f",
+                len(dialogue),
+                subtitle_start,
+                subtitle_end,
+                subtitle_coverage,
                 last_word.get("word", "?") if last_word else "N/A",
                 last_word.get("end", -1) if last_word else -1,
             )
+            
+            # Warn if subtitle coverage seems too short
+            if subtitle_coverage < 10 and len(dialogue) > 5:
+                logger.warning(
+                    "SUBTITLE WARNING: Only %.2fs coverage for %d turns! Check TTD timing.",
+                    subtitle_coverage, len(dialogue)
+                )
         
         subtitles: List[Dict] = []
         # NOTE: Lane allocation disabled - all subtitles now appear at same position

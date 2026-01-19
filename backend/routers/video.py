@@ -895,13 +895,25 @@ def _process_segments_task(
                             logger.warning("Isochronic translation failed for single-speaker: %s", trans_exc)
                         
                         # Synthesize with TTD (preserves pauses)
-                        logger.info(f"Synthesizing single-speaker dialogue for {segment['id']}")
+                        logger.info(f"Synthesizing single-speaker dialogue for {segment['id']} ({len(pseudo_dialogue)} turns)")
                         tts_service.synthesize_dialogue(
                             dialogue_turns=segment['dialogue'],
                             output_path=audio_path,
                             voice_map=voice_plan or {primary_speaker: tts_service.voice_id},
                             base_start=segment.get('start_time'),
                         )
+                        
+                        # Log post-synthesis timing coverage
+                        if segment.get('dialogue'):
+                            first_t = segment['dialogue'][0]
+                            last_t = segment['dialogue'][-1]
+                            tts_start = first_t.get('tts_start_offset', 0)
+                            tts_end = last_t.get('tts_end_offset', 0)
+                            logger.info(
+                                "POST-TTD %s: %d turns, tts_coverage=%.2f-%.2fs (%.2fs)",
+                                segment['id'], len(segment['dialogue']),
+                                tts_start, tts_end, tts_end - tts_start
+                            )
                     else:
                         logger.warning("Failed to create pseudo-dialogue for %s, falling back to simple synthesis", segment['id'])
                         has_dialogue = False
