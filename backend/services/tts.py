@@ -2304,20 +2304,34 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             min_start = prev_end + 0.05
                             start_time = max(min_start, new_start)
                             
-                            # Recalculate duration (might be less than min_duration if squeezed)
-                            estimated_duration = max(0.1, end_time - start_time)
-                            
                             logger.warning(
-                                "TTD turn %d: shifted start to %.2f (end=%.2f, prev_end=%.2f, dur=%.2f)",
-                                idx, start_time, end_time, prev_end, estimated_duration
+                                "TTD turn %d: shifting start to %.2f (end=%.2f, prev_end=%.2f)",
+                                idx, start_time, end_time, prev_end
                             )
-                        else:
-                            estimated_duration = end_time - start_time
                         
                         logger.warning(
                             "TTD turn %d: clamped end %.2f->%.2f to avoid overlap with next turn at %.2f",
                             idx, old_end, end_time, next_turn_start
                         )
+                    
+                    # CRITICAL: Final validation - ensure start < end
+                    # If there's no room (squeezed between prev and next turns), 
+                    # place this turn right after prev with minimal duration
+                    if start_time >= end_time:
+                        prev_end = 0.0
+                        if idx > 0 and dialogue_turns[idx - 1].get("tts_end_offset"):
+                            prev_end = dialogue_turns[idx - 1]["tts_end_offset"]
+                        
+                        # Place immediately after previous turn with 0.3s duration
+                        start_time = prev_end + 0.05
+                        end_time = start_time + 0.3
+                        
+                        logger.warning(
+                            "TTD turn %d: NO ROOM between turns! Forcing %.2f-%.2f (0.3s) after prev_end=%.2f",
+                            idx, start_time, end_time, prev_end
+                        )
+                    
+                    estimated_duration = end_time - start_time
                     
                     turn_duration = estimated_duration
                     logger.warning(
