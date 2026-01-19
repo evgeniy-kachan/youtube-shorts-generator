@@ -137,17 +137,27 @@ BUT KEEP all meaningful content, even if speaker hesitates.
 === TIMING FILLERS (USE SPARINGLY) ===
 
 If cleanup removes significant time, you MAY compensate 
-WITHOUT adding filler words.
+WITHOUT adding artificial filler words.
 
-=== NO FILLER WORDS ===
+=== FILLER WORDS — ONLY WITH SOURCE MATCH ===
 
-FORBIDDEN timing fillers (sound unnatural in Russian):
-• 'так', 'итак', 'собственно'
-• 'в общем-то', 'можно сказать', 'скажем так'  
-• 'то есть', 'иначе говоря' (unless actual reformulation)
+Fillers are ALLOWED only when translating a corresponding English phrase:
 
-These words make Russian sound machine-translated.
-Use PUNCTUATION and SYNTAX instead (see below).
+ALLOWED (source match required):
+• "Well," → "Ну," (at start of reply)
+• "I mean," / "you know," → "то есть" (actual clarification)
+• "So," (beginning conclusion) → "Итак,"
+• "Let me say," / "I'll say" → "Скажу так:"
+
+FORBIDDEN (no source = no filler):
+• Adding 'так', 'собственно', 'в общем-то' for timing
+• Adding 'то есть' without actual clarification in original
+• Any filler in the MIDDLE of a sentence after conjunctions (И, А, Но)
+
+WRONG: "Мы в гонке" → "И, так, мы в гонке" (no source for 'так')
+WRONG: "Мы участвуем" → "Мы, собственно, участвуем" (no source)
+CORRECT: "Well, we're in a race" → "Ну, мы в гонке" (source match)
+CORRECT: "I mean, it's important" → "То есть, это важно" (source match)
 
 === PRIORITY ORDER ===
 
@@ -246,14 +256,15 @@ Expand the translation to fill the timing gap.
    • "Это работает и даёт результат" → "Это работает — и даёт результат"
    • "Мы видим рост" → "Мы видим рост — в данный момент"
 
-4. ACCEPT SHORTER TRANSLATION:
-   • If natural expansion is not possible — STOP
-   • Do NOT add filler words ('так', 'собственно', 'в общем-то')
-   • Tempo adjustment will handle remaining timing gap
+4. FILLERS — ONLY WITH SOURCE MATCH:
+   • "Well," in original → "Ну," allowed
+   • "I mean," in original → "то есть" allowed  
+   • "So," (conclusion) → "Итак," allowed
+   • NO SOURCE = NO FILLER — accept shorter translation
    
-   WRONG: "И, так, мы в гонке" (filler makes it unnatural)
-   WRONG: "Собственно, мы в гонке" (unnecessary filler)
-   CORRECT: "Мы в гонке" (natural, even if shorter)
+   WRONG: Adding "собственно" without source phrase
+   WRONG: "И, так, мы..." (filler after conjunction)
+   CORRECT: "Well, we..." → "Ну, мы..." (source match)
 
 === FORBIDDEN EXPANSION — STRICT ===
 
