@@ -2286,11 +2286,23 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         if end_time <= start_time:
                             # Ensure minimum 0.3s duration, shift start_time back
                             min_duration = 0.3
-                            start_time = max(0, end_time - min_duration)
-                            estimated_duration = min_duration
+                            new_start = end_time - min_duration
+                            
+                            # But don't overlap with previous turn!
+                            prev_end = 0.0
+                            if idx > 0 and dialogue_turns[idx - 1].get("tts_end_offset"):
+                                prev_end = dialogue_turns[idx - 1]["tts_end_offset"]
+                            
+                            # Ensure at least 0.05s gap from previous turn
+                            min_start = prev_end + 0.05
+                            start_time = max(min_start, new_start)
+                            
+                            # Recalculate duration (might be less than min_duration if squeezed)
+                            estimated_duration = max(0.1, end_time - start_time)
+                            
                             logger.warning(
-                                "TTD turn %d: shifted start %.2f->%.2f (end clamped to %.2f)",
-                                idx, start_time + min_duration, start_time, end_time
+                                "TTD turn %d: shifted start to %.2f (end=%.2f, prev_end=%.2f, dur=%.2f)",
+                                idx, start_time, end_time, prev_end, estimated_duration
                             )
                         else:
                             estimated_duration = end_time - start_time
