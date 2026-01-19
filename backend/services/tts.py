@@ -2001,6 +2001,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             "TTD API returned sufficient timing on attempt %d (missing %d indices, will interpolate)",
                             attempt, len(missing_indices)
                         )
+                        # Log the actual text of missing turns for debugging
+                        for idx in missing_indices:
+                            if idx < len(inputs):
+                                missing_text = inputs[idx].get("text", "")[:80]
+                                logger.warning(
+                                    "  TTD MISSING timing for turn %d: '%s...'",
+                                    idx, missing_text
+                                )
                     else:
                         logger.info("TTD API returned complete timing on attempt %d", attempt)
                     break
