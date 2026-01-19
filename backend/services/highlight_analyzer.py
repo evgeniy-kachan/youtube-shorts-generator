@@ -797,12 +797,44 @@ class HighlightAnalyzer:
     def _analyze_segment_with_llm(self, segment: Dict) -> Dict[str, float]:
         """Analyze a single segment using LLM."""
         
-        prompt = f"""You are an editor who curates punchy clips from long-form business podcasts and interviews (Joe Rogan, founders, investors, motivational speakers). Judge this fragment as a potential 20–90 second short for viewers who crave:
-- actionable business insights, growth tactics, metrics, frameworks, contrarian strategies;
-- strong POV from the guest: bold opinions, mindset, philosophy, worldview;
-- honest failure/recovery stories with clear lessons;
-- tips about lifestyle, discipline, routines, productivity systems;
-- inspirational moments backed by concrete experience, not vague hype.
+        prompt = f"""You are an editor who curates punchy clips from long-form podcasts and interviews (Diary of a CEO, Joe Rogan, Ali Abdaal, Huberman Lab, Lex Fridman). Guests include entrepreneurs, scientists, psychologists, doctors, athletes, authors, and thought leaders.
+
+Judge this fragment as a potential 20–90 second short for viewers who crave:
+
+BUSINESS & ENTREPRENEURSHIP:
+- actionable business insights, growth tactics, metrics, frameworks, contrarian strategies
+- founder stories with specific numbers, pivots, failures, lessons learned
+
+SCIENCE & RESEARCH:
+- fascinating scientific findings explained simply
+- counterintuitive research results that challenge assumptions
+- "here's what the data actually shows" moments
+
+PSYCHOLOGY & SELF-IMPROVEMENT:
+- insights about human behavior, motivation, relationships
+- mental models, cognitive biases, decision-making frameworks
+- therapy/coaching breakthroughs with practical applications
+
+HEALTH & WELLNESS:
+- evidence-based health advice (sleep, nutrition, exercise, longevity)
+- specific protocols and routines with scientific backing
+- personal health transformations with measurable results
+
+PRODUCTIVITY & LEARNING:
+- systems, tools, and methods for getting things done
+- learning techniques, study methods, skill acquisition
+- time management and energy optimization
+
+PHILOSOPHY & LIFE:
+- profound life lessons from real experience
+- wisdom about relationships, purpose, meaning
+- perspective shifts that change how you see the world
+
+UNIVERSAL CRITERIA for high scores:
+- Strong POV: bold opinions backed by experience/evidence
+- Specificity: numbers, timeframes, concrete examples
+- Complete arc: setup → insight → takeaway
+- Emotional resonance: surprise, inspiration, validation, curiosity
 
 Assume natural speech (~140 words per minute). Focus on fragments roughly 45–210 words long (≈20–90 s).
 
@@ -852,49 +884,94 @@ CALIBRATION EXAMPLES:
 
 === HIGH SCORES (0.7–0.9) — Strong viral potential ===
 
-Example (scores ~0.85, flags: false/false):
+BUSINESS (scores ~0.85):
 "I was $400K in debt at 28. Here's what saved me: I called every creditor 
 and negotiated 60% settlements. Then I built a side business doing exactly 
 what got me fired — but for myself. In 18 months I was debt-free."
-Why: Specific numbers, clear arc (problem → action → result), actionable steps.
+Why: Specific numbers, clear arc (problem → action → result), actionable.
 
-Example (scores ~0.75, flags: false/false):
+SCIENCE (scores ~0.80):
+"We found that people who sleep less than 6 hours have a 40% higher risk 
+of heart disease. But here's the surprising part — sleeping MORE than 9 hours 
+showed almost the same risk. The sweet spot? 7 to 8 hours. Not 6, not 9."
+Why: Counterintuitive finding, specific numbers, practical takeaway.
+
+PSYCHOLOGY (scores ~0.82):
+"The biggest predictor of divorce isn't fighting — it's contempt. Eye-rolling, 
+sarcasm, dismissiveness. In our studies, we could predict divorce with 94% 
+accuracy just by watching couples for 15 minutes. Look for the eye roll."
+Why: Surprising insight, specific metric, observable behavior to watch for.
+
+HEALTH (scores ~0.78):
+"I tested my blood glucose for 30 days straight. Oatmeal, which everyone 
+says is healthy? Spiked me to 180. But white rice with protein? Only 120. 
+Your 'healthy' food might be your worst food. You have to test yourself."
+Why: Personal experiment, specific data, challenges conventional wisdom.
+
+PRODUCTIVITY (scores ~0.75):
+"I used to work 12-hour days and feel exhausted. Now I work 4 focused hours 
+and produce 3x more. The secret? I do creative work from 6-10 AM, then meetings 
+after lunch. Your brain has rhythms — stop fighting them."
+Why: Before/after contrast, specific schedule, actionable system.
+
+PHILOSOPHY/LIFE (scores ~0.77):
+"My dad died when I was 19. At the funeral, I realized something that changed 
+my life: not a single person talked about his money or job title. They talked 
+about how he made them feel. That's when I stopped chasing status."
+Why: Emotional story, clear lesson, universal truth from personal experience.
+
+CONTRARIAN (scores ~0.75):
 "Everyone says 'follow your passion.' That's terrible advice. Follow your 
 skills. I hated accounting but I was good at it. Built a $5M firm in 4 years."
-Why: Contrarian take, specific outcome, challenges common wisdom.
+Why: Challenges common wisdom, specific outcome, memorable position.
 
 === MEDIUM SCORES (0.4–0.6) ===
 
-Example (scores ~0.50, flags: false/false):
+GENERIC ADVICE (scores ~0.50):
 "In sales, it's all about relationships. You have to genuinely care about 
 the client's problems. The best salespeople I know spend 80% of time listening."
-Why: True but generic. No specific story or metrics. Common advice.
+Why: True but generic. No specific story. Everyone says this.
 
-=== LOW SCORES — Incomplete segments ===
+VAGUE SCIENCE (scores ~0.45):
+"AI is going to change everything. We're already seeing it in our industry. 
+Companies that don't adapt will be left behind. The question is not if, but when."
+Why: No specifics, no timeline, no actionable insight. Sounds like everyone.
 
-Example (scores ~0.20, flags: true/false — needs_previous_context):
+OVERSATURATED TOPIC (scores ~0.55):
+"I wake up at 5 AM every day. Cold shower, meditation, then two hours of 
+deep work before anyone else is awake. That's my secret."
+Why: Routine content without unique angle. Thousands of videos say this.
+
+=== LOW SCORES — Poor viral potential ===
+
+INCOMPLETE — needs_previous (scores ~0.20, flags: true/false):
 "And said: 'Ready.' The politician left satisfied. Do you do the same 
 with politicians? I noticed when I get involved in politics, it ends badly."
-Why: Starts with "And said" — missing the setup. Who said ready? About what?
+Why: Starts with "And said" — missing the setup. Who? About what?
 
-Example (scores ~0.25, flags: false/true — needs_next_context):
+INCOMPLETE — needs_next (scores ~0.25, flags: false/true):
 "He made a gesture as if working on scaffolding, dropped some dust, 
 but didn't change anything—"
-Why: Setup without punchline. The payoff is clearly in the next segment.
+Why: Setup without punchline. The payoff is in the next segment.
 
-Example (scores ~0.15, flags: true/false):
+FILLER (scores ~0.15, flags: true/false):
 "Yeah, exactly. I totally agree. That's a great point. You know..."
-Why: Filler content, requires previous context, no standalone value.
+Why: No content, requires context, no standalone value.
+
+PLATITUDES (scores ~0.25):
+"The key to success is persistence. Never give up on your dreams. 
+Believe in yourself. You can do anything you set your mind to."
+Why: Pure clichés, no personal story, no specifics, generic motivation.
 
 TEXT:
 "{segment['text']}"
 
 Score each dimension from 0.0–1.0:
 
-1. emotional_intensity — strength of emotions, surprise, tension, inspiration.
-2. hook_potential — how strongly the beginning grabs attention.
-3. business_value — density of practical business insight (tactics, metrics, lessons).
-4. actionable_value — clarity/usefulness of advice, steps, or frameworks.
+1. emotional_intensity — strength of emotions, surprise, tension, inspiration, curiosity.
+2. hook_potential — how strongly the beginning grabs attention (first 5 seconds).
+3. insight_value — density of valuable insight (business, science, psychology, health, life wisdom).
+4. actionable_value — clarity/usefulness of advice, steps, frameworks, or protocols.
 5. clip_worthiness — suitability as a standalone viral clip (cap at 0.25 if incomplete).
 6. needs_previous_context — true/false: does this segment need the previous one?
 7. needs_next_context — true/false: does this segment need the next one?
@@ -910,7 +987,7 @@ Respond ONLY with valid JSON (no explanations, no markdown):
 {{
   "emotional_intensity": 0.0,
   "hook_potential": 0.0,
-  "business_value": 0.0,
+  "insight_value": 0.0,
   "actionable_value": 0.0,
   "clip_worthiness": 0.0,
   "needs_previous_context": false,
@@ -960,7 +1037,7 @@ Respond ONLY with valid JSON (no explanations, no markdown):
             return {
                 'emotional_intensity': 0.5,
                 'hook_potential': 0.5,
-                'business_value': 0.5,
+                'insight_value': 0.5,
                 'actionable_value': 0.5,
                 'clip_worthiness': 0.5,
                 'needs_previous_context': False,
@@ -974,7 +1051,7 @@ Respond ONLY with valid JSON (no explanations, no markdown):
         highlight_score = (
             0.30 * scores.get('emotional_intensity', 0) +
             0.25 * scores.get('hook_potential', 0) +
-            0.25 * scores.get('business_value', 0) +
+            0.25 * scores.get('insight_value', 0) +
             0.15 * scores.get('actionable_value', 0) +
             0.05 * scores.get('clip_worthiness', 0)
         )
