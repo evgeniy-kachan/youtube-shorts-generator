@@ -137,35 +137,17 @@ BUT KEEP all meaningful content, even if speaker hesitates.
 === TIMING FILLERS (USE SPARINGLY) ===
 
 If cleanup removes significant time, you MAY compensate 
-with neutral Russian timing fillers.
+WITHOUT adding filler words.
 
-TIMING GAP THRESHOLD:
-Use fillers ONLY if cleanup removed:
-• >2 EN words, OR
-• >15% of original EN word count
-(whichever threshold is reached first)
+=== NO FILLER WORDS ===
 
-FILLER PRIORITY (use higher-priority first):
-1. Structural: 'итак', 'собственно'
-2. Clarifying: 'то есть', 'иначе говоря'
-3. Softening: 'в общем-то', 'можно сказать', 'скажем так'
+FORBIDDEN timing fillers (sound unnatural in Russian):
+• 'так', 'итак', 'собственно'
+• 'в общем-то', 'можно сказать', 'скажем так'  
+• 'то есть', 'иначе говоря' (unless actual reformulation)
 
-FILLER USAGE CONTEXT:
-• 'итак' — beginning of new argument or summary
-• 'собственно' — returning to main point
-• 'то есть' — brief clarification
-• 'в общем-то' — softening a direct statement
-
-FILLER RULES:
-• Use 0–2 fillers per turn MAXIMUM
-• Use ONLY if timing gap exists after cleanup
-• Place naturally: at beginning OR between clauses
-• NEVER place at the end of a sentence
-• Do NOT repeat the same filler in consecutive turns
-• Do NOT use clarifying fillers ('то есть', 'иначе говоря') 
-  if no reformulation exists in the original
-
-Remember: Fillers are a TIMING TOOL, not a speech style.
+These words make Russian sound machine-translated.
+Use PUNCTUATION and SYNTAX instead (see below).
 
 === PRIORITY ORDER ===
 
@@ -174,8 +156,9 @@ Remember: Fillers are a TIMING TOOL, not a speech style.
 3rd: Natural spoken Russian flow
 4th: Duration matching — via:
      • SYNONYMS from the SAME register (no meaning shift)
-     • Punctuation (—, commas, sentence splits)
-     • Timing fillers (LAST RESORT only)
+     • Punctuation (—) for spoken pauses
+     • Syntactic expansion (add verb, pronoun if natural)
+     • If still short — ACCEPT IT (tempo adjustment will handle)
      
 CLARIFICATION on "word choice":
 You may choose between synonyms ONLY if they:
@@ -263,9 +246,14 @@ Expand the translation to fill the timing gap.
    • "Это работает и даёт результат" → "Это работает — и даёт результат"
    • "Мы видим рост" → "Мы видим рост — в данный момент"
 
-4. STRUCTURAL FILLERS (see Stage 1 rules):
-   • Add 'итак', 'собственно' at clause boundaries
-   • Maximum 0–2 fillers per turn
+4. ACCEPT SHORTER TRANSLATION:
+   • If natural expansion is not possible — STOP
+   • Do NOT add filler words ('так', 'собственно', 'в общем-то')
+   • Tempo adjustment will handle remaining timing gap
+   
+   WRONG: "И, так, мы в гонке" (filler makes it unnatural)
+   WRONG: "Собственно, мы в гонке" (unnecessary filler)
+   CORRECT: "Мы в гонке" (natural, even if shorter)
 
 === FORBIDDEN EXPANSION — STRICT ===
 
