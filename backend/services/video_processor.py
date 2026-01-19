@@ -1102,9 +1102,11 @@ class VideoProcessor:
                 )
         
         subtitles: List[Dict] = []
-        # NOTE: Lane allocation disabled - all subtitles now appear at same position
-        # Previously supported two stacked rows for overlapping subtitles
-        # lane_available_until = [0.0, 0.0]
+        # Track when the last subtitle ends to prevent overlaps
+        last_subtitle_end = 0.0
+        
+        # Minimum gap between subtitles (prevents visual overlap)
+        MIN_SUBTITLE_GAP = 0.05  # 50ms
 
         for turn in dialogue:
             raw_text = (turn.get("text_ru") or turn.get("text") or "").strip()
@@ -1177,6 +1179,18 @@ class VideoProcessor:
                     
                     lane_idx = 0  # All subtitles at same position
                     
+                    # Prevent overlap: if this subtitle starts before previous ends, adjust
+                    if chunk_start < last_subtitle_end + MIN_SUBTITLE_GAP:
+                        # Option 1: Trim previous subtitle's end
+                        if subtitles:
+                            old_end = subtitles[-1]["end"]
+                            subtitles[-1]["end"] = max(subtitles[-1]["start"] + 0.3, chunk_start - MIN_SUBTITLE_GAP)
+                            if old_end != subtitles[-1]["end"]:
+                                logger.debug(
+                                    "Trimmed previous subtitle end: %.2f -> %.2f to avoid overlap",
+                                    old_end, subtitles[-1]["end"]
+                                )
+                    
                     subtitles.append({
                         "start": chunk_start,
                         "end": chunk_end_time,
@@ -1186,6 +1200,7 @@ class VideoProcessor:
                         "color": speaker_palette.get(speaker_id),
                         "lane": lane_idx,
                     })
+                    last_subtitle_end = chunk_end_time
                     chunks_added += 1
                     word_idx = chunk_end
             else:
@@ -1234,6 +1249,17 @@ class VideoProcessor:
 
                     lane_idx = 0  # All subtitles at same position
 
+                    # Prevent overlap: if this subtitle starts before previous ends, adjust
+                    if start_time < last_subtitle_end + MIN_SUBTITLE_GAP:
+                        if subtitles:
+                            old_end = subtitles[-1]["end"]
+                            subtitles[-1]["end"] = max(subtitles[-1]["start"] + 0.3, start_time - MIN_SUBTITLE_GAP)
+                            if old_end != subtitles[-1]["end"]:
+                                logger.debug(
+                                    "Trimmed previous subtitle end: %.2f -> %.2f to avoid overlap",
+                                    old_end, subtitles[-1]["end"]
+                                )
+
                     subtitles.append(
                         {
                             "start": start_time,
@@ -1245,6 +1271,7 @@ class VideoProcessor:
                             "lane": lane_idx,
                         }
                     )
+                    last_subtitle_end = end_time
                     chunks_added += 1
                 chunks_added += 1
 
@@ -1273,9 +1300,16 @@ class VideoProcessor:
                         }
                     )
                 lane_idx = 0  # All subtitles at same position
+                
+                # Prevent overlap for fallback subtitle too
+                actual_start = relative_start
+                if actual_start < last_subtitle_end + MIN_SUBTITLE_GAP:
+                    if subtitles:
+                        subtitles[-1]["end"] = max(subtitles[-1]["start"] + 0.3, actual_start - MIN_SUBTITLE_GAP)
+                
                 subtitles.append(
                     {
-                        "start": relative_start,
+                        "start": actual_start,
                         "end": relative_end,
                         "text": " ".join(words),
                         "words": word_entries,
@@ -1284,6 +1318,7 @@ class VideoProcessor:
                         "lane": lane_idx,
                     }
                 )
+                last_subtitle_end = relative_end
 
         return subtitles
     
