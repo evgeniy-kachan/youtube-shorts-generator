@@ -2281,7 +2281,20 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         # Clamp end_time to not overlap with next turn
                         old_end = end_time
                         end_time = next_turn_start - 0.1
-                        estimated_duration = max(0.3, end_time - start_time)
+                        
+                        # If end_time is now before start_time, adjust start_time too
+                        if end_time <= start_time:
+                            # Ensure minimum 0.3s duration, shift start_time back
+                            min_duration = 0.3
+                            start_time = max(0, end_time - min_duration)
+                            estimated_duration = min_duration
+                            logger.warning(
+                                "TTD turn %d: shifted start %.2f->%.2f (end clamped to %.2f)",
+                                idx, start_time + min_duration, start_time, end_time
+                            )
+                        else:
+                            estimated_duration = end_time - start_time
+                        
                         logger.warning(
                             "TTD turn %d: clamped end %.2f->%.2f to avoid overlap with next turn at %.2f",
                             idx, old_end, end_time, next_turn_start
