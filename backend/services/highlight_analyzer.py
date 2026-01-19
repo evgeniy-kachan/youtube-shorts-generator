@@ -112,6 +112,7 @@ class HighlightAnalyzer:
                 analyzed_segments,
                 max_duration=max_duration,
                 max_parallel=max_parallel,
+                original_segments=segments,  # Pass original for dynamic expansion
             )
             
             # Filter segments with good scores
@@ -187,6 +188,7 @@ class HighlightAnalyzer:
         analyzed_segments: List[tuple],
         max_duration: int = 180,
         max_parallel: int = 4,
+        original_segments: List[Dict] = None,
     ) -> List[tuple]:
         """
         Merge adjacent incomplete segments and re-analyze them.
@@ -195,6 +197,13 @@ class HighlightAnalyzer:
         - If segment[i] has needs_next_context=True AND segment[i+1] has needs_previous_context=True
           → merge them into one segment and re-analyze
         - Also merge if segment[i].needs_next_context=True and scores suggest continuation
+        - If needs_next but no adjacent chunk exists, try to expand from original_segments
+        
+        Args:
+            analyzed_segments: List of (segment, scores) tuples
+            max_duration: Maximum allowed duration for merged segments
+            max_parallel: Number of parallel re-analysis threads
+            original_segments: Original Whisper segments for dynamic expansion
         """
         if len(analyzed_segments) < 2:
             return analyzed_segments
@@ -246,11 +255,76 @@ class HighlightAnalyzer:
             else:
                 i += 1
         
-        if not merge_pairs:
-            logger.info("No incomplete segments to merge")
+        # Handle edge case: last segment needs_next but has no neighbor
+        # Try to expand it from original Whisper segments
+        expand_candidates = []
+        if original_segments:
+            last_idx = len(analyzed_segments) - 1
+            last_seg, last_scores = analyzed_segments[last_idx]
+            
+            if (last_scores.get('needs_next_context', False) and 
+                last_idx not in [p[1] for p in merge_pairs] and  # Not already being merged
+                not last_seg.get('is_video_end', False)):  # Not the actual end of video
+                
+                # Find original segments that come AFTER this chunk
+                chunk_end = last_seg['end']
+                extra_segments = [
+                    s for s in original_segments 
+                    if s['start'] >= chunk_end - 0.5  # Small overlap tolerance
+                ]
+                
+                if extra_segments:
+                    # Take enough segments to add ~30 seconds but not exceed max_duration
+                    current_duration = last_seg['duration']
+                    expansion_target = min(30, max_duration - current_duration)
+                    
+                    expanded_text_parts = [last_seg['text']]
+                    expanded_end = chunk_end
+                    expanded_words = list(last_seg.get('words', []))
+                    expanded_dialogue = list(last_seg.get('dialogue', []))
+                    
+                    for extra_seg in extra_segments:
+                        if extra_seg['end'] - last_seg['start'] > max_duration:
+                            break
+                        expanded_text_parts.append(extra_seg.get('text', ''))
+                        expanded_end = extra_seg['end']
+                        expanded_words.extend(extra_seg.get('words', []))
+                        # Add to dialogue if different speaker or append to last turn
+                        if expanded_dialogue and extra_seg.get('speaker') == expanded_dialogue[-1].get('speaker'):
+                            expanded_dialogue[-1]['text'] += ' ' + extra_seg.get('text', '')
+                            expanded_dialogue[-1]['end'] = extra_seg['end']
+                        else:
+                            expanded_dialogue.append({
+                                'speaker': extra_seg.get('speaker'),
+                                'text': extra_seg.get('text', ''),
+                                'start': extra_seg['start'],
+                                'end': extra_seg['end'],
+                            })
+                        
+                        if expanded_end - last_seg['start'] >= current_duration + expansion_target:
+                            break
+                    
+                    if expanded_end > chunk_end + 5:  # At least 5 seconds added
+                        expanded_segment = {
+                            **last_seg,
+                            'end': expanded_end,
+                            'duration': expanded_end - last_seg['start'],
+                            'text': ' '.join(expanded_text_parts).strip(),
+                            'words': expanded_words,
+                            'dialogue': expanded_dialogue,
+                            '_expanded_from': chunk_end,
+                        }
+                        expand_candidates.append((last_idx, expanded_segment))
+                        logger.info(
+                            "EXPAND CANDIDATE: segment %d expanded %.1f→%.1fs (+%.1fs) to get more context",
+                            last_idx, chunk_end, expanded_end, expanded_end - chunk_end
+                        )
+        
+        if not merge_pairs and not expand_candidates:
+            logger.info("No incomplete segments to merge or expand")
             return analyzed_segments
         
-        logger.info(f"Found {len(merge_pairs)} segment pairs to merge")
+        logger.info(f"Found {len(merge_pairs)} segment pairs to merge, {len(expand_candidates)} to expand")
         
         # Create merged segments
         segments_to_reanalyze = []
@@ -262,52 +336,79 @@ class HighlightAnalyzer:
             
             # Merge segment data
             merged_segment = self._merge_two_segments(seg_a, seg_b)
-            segments_to_reanalyze.append((merged_segment, idx_a, idx_b))
+            segments_to_reanalyze.append(('merge', merged_segment, idx_a, idx_b))
             merged_indices.add(idx_a)
             merged_indices.add(idx_b)
         
-        # Re-analyze merged segments in parallel
-        logger.info(f"Re-analyzing {len(segments_to_reanalyze)} merged segments...")
+        # Add expanded segments
+        expanded_indices = set()
+        for idx, expanded_seg in expand_candidates:
+            segments_to_reanalyze.append(('expand', expanded_seg, idx, None))
+            expanded_indices.add(idx)
+        
+        # Re-analyze all modified segments in parallel
+        total_to_reanalyze = len(segments_to_reanalyze)
+        logger.info(f"Re-analyzing {total_to_reanalyze} modified segments...")
         
         def reanalyze(item):
-            merged_seg, idx_a, idx_b = item
-            new_scores = self._analyze_segment_with_llm(merged_seg)
+            op_type, seg, idx_a, idx_b = item
+            new_scores = self._analyze_segment_with_llm(seg)
             new_highlight = self._calculate_highlight_score(new_scores)
-            logger.info(
-                "MERGED %d+%d: new_score=%.2f, needs_prev=%s, needs_next=%s",
-                idx_a, idx_b, new_highlight,
-                new_scores.get('needs_previous_context'),
-                new_scores.get('needs_next_context'),
-            )
-            return (merged_seg, new_scores, idx_a, idx_b)
+            if op_type == 'merge':
+                logger.info(
+                    "MERGED %d+%d: new_score=%.2f, needs_prev=%s, needs_next=%s",
+                    idx_a, idx_b, new_highlight,
+                    new_scores.get('needs_previous_context'),
+                    new_scores.get('needs_next_context'),
+                )
+            else:
+                logger.info(
+                    "EXPANDED %d: new_score=%.2f (was incomplete, added %.1fs)",
+                    idx_a, new_highlight, seg['end'] - seg.get('_expanded_from', seg['start'])
+                )
+            return (op_type, seg, new_scores, idx_a, idx_b)
         
         with ThreadPoolExecutor(max_workers=max_parallel) as executor:
             reanalyzed = list(executor.map(reanalyze, segments_to_reanalyze))
         
-        # Build final list: replace merged pairs with single merged segment
+        # Build maps for quick lookup
+        merge_map = {}  # (idx_a, idx_b) -> (seg, scores)
+        expand_map = {}  # idx -> (seg, scores)
+        
+        for op_type, seg, scores, idx_a, idx_b in reanalyzed:
+            if op_type == 'merge':
+                merge_map[(idx_a, idx_b)] = (seg, scores)
+            else:
+                expand_map[idx_a] = (seg, scores)
+        
+        # Build final list
         result = []
         i = 0
-        reanalyzed_map = {(r[2], r[3]): (r[0], r[1]) for r in reanalyzed}
         
         while i < len(analyzed_segments):
             if i in merged_indices:
                 # Check if this is the start of a merged pair
                 for idx_a, idx_b, _ in merge_pairs:
                     if idx_a == i:
-                        merged_seg, merged_scores = reanalyzed_map[(idx_a, idx_b)]
+                        merged_seg, merged_scores = merge_map[(idx_a, idx_b)]
                         result.append((merged_seg, merged_scores))
                         i = idx_b + 1  # Skip past the merged pair
                         break
                 else:
                     # This index was part of a merge but not the start
                     i += 1
+            elif i in expanded_indices:
+                # Replace with expanded version
+                expanded_seg, expanded_scores = expand_map[i]
+                result.append((expanded_seg, expanded_scores))
+                i += 1
             else:
                 result.append(analyzed_segments[i])
                 i += 1
         
         logger.info(
-            "After merging: %d segments (was %d)",
-            len(result), len(analyzed_segments)
+            "After processing: %d segments (was %d, merged=%d, expanded=%d)",
+            len(result), len(analyzed_segments), len(merge_pairs), len(expand_candidates)
         )
         return result
 
