@@ -294,19 +294,28 @@ def _scale_dialogue_offsets(dialogue: list[dict] | None, scale: float) -> None:
         )
 
 
-def _split_words_by_pauses(words: list[dict], pause_threshold: float = 0.4) -> list[list[dict]]:
+def _split_words_by_pauses(
+    words: list[dict], 
+    pause_threshold: float = 0.4,
+    require_sentence_end: bool = True,
+) -> list[list[dict]]:
     """
     Split word-level timestamps into phrases based on pauses.
     
     Args:
         words: List of word dicts with 'word', 'start', 'end' keys
         pause_threshold: Minimum pause duration (seconds) to split on
+        require_sentence_end: If True, only split when pause follows sentence-ending
+                              punctuation (.!?;:) - prevents mid-sentence splits
         
     Returns:
         List of phrase groups (each phrase is a list of words)
     """
     if not words:
         return []
+    
+    # Sentence-ending punctuation (word must end with one of these to allow split)
+    SENTENCE_END_CHARS = '.!?;:'
     
     phrases = []
     current_phrase = []
@@ -321,9 +330,21 @@ def _split_words_by_pauses(words: list[dict], pause_threshold: float = 0.4) -> l
             pause_duration = next_start - current_end
             
             if pause_duration >= pause_threshold:
-                # Significant pause detected - end current phrase
-                phrases.append(current_phrase)
-                current_phrase = []
+                # Check if we should split here
+                should_split = True
+                
+                if require_sentence_end:
+                    # Only split if word ends with sentence-ending punctuation
+                    word_text = word.get("word", "").strip()
+                    ends_with_punctuation = any(
+                        word_text.endswith(char) for char in SENTENCE_END_CHARS
+                    )
+                    should_split = ends_with_punctuation
+                
+                if should_split:
+                    # Significant pause at sentence boundary - end current phrase
+                    phrases.append(current_phrase)
+                    current_phrase = []
     
     # Add final phrase if not empty
     if current_phrase:
@@ -344,6 +365,9 @@ def _create_pseudo_dialogue_from_words(
     This allows single-speaker segments to be processed like multi-speaker dialogue,
     preserving natural pauses in speech.
     
+    IMPORTANT: Only splits at pauses that follow sentence-ending punctuation (.!?;:)
+    to prevent mid-sentence breaks that confuse translation.
+    
     Args:
         words: List of word dicts with 'word', 'start', 'end' keys
         speaker: Speaker ID for all turns
@@ -353,7 +377,8 @@ def _create_pseudo_dialogue_from_words(
     Returns:
         List of dialogue turns with 'speaker', 'text', 'start', 'end', 'words'
     """
-    phrases = _split_words_by_pauses(words, pause_threshold)
+    # Use smart splitting: pause + sentence-end punctuation
+    phrases = _split_words_by_pauses(words, pause_threshold, require_sentence_end=True)
     
     if not phrases:
         return []
@@ -881,10 +906,16 @@ def _process_segments_task(
                     
                     if pseudo_dialogue:
                         segment['dialogue'] = pseudo_dialogue
+                        # Log sample of turn boundaries for debugging
+                        turn_previews = [
+                            f"T{i}: '{t['text'][:25]}...' ({len(t['text'].split())}w)"
+                            for i, t in enumerate(pseudo_dialogue[:3])
+                        ]
                         logger.info(
-                            "Created %d pseudo-turns for single-speaker %s (preserving pauses)",
+                            "Created %d pseudo-turns for single-speaker %s (smart split: pause + sentence-end)",
                             len(pseudo_dialogue), segment['id']
                         )
+                        logger.info("  First turns: %s", turn_previews)
                         
                         # Now process exactly like multi-speaker
                         has_dialogue = True
