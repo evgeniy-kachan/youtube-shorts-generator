@@ -2169,6 +2169,13 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 logger.info("TTD SYNC: Audio extended from %.2fs to %.2fs", 
                            len(audio) / 1000.0 - cumulative_offset, len(audio) / 1000.0)
         
+        # Add trailing silence buffer to prevent last word from being cut off
+        # ElevenLabs sometimes returns audio shorter than the last voice segment end time
+        TRAILING_SILENCE_MS = 200  # 200ms buffer at the end
+        trailing_silence = AudioSegment.silent(duration=TRAILING_SILENCE_MS, frame_rate=audio.frame_rate)
+        audio = audio + trailing_silence
+        logger.info("TTD: Added %dms trailing silence buffer", TRAILING_SILENCE_MS)
+        
         # Save to file
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
