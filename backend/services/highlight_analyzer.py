@@ -858,7 +858,7 @@ HANDLING "UNKNOWN" CONTEXT:
   → There IS more content after this! If segment ends on a cliffhanger, continuation likely EXISTS.
   → Do NOT assume the story is unfinished — check "Is video end" first.
 • If "Is video end" = True AND segment ends incomplete:
-  → The video truly ends here. Cap clip_worthiness at 0.20.
+  → The video truly ends here. Final score will be capped at 0.20.
 
 SEGMENT BOUNDARY DETECTION (CRITICAL):
 
@@ -883,119 +883,146 @@ Set "needs_next_context": true if the text:
   it around" → the problem without the solution is incomplete.
 
 When EITHER flag is true:
-• Cap clip_worthiness at 0.25 (incomplete segments are not standalone clips)
+• Final score will be capped at 0.25 (incomplete segments are not standalone clips)
 • The segment may still have high other scores if the content itself is good
 
-CALIBRATION EXAMPLES:
+CALIBRATION EXAMPLES (with new scoring system):
 
-=== HIGH SCORES (0.7–0.9) — Strong viral potential ===
+=== HIGH SCORE EXAMPLE (final ~0.82) ===
 
-BUSINESS (scores ~0.85):
 "I was $400K in debt at 28. Here's what saved me: I called every creditor 
 and negotiated 60% settlements. Then I built a side business doing exactly 
 what got me fired — but for myself. In 18 months I was debt-free."
-Why: Specific numbers, clear arc (problem → action → result), actionable.
 
-SCIENCE (scores ~0.80):
-"We found that people who sleep less than 6 hours have a 40% higher risk 
-of heart disease. But here's the surprising part — sleeping MORE than 9 hours 
-showed almost the same risk. The sweet spot? 7 to 8 hours. Not 6, not 9."
-Why: Counterintuitive finding, specific numbers, practical takeaway.
+Scores:
+- surprise_novelty: 0.7 (unexpected: 60% debt reduction is possible)
+- specificity_score: 0.9 ($400K, 60%, 18 months, age 28)
+- personal_connection: 0.8 (personal failure/redemption story)
+- actionability_score: 0.9 (clear steps: call creditors, negotiate, build business)
+- clarity_simplicity: 0.8 (simple language, clear structure)
+- completeness_arc: 0.9 (problem → actions → result)
+- hook_quality: 0.85 ("$400K in debt at 28" — instantly grabs attention)
+- needs_previous_context: false
+- needs_next_context: false
 
-PSYCHOLOGY (scores ~0.82):
-"The biggest predictor of divorce isn't fighting — it's contempt. Eye-rolling, 
-sarcasm, dismissiveness. In our studies, we could predict divorce with 94% 
-accuracy just by watching couples for 15 minutes. Look for the eye roll."
-Why: Surprising insight, specific metric, observable behavior to watch for.
+=== MEDIUM SCORE EXAMPLE (final ~0.45) ===
 
-HEALTH (scores ~0.78):
-"I tested my blood glucose for 30 days straight. Oatmeal, which everyone 
-says is healthy? Spiked me to 180. But white rice with protein? Only 120. 
-Your 'healthy' food might be your worst food. You have to test yourself."
-Why: Personal experiment, specific data, challenges conventional wisdom.
-
-PRODUCTIVITY (scores ~0.75):
-"I used to work 12-hour days and feel exhausted. Now I work 4 focused hours 
-and produce 3x more. The secret? I do creative work from 6-10 AM, then meetings 
-after lunch. Your brain has rhythms — stop fighting them."
-Why: Before/after contrast, specific schedule, actionable system.
-
-PHILOSOPHY/LIFE (scores ~0.77):
-"My dad died when I was 19. At the funeral, I realized something that changed 
-my life: not a single person talked about his money or job title. They talked 
-about how he made them feel. That's when I stopped chasing status."
-Why: Emotional story, clear lesson, universal truth from personal experience.
-
-CONTRARIAN (scores ~0.75):
-"Everyone says 'follow your passion.' That's terrible advice. Follow your 
-skills. I hated accounting but I was good at it. Built a $5M firm in 4 years."
-Why: Challenges common wisdom, specific outcome, memorable position.
-
-=== MEDIUM SCORES (0.4–0.6) ===
-
-GENERIC ADVICE (scores ~0.50):
-"In sales, it's all about relationships. You have to genuinely care about 
-the client's problems. The best salespeople I know spend 80% of time listening."
-Why: True but generic. No specific story. Everyone says this.
-
-VAGUE SCIENCE (scores ~0.45):
 "AI is going to change everything. We're already seeing it in our industry. 
 Companies that don't adapt will be left behind. The question is not if, but when."
-Why: No specifics, no timeline, no actionable insight. Sounds like everyone.
 
-OVERSATURATED TOPIC (scores ~0.55):
-"I wake up at 5 AM every day. Cold shower, meditation, then two hours of 
-deep work before anyone else is awake. That's my secret."
-Why: Routine content without unique angle. Thousands of videos say this.
+Scores:
+- surprise_novelty: 0.2 (everyone says this)
+- specificity_score: 0.1 (no numbers, no examples, no timeline)
+- personal_connection: 0.1 (no personal story)
+- actionability_score: 0.1 (no steps, just "adapt")
+- clarity_simplicity: 0.7 (easy to understand)
+- completeness_arc: 0.5 (has a point, but no story)
+- hook_quality: 0.4 (generic opening)
+- needs_previous_context: false
+- needs_next_context: false
 
-=== LOW SCORES — Poor viral potential ===
+=== LOW SCORE EXAMPLE — Incomplete (final capped at 0.25) ===
 
-INCOMPLETE — needs_previous (scores ~0.20, flags: true/false):
 "And said: 'Ready.' The politician left satisfied. Do you do the same 
 with politicians? I noticed when I get involved in politics, it ends badly."
-Why: Starts with "And said" — missing the setup. Who? About what?
 
-INCOMPLETE — needs_next (scores ~0.25, flags: false/true):
-"He made a gesture as if working on scaffolding, dropped some dust, 
-but didn't change anything—"
-Why: Setup without punchline. The payoff is in the next segment.
+Scores:
+- surprise_novelty: 0.3 (potentially interesting)
+- specificity_score: 0.1 (no details)
+- personal_connection: 0.2 (mentions personal experience vaguely)
+- actionability_score: 0.0 (no advice)
+- clarity_simplicity: 0.3 (confusing without context)
+- completeness_arc: 0.2 (missing beginning)
+- hook_quality: 0.1 ("And said" — terrible hook)
+- needs_previous_context: TRUE (who said? about what?)
+- needs_next_context: false
+→ Final score CAPPED at 0.25 due to incomplete context
 
-FILLER (scores ~0.15, flags: true/false):
-"Yeah, exactly. I totally agree. That's a great point. You know..."
-Why: No content, requires context, no standalone value.
+=== PLATITUDES EXAMPLE (final ~0.20) ===
 
-PLATITUDES (scores ~0.25):
 "The key to success is persistence. Never give up on your dreams. 
 Believe in yourself. You can do anything you set your mind to."
-Why: Pure clichés, no personal story, no specifics, generic motivation.
+
+Scores:
+- surprise_novelty: 0.0 (the opposite of surprising)
+- specificity_score: 0.0 (zero specifics)
+- personal_connection: 0.0 (no personal story)
+- actionability_score: 0.1 (just "persist" and "believe")
+- clarity_simplicity: 0.8 (easy to understand)
+- completeness_arc: 0.3 (has a message, but no story)
+- hook_quality: 0.2 (cliché opening)
+- needs_previous_context: false
+- needs_next_context: false
 
 TEXT:
 "{segment['text']}"
 
-Score each dimension from 0.0–1.0:
+SCORING DIMENSIONS (each measures ONE specific thing):
 
-1. emotional_intensity — strength of emotions, surprise, tension, inspiration, curiosity.
-2. hook_potential — how strongly the beginning grabs attention (first 5 seconds).
-3. insight_value — density of valuable insight (business, science, psychology, health, life wisdom).
-4. actionable_value — clarity/usefulness of advice, steps, frameworks, or protocols.
-5. clip_worthiness — suitability as a standalone viral clip (cap at 0.25 if incomplete).
-6. needs_previous_context — true/false: does this segment need the previous one?
-7. needs_next_context — true/false: does this segment need the next one?
+1. surprise_novelty (0.0–1.0)
+   What: Counterintuitive insight, challenges assumptions, reveals something unexpected
+   NOT: Importance or usefulness of information
+   High: "Sleeping MORE than 9 hours is as bad as sleeping less than 6"
+   Low: "Sleep is important for health"
 
-SCORING RULES:
-- 0.0 = completely absent, 1.0 = extremely strong
-- Use decimal values (e.g., 0.35, 0.72)
-- Be strict and realistic; high scores only when clearly deserved
-- If EITHER needs_*_context is true → cap clip_worthiness ≤ 0.25
+2. specificity_score (0.0–1.0)
+   What: Concrete numbers, dates, names, measurable results, specific examples
+   NOT: Quality of the idea or emotional delivery
+   High: "$400K debt → 60% discount → 18 months → debt-free"
+   Low: "I had a lot of debt and eventually paid it off"
+
+3. personal_connection (0.0–1.0)
+   What: Personal story, vulnerability, emotional narrative, relatable experience
+   NOT: Practical usefulness or novelty
+   High: "At my father's funeral, I realized no one mentioned his money..."
+   Low: "Studies show people value relationships over wealth"
+
+4. actionability_score (0.0–1.0)
+   What: Clear instructions, steps, protocols, "do X, then Y, avoid Z"
+   NOT: Importance of the problem or emotional weight
+   High: "Call each creditor, ask for 60% reduction, document everything"
+   Low: "You should try to negotiate with creditors"
+
+5. clarity_simplicity (0.0–1.0)
+   What: Accessible language, no jargon, well-structured, easy to follow
+   NOT: Depth or originality of the thought
+   High: Complex topic explained with everyday examples
+   Low: Dense academic language, assumes prior knowledge
+
+6. completeness_arc (0.0–1.0)
+   What: Has beginning, middle, end. Problem → action → result/lesson
+   NOT: Quality of each individual element
+   High: "I was broke → did X → now I'm successful"
+   Low: "Here's what I did..." (no setup or result)
+
+7. hook_quality (0.0–1.0)
+   What: ONLY the first 5-10 words. Does it grab attention immediately?
+   NOT: Quality of the rest of the clip
+   High: "Everything you know about diets is wrong"
+   Low: "So, yeah, I was thinking about this..."
+
+8. needs_previous_context (true/false)
+   Does this segment require the previous one to make sense?
+
+9. needs_next_context (true/false)
+   Does this segment require the next one for a complete thought?
+
+SCORING PROCESS:
+1. First check needs_previous_context and needs_next_context
+2. Then evaluate completeness_arc (most important for standalone clips)
+3. Score remaining 6 criteria independently
+4. Be strict: 0.8+ requires exceptional quality in that dimension
 
 OUTPUT FORMAT:
 Respond ONLY with valid JSON (no explanations, no markdown):
 {{
-  "emotional_intensity": 0.0,
-  "hook_potential": 0.0,
-  "insight_value": 0.0,
-  "actionable_value": 0.0,
-  "clip_worthiness": 0.0,
+  "surprise_novelty": 0.0,
+  "specificity_score": 0.0,
+  "personal_connection": 0.0,
+  "actionability_score": 0.0,
+  "clarity_simplicity": 0.0,
+  "completeness_arc": 0.0,
+  "hook_quality": 0.0,
   "needs_previous_context": false,
   "needs_next_context": false
 }}"""
@@ -1015,25 +1042,28 @@ Respond ONLY with valid JSON (no explanations, no markdown):
             response_text = DeepSeekClient.extract_text(response_json)
             scores = DeepSeekClient.extract_json(response_text)
             
+            # Define expected fields
+            numeric_fields = [
+                'surprise_novelty', 'specificity_score', 'personal_connection',
+                'actionability_score', 'clarity_simplicity', 'completeness_arc', 'hook_quality'
+            ]
+            boolean_fields = ['needs_previous_context', 'needs_next_context']
+            
             # Validate scores
             for key in scores:
-                # Handle boolean flags
-                if key in ('needs_previous_context', 'needs_next_context'):
+                if key in boolean_fields:
                     if not isinstance(scores[key], bool):
-                        # Try to interpret string/int as bool
                         scores[key] = str(scores[key]).lower() in ('true', '1', 'yes')
-                else:
+                elif key in numeric_fields:
                     if not isinstance(scores[key], (int, float)):
                         scores[key] = 0.0
                     scores[key] = max(0.0, min(1.0, float(scores[key])))
             
-            # Ensure boolean flags exist
-            scores.setdefault('needs_previous_context', False)
-            scores.setdefault('needs_next_context', False)
-            
-            # Enforce clip_worthiness cap for incomplete segments
-            if scores.get('needs_previous_context') or scores.get('needs_next_context'):
-                scores['clip_worthiness'] = min(scores.get('clip_worthiness', 0), 0.25)
+            # Ensure all required fields exist with defaults
+            for field in numeric_fields:
+                scores.setdefault(field, 0.5)
+            for field in boolean_fields:
+                scores.setdefault(field, False)
             
             return scores
             
@@ -1041,25 +1071,46 @@ Respond ONLY with valid JSON (no explanations, no markdown):
             logger.warning(f"Error parsing LLM response, using default scores: {e}")
             # Return neutral scores if parsing fails
             return {
-                'emotional_intensity': 0.5,
-                'hook_potential': 0.5,
-                'insight_value': 0.5,
-                'actionable_value': 0.5,
-                'clip_worthiness': 0.5,
+                'surprise_novelty': 0.5,
+                'specificity_score': 0.5,
+                'personal_connection': 0.5,
+                'actionability_score': 0.5,
+                'clarity_simplicity': 0.5,
+                'completeness_arc': 0.5,
+                'hook_quality': 0.5,
                 'needs_previous_context': False,
                 'needs_next_context': False,
             }
     
     def _calculate_highlight_score(self, scores: Dict[str, float]) -> float:
         """
-        Calculate weighted highlight score emphasizing actionable and emotional impact.
+        Calculate weighted highlight score using the new orthogonal criteria system.
+        
+        Formula prioritizes:
+        - completeness_arc (50%): A clip MUST tell a complete micro-story
+        - Viral factors (40%): surprise, hook, personal connection
+        - Value factors (10%): specificity, actionability, clarity
+        
+        Incomplete segments (needs_*_context) are capped at 0.25
         """
-        highlight_score = (
-            0.30 * scores.get('emotional_intensity', 0) +
-            0.25 * scores.get('hook_potential', 0) +
-            0.25 * scores.get('insight_value', 0) +
-            0.15 * scores.get('actionable_value', 0) +
-            0.05 * scores.get('clip_worthiness', 0)
+        # Base score calculation
+        base_score = (
+            # Most important: complete story arc
+            0.30 * scores.get('completeness_arc', 0) +
+            
+            # Viral factors
+            0.15 * scores.get('surprise_novelty', 0) +
+            0.15 * scores.get('hook_quality', 0) +
+            0.10 * scores.get('personal_connection', 0) +
+            
+            # Value factors
+            0.10 * scores.get('specificity_score', 0) +
+            0.10 * scores.get('actionability_score', 0) +
+            0.10 * scores.get('clarity_simplicity', 0)
         )
         
-        return min(1.0, highlight_score)
+        # Cap incomplete segments at 0.25
+        if scores.get('needs_previous_context') or scores.get('needs_next_context'):
+            return min(0.25, base_score)
+        
+        return min(1.0, base_score)
