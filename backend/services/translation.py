@@ -655,22 +655,71 @@ class Translator:
                         turn_idx, en_words, ru_words, ratio, range_str, status
                     )
             
-            # CRITICAL: Check for missing translations and log warnings
+            # CRITICAL: Check for missing translations and retry individually
             missing_turns = []
             for idx, turn in enumerate(dialogue_turns):
                 if "text_ru" not in turn or not turn["text_ru"].strip():
-                    original_text = turn.get("text", "")
-                    turn["text_ru"] = original_text  # Fallback to original
                     missing_turns.append(idx)
-                    logger.warning(
-                        "Stage 1 Turn %d: MISSING TRANSLATION! Using original EN: '%s...'",
-                        idx, original_text[:50]
-                    )
             
+            # Retry translating missing turns individually
             if missing_turns:
+                logger.warning(
+                    "Stage 1: %d turns missing translation, retrying individually: %s",
+                    len(missing_turns), missing_turns
+                )
+                for idx in missing_turns:
+                    turn = dialogue_turns[idx]
+                    original_text = turn.get("text", "")
+                    if not original_text.strip():
+                        continue
+                    
+                    try:
+                        # Simple retry for single turn
+                        retry_prompt = f"""Translate this single phrase to Russian (isochronic translation for dubbing):
+
+English: "{original_text}"
+
+Respond with ONLY the Russian translation, no JSON, no quotes, just the text."""
+                        
+                        retry_response = self.client.chat.completions.create(
+                            model=self.model,
+                            messages=[
+                                {"role": "system", "content": "You are a professional translator. Translate to natural Russian."},
+                                {"role": "user", "content": retry_prompt}
+                            ],
+                            temperature=0.3,
+                            max_tokens=200,
+                        )
+                        
+                        translated = retry_response.choices[0].message.content.strip()
+                        if translated:
+                            turn["text_ru"] = translated
+                            logger.info(
+                                "Stage 1 Turn %d: RETRY SUCCESS! '%s' → '%s'",
+                                idx, original_text[:30], translated[:30]
+                            )
+                        else:
+                            turn["text_ru"] = original_text
+                            logger.warning(
+                                "Stage 1 Turn %d: RETRY EMPTY, using original: '%s...'",
+                                idx, original_text[:50]
+                            )
+                    except Exception as e:
+                        turn["text_ru"] = original_text
+                        logger.error(
+                            "Stage 1 Turn %d: RETRY FAILED (%s), using original: '%s...'",
+                            idx, e, original_text[:50]
+                        )
+            
+            # Final check for any remaining missing translations
+            still_missing = [
+                idx for idx, turn in enumerate(dialogue_turns)
+                if not turn.get("text_ru", "").strip()
+            ]
+            if still_missing:
                 logger.error(
-                    "Stage 1: %d/%d turns missing translation (indices: %s)",
-                    len(missing_turns), len(dialogue_turns), missing_turns
+                    "Stage 1: %d/%d turns STILL missing translation after retry (indices: %s)",
+                    len(still_missing), len(dialogue_turns), still_missing
                 )
             
             return dialogue_turns

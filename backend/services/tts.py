@@ -1851,6 +1851,65 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         )
         return DEFAULT_RATE
 
+    def _fix_bunched_word_timestamps(
+        self, words: list[dict], turn_start: float, turn_end: float
+    ) -> list[dict]:
+        """
+        Fix word timestamps where multiple words have the same start time.
+        ElevenLabs sometimes returns bunched-up timestamps that cause subtitle overlaps.
+        
+        Redistributes bunched words evenly within their available time window.
+        """
+        if not words or len(words) < 2:
+            return words
+        
+        fixed = list(words)  # Copy
+        turn_duration = turn_end - turn_start
+        
+        # Find consecutive words with same start time
+        i = 0
+        while i < len(fixed):
+            # Find group of words with same start time
+            group_start = i
+            while i + 1 < len(fixed) and abs(fixed[i + 1]["start"] - fixed[group_start]["start"]) < 0.05:
+                i += 1
+            group_end = i
+            group_size = group_end - group_start + 1
+            
+            if group_size > 1:
+                # Found a group of bunched words
+                # Determine the time window for redistribution
+                window_start = fixed[group_start]["start"]
+                
+                # Window ends at the next word's start or turn end
+                if group_end + 1 < len(fixed):
+                    window_end = fixed[group_end + 1]["start"]
+                else:
+                    window_end = turn_end
+                
+                window_duration = window_end - window_start
+                
+                # Redistribute words evenly in this window
+                if window_duration > 0:
+                    per_word = window_duration / group_size
+                    for j in range(group_size):
+                        w_idx = group_start + j
+                        fixed[w_idx]["start"] = window_start + j * per_word
+                        fixed[w_idx]["end"] = window_start + (j + 1) * per_word
+                    
+                    logger.info(
+                        "TTD: Redistributed %d bunched words (%.2f-%.2fs → per_word=%.2fms): %s",
+                        group_size,
+                        window_start,
+                        window_end,
+                        per_word * 1000,
+                        [w["word"] for w in fixed[group_start:group_end + 1]]
+                    )
+            
+            i += 1
+        
+        return fixed
+
     def _validate_ttd_timing(self, voice_segments: list[dict], num_inputs: int) -> tuple[bool, list[int]]:
         """
         Check if TTD API returned valid timing for most inputs.
@@ -2387,6 +2446,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             "start": w["start"] + leading_sec + offset,
                             "end": w["end"] + leading_sec + offset,
                         })
+                    
+                    # FIX: Redistribute bunched-up words (same start time)
+                    # ElevenLabs sometimes returns multiple words with identical timestamps
+                    if len(tts_words) > 1:
+                        tts_words = self._fix_bunched_word_timestamps(tts_words, start_time, end_time)
+                    
                     turn["tts_words"] = tts_words
                     logger.debug(
                         "TTD turn %d: %d words with timestamps (first: %.2f-%.2fs, last: %.2f-%.2fs)",
