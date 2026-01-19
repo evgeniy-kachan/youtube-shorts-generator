@@ -1701,8 +1701,21 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         if abs(speed - 1.0) > 0.02:
             voice_settings["speed"] = speed
         
-        for turn in dialogue_turns:
-            text = turn.get("text_ru") or turn.get("text") or ""
+        for idx, turn in enumerate(dialogue_turns):
+            text_ru = turn.get("text_ru")
+            text_en = turn.get("text", "")
+            
+            # CRITICAL: Use translated text, warn if missing
+            if text_ru and text_ru.strip():
+                text = text_ru
+            else:
+                text = text_en
+                if text_en.strip():
+                    logger.warning(
+                        "TTD turn %d: MISSING text_ru! Using original EN: '%s...'",
+                        idx, text_en[:40]
+                    )
+            
             if not text.strip():
                 continue
             

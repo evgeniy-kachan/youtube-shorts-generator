@@ -655,6 +655,24 @@ class Translator:
                         turn_idx, en_words, ru_words, ratio, range_str, status
                     )
             
+            # CRITICAL: Check for missing translations and log warnings
+            missing_turns = []
+            for idx, turn in enumerate(dialogue_turns):
+                if "text_ru" not in turn or not turn["text_ru"].strip():
+                    original_text = turn.get("text", "")
+                    turn["text_ru"] = original_text  # Fallback to original
+                    missing_turns.append(idx)
+                    logger.warning(
+                        "Stage 1 Turn %d: MISSING TRANSLATION! Using original EN: '%s...'",
+                        idx, original_text[:50]
+                    )
+            
+            if missing_turns:
+                logger.error(
+                    "Stage 1: %d/%d turns missing translation (indices: %s)",
+                    len(missing_turns), len(dialogue_turns), missing_turns
+                )
+            
             return dialogue_turns
             
         except Exception as exc:
