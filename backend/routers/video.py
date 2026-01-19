@@ -45,10 +45,19 @@ def get_service(name: str):
     if name not in _services:
         logger.info(f"Initializing service: {name}")
         if name == "transcription":
+            logger.info(
+                "Creating TranscriptionService with diarization: num_speakers=%d, min=%d, max=%d",
+                config.DIARIZATION_NUM_SPEAKERS,
+                config.DIARIZATION_MIN_SPEAKERS,
+                config.DIARIZATION_MAX_SPEAKERS,
+            )
             _services[name] = TranscriptionService(
                 model_name=config.WHISPER_MODEL,
                 device=config.WHISPER_DEVICE,
                 compute_type=config.WHISPER_COMPUTE_TYPE,
+                num_speakers=config.DIARIZATION_NUM_SPEAKERS,
+                min_speakers=config.DIARIZATION_MIN_SPEAKERS,
+                max_speakers=config.DIARIZATION_MAX_SPEAKERS,
             )
         elif name == "highlight_analyzer":
             _services[name] = HighlightAnalyzer()
