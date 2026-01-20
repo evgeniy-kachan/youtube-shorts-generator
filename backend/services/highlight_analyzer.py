@@ -15,11 +15,32 @@ logger = logging.getLogger(__name__)
 
 
 HIGHLIGHT_SCORE_THRESHOLD = 0.30   # Minimum score to be considered "good"
-MIN_HIGHLIGHTS = 3                  # Always try to return at least this many
-MAX_HIGHLIGHTS = 45                 # Never return more than this
+MIN_HIGHLIGHTS_BASE = 3             # Base minimum highlights
+MIN_HIGHLIGHTS_PER_20MIN = 1        # Add +1 to minimum for every 20 minutes of video
+MAX_HIGHLIGHTS = 60                 # Never return more than this
 FALLBACK_MIN_SCORE = 0.20           # Fallback segments must be at least this good
 PREV_TOPIC_MAX_WORDS = 50
 NEXT_TOPIC_MAX_WORDS = 30
+
+
+def get_min_highlights(video_duration: float) -> int:
+    """
+    Calculate minimum highlights based on video duration.
+    
+    Formula: BASE + (video_minutes / 20)
+    
+    Examples:
+    - 10 min → 3 + 0 = 3
+    - 60 min → 3 + 3 = 6
+    - 120 min → 3 + 6 = 9
+    - 180 min → 3 + 9 = 12
+    """
+    if video_duration <= 0:
+        return MIN_HIGHLIGHTS_BASE
+    
+    minutes = video_duration / 60.0
+    dynamic_min = MIN_HIGHLIGHTS_BASE + int(minutes / 20)
+    return dynamic_min
 
 
 class HighlightAnalyzer:
@@ -57,10 +78,12 @@ class HighlightAnalyzer:
         """
         try:
             video_duration = segments[-1]['end'] if segments else 0.0
+            min_highlights = get_min_highlights(video_duration)
             logger.info(
-                "Video duration %.1fs (~%.1f min), quality threshold=%.2f, fallback threshold=%.2f",
+                "Video duration %.1fs (~%.1f min) -> min_highlights=%d, quality>=%.2f, fallback>=%.2f",
                 video_duration,
                 video_duration / 60 if video_duration else 0.0,
+                min_highlights,
                 HIGHLIGHT_SCORE_THRESHOLD,
                 FALLBACK_MIN_SCORE,
             )
@@ -112,8 +135,8 @@ class HighlightAnalyzer:
                 good_count, HIGHLIGHT_SCORE_THRESHOLD
             )
 
-            # If we have fewer than MIN_HIGHLIGHTS, add fallbacks (but only if score >= FALLBACK_MIN_SCORE)
-            if len(highlights) < MIN_HIGHLIGHTS and scored_segments:
+            # If we have fewer than min_highlights, add fallbacks (but only if score >= FALLBACK_MIN_SCORE)
+            if len(highlights) < min_highlights and scored_segments:
                 existing_ids = {item['id'] for item in highlights}
                 fallback_candidates = sorted(
                     scored_segments,
@@ -122,8 +145,8 @@ class HighlightAnalyzer:
                 )
                 fallback_added = 0
                 for idx, segment, scores, highlight_score in fallback_candidates:
-                    # Stop if we've reached MIN_HIGHLIGHTS
-                    if len(highlights) >= MIN_HIGHLIGHTS:
+                    # Stop if we've reached min_highlights
+                    if len(highlights) >= min_highlights:
                         break
                     # Skip if already included
                     if f"segment_{idx}" in existing_ids:
