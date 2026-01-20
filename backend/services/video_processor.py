@@ -1458,7 +1458,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     color_tag,
                     lane,
                 )
-                ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}\n"
+                ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,100,100,0,,{text}\n"
             else:
                 # For chunk mode (especially with background), we may need to split
                 # into multiple dialogue lines with different Y positions
@@ -1471,7 +1471,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     lane,
                 )
                 for line_text in lines:
-                    ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{line_text}\n"
+                    ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,100,100,0,,{line_text}\n"
         
         # Write to file
         output_path.write_text(ass_content, encoding='utf-8')
