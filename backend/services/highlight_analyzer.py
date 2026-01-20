@@ -14,11 +14,11 @@ from backend.services.deepseek_client import DeepSeekClient
 logger = logging.getLogger(__name__)
 
 
-HIGHLIGHT_SCORE_THRESHOLD = 0.30   # Minimum score to be considered "good"
+HIGHLIGHT_SCORE_THRESHOLD = 0.25   # Minimum score to be considered "good"
 MIN_HIGHLIGHTS_BASE = 3             # Base minimum highlights
 MIN_HIGHLIGHTS_PER_20MIN = 1        # Add +1 to minimum for every 20 minutes of video
 MAX_HIGHLIGHTS = 60                 # Never return more than this
-FALLBACK_MIN_SCORE = 0.20           # Fallback segments must be at least this good
+FALLBACK_MIN_SCORE = 0.15           # Fallback segments must be at least this good
 PREV_TOPIC_MAX_WORDS = 50
 NEXT_TOPIC_MAX_WORDS = 30
 
