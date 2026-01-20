@@ -1442,7 +1442,7 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{selected_style['fontname']},{selected_style['fontsize']},{selected_style['primarycolor']},&H000000FF,{box_color},{back_color},0,0,0,0,100,100,0,0,{selected_style['borderstyle']},{selected_style['outline']},{selected_style['shadow']},{selected_style['alignment']},100,100,{selected_style['marginv']},1
+Style: Default,{selected_style['fontname']},{selected_style['fontsize']},{selected_style['primarycolor']},&H000000FF,{box_color},{back_color},0,0,0,0,100,100,0,0,{selected_style['borderstyle']},{selected_style['outline']},{selected_style['shadow']},{selected_style['alignment']},105,105,{selected_style['marginv']},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1466,7 +1466,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     color_tag,
                     lane,
                 )
-                ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,100,100,0,,{text}\n"
+                ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,105,105,0,,{text}\n"
             else:
                 # For chunk mode (especially with background), we may need to split
                 # into multiple dialogue lines with different Y positions
@@ -1479,7 +1479,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     lane,
                 )
                 for line_text in lines:
-                    ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,100,100,0,,{line_text}\n"
+                    ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,105,105,0,,{line_text}\n"
         
         # Write to file
         output_path.write_text(ass_content, encoding='utf-8')
