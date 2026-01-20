@@ -15,7 +15,7 @@ from pydub import AudioSegment
 
 from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
-from backend.services.highlight_analyzer import HighlightAnalyzer, determine_target_highlights
+from backend.services.highlight_analyzer import HighlightAnalyzer, get_min_highlights
 from backend.services.translation import Translator
 from backend.services.tts import TTSService, ElevenLabsTTSService, ElevenLabsTTDService
 from backend.services.video_processor import VideoProcessor
@@ -636,7 +636,7 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysi
     transcription_result = transcriber.transcribe_audio_from_video(video_path)
     segments = transcription_result['segments']
     video_duration = segments[-1]['end'] if segments else 0.0
-    target_highlight_count = determine_target_highlights(video_duration)
+    min_highlight_count = get_min_highlights(video_duration)
 
     # 3. Analyze for highlights
     # Select model based on analysis_mode: 'fast' = deepseek-chat, 'deep' = deepseek-reasoner
@@ -649,14 +649,14 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysi
 
     # 4. Filter out highly overlapping segments
     logger.info(
-        "Filtering %d segments for overlaps (target count %d)...",
+        "Filtering %d segments for overlaps (min count %d)...",
         len(highlights),
-        target_highlight_count,
+        min_highlight_count,
     )
     filtered_highlights = _filter_overlapping_segments(
         highlights,
         iou_threshold=0.5,
-        desired_count=target_highlight_count,
+        desired_count=min_highlight_count,
     )
     logger.info(f"Found {len(filtered_highlights)} non-overlapping segments.")
     
