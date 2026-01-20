@@ -1109,6 +1109,14 @@ class VideoProcessor:
         MIN_SUBTITLE_GAP = 0.05  # 50ms
 
         for turn in dialogue:
+            # Skip turns that were merged into previous turn (too short for separate subtitle)
+            if turn.get("_subtitle_merged"):
+                logger.debug(
+                    "Skipping merged turn (merged into turn %d)",
+                    turn.get("_merged_into", -1)
+                )
+                continue
+            
             raw_text = (turn.get("text_ru") or turn.get("text") or "").strip()
             if not raw_text:
                 continue

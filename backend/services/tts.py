@@ -2529,6 +2529,46 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             if overlap_fixes > 0:
                 logger.info("TTD: Fixed %d overlapping turns", overlap_fixes)
             
+            # POST-PROCESSING: Merge very short turns into previous turn for subtitle display
+            # If a turn has < 0.5s duration, its text will be merged with the previous turn
+            MIN_SUBTITLE_DURATION = 0.5  # Minimum 500ms for a readable subtitle
+            merged_count = 0
+            for idx in range(len(dialogue_turns) - 1, 0, -1):  # Go backwards to avoid index issues
+                if idx >= len(inputs):
+                    continue
+                curr_turn = dialogue_turns[idx]
+                prev_turn = dialogue_turns[idx - 1]
+                
+                curr_duration = curr_turn.get("tts_duration", 0)
+                if curr_duration < MIN_SUBTITLE_DURATION and curr_duration > 0:
+                    # This turn is too short - merge its subtitle into previous turn
+                    # Keep the timing but mark for merging
+                    prev_text = inputs[idx - 1]["text"] if idx - 1 < len(inputs) else ""
+                    curr_text = inputs[idx]["text"] if idx < len(inputs) else ""
+                    
+                    # Extend previous turn's end time to include this turn
+                    prev_turn["tts_end_offset"] = curr_turn.get("tts_end_offset", prev_turn.get("tts_end_offset", 0))
+                    prev_turn["tts_duration"] = prev_turn["tts_end_offset"] - prev_turn.get("tts_start_offset", 0)
+                    
+                    # Merge word timestamps
+                    prev_words = prev_turn.get("tts_words", [])
+                    curr_words = curr_turn.get("tts_words", [])
+                    if curr_words:
+                        prev_turn["tts_words"] = prev_words + curr_words
+                    
+                    # Mark current turn as merged (will be skipped in subtitle generation)
+                    curr_turn["_subtitle_merged"] = True
+                    curr_turn["_merged_into"] = idx - 1
+                    
+                    merged_count += 1
+                    logger.warning(
+                        "TTD MERGE: turn %d (%.2fs, '%s...') merged INTO turn %d for subtitles",
+                        idx, curr_duration, curr_text[:25], idx - 1
+                    )
+            
+            if merged_count > 0:
+                logger.info("TTD: Merged %d short turns into previous turns for subtitle display", merged_count)
+            
             # Summary log: timing source for each turn
             api_count = sum(1 for t in dialogue_turns if t.get("_timing_source") == "api")
             interp_count = sum(1 for t in dialogue_turns if t.get("_timing_source") == "interpolated")
