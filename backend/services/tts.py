@@ -1855,30 +1855,42 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         self, words: list[dict], turn_start: float, turn_end: float
     ) -> list[dict]:
         """
-        Fix word timestamps where multiple words have the same start time.
-        ElevenLabs sometimes returns bunched-up timestamps that cause subtitle overlaps.
+        Fix word timestamps where multiple words are bunched together.
+        ElevenLabs sometimes returns compressed timestamps that cause subtitle overlaps.
         
-        Redistributes bunched words evenly within their available time window.
+        Two-pass approach:
+        1. Find groups of words with very close start times (< 150ms apart)
+        2. Ensure minimum per-word duration (200ms) for readability
         """
         if not words or len(words) < 2:
             return words
         
-        fixed = list(words)  # Copy
-        turn_duration = turn_end - turn_start
+        fixed = [dict(w) for w in words]  # Deep copy
         
-        # Find consecutive words with same start time
+        MIN_WORD_DURATION = 0.20  # 200ms minimum per word for readability
+        BUNCH_THRESHOLD = 0.20    # Words within 200ms are considered bunched
+        
+        # PASS 1: Find and redistribute bunched word groups
         i = 0
         while i < len(fixed):
-            # Find group of words with same start time
+            # Find group of words bunched together (close start times)
             group_start = i
-            while i + 1 < len(fixed) and abs(fixed[i + 1]["start"] - fixed[group_start]["start"]) < 0.05:
-                i += 1
+            last_start = fixed[i]["start"]
+            
+            while i + 1 < len(fixed):
+                next_start = fixed[i + 1]["start"]
+                # Check if next word is close to current word (not group start)
+                if next_start - last_start < BUNCH_THRESHOLD:
+                    last_start = next_start
+                    i += 1
+                else:
+                    break
+            
             group_end = i
             group_size = group_end - group_start + 1
             
             if group_size > 1:
                 # Found a group of bunched words
-                # Determine the time window for redistribution
                 window_start = fixed[group_start]["start"]
                 
                 # Window ends at the next word's start or turn end
@@ -1888,25 +1900,36 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     window_end = turn_end
                 
                 window_duration = window_end - window_start
+                per_word = window_duration / group_size if window_duration > 0 else MIN_WORD_DURATION
                 
                 # Redistribute words evenly in this window
-                if window_duration > 0:
-                    per_word = window_duration / group_size
-                    for j in range(group_size):
-                        w_idx = group_start + j
-                        fixed[w_idx]["start"] = window_start + j * per_word
-                        fixed[w_idx]["end"] = window_start + (j + 1) * per_word
-                    
-                    logger.info(
-                        "TTD: Redistributed %d bunched words (%.2f-%.2fs → per_word=%.2fms): %s",
-                        group_size,
-                        window_start,
-                        window_end,
-                        per_word * 1000,
-                        [w["word"] for w in fixed[group_start:group_end + 1]]
-                    )
+                for j in range(group_size):
+                    w_idx = group_start + j
+                    fixed[w_idx]["start"] = window_start + j * per_word
+                    fixed[w_idx]["end"] = window_start + (j + 1) * per_word
+                
+                logger.info(
+                    "TTD: Redistributed %d bunched words (%.2f-%.2fs → per_word=%.0fms): %s",
+                    group_size,
+                    window_start,
+                    window_end,
+                    per_word * 1000,
+                    [w["word"] for w in fixed[group_start:group_end + 1]]
+                )
             
             i += 1
+        
+        # PASS 2: Ensure minimum duration for each word
+        for j in range(len(fixed)):
+            word_dur = fixed[j]["end"] - fixed[j]["start"]
+            if word_dur < MIN_WORD_DURATION:
+                # Extend word to minimum duration, but don't overlap with next word
+                desired_end = fixed[j]["start"] + MIN_WORD_DURATION
+                if j + 1 < len(fixed):
+                    max_end = fixed[j + 1]["start"] - 0.02  # 20ms gap
+                    fixed[j]["end"] = min(desired_end, max_end)
+                else:
+                    fixed[j]["end"] = min(desired_end, turn_end)
         
         return fixed
 
