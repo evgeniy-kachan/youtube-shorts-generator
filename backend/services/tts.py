@@ -1858,19 +1858,20 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         Fix word timestamps where multiple words are bunched together.
         ElevenLabs sometimes returns compressed timestamps that cause subtitle overlaps.
         
-        Two-pass approach:
-        1. Find groups of words with very close start times (< 150ms apart)
-        2. Ensure minimum per-word duration (200ms) for readability
+        Algorithm:
+        1. Find groups of words with very close start times (< 200ms apart)
+        2. If per_word < MIN_WORD_DURATION, expand window and push subsequent words
+        3. Final pass to ensure minimum duration and no overlaps
         """
         if not words or len(words) < 2:
             return words
         
         fixed = [dict(w) for w in words]  # Deep copy
         
-        MIN_WORD_DURATION = 0.20  # 200ms minimum per word for readability
+        MIN_WORD_DURATION = 0.18  # 180ms minimum per word for readability
         BUNCH_THRESHOLD = 0.20    # Words within 200ms are considered bunched
         
-        # PASS 1: Find and redistribute bunched word groups
+        # PASS 1: Find bunched groups and redistribute with minimum duration guarantee
         i = 0
         while i < len(fixed):
             # Find group of words bunched together (close start times)
@@ -1879,7 +1880,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             
             while i + 1 < len(fixed):
                 next_start = fixed[i + 1]["start"]
-                # Check if next word is close to current word (not group start)
                 if next_start - last_start < BUNCH_THRESHOLD:
                     last_start = next_start
                     i += 1
@@ -1893,43 +1893,74 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 # Found a group of bunched words
                 window_start = fixed[group_start]["start"]
                 
-                # Window ends at the next word's start or turn end
+                # Calculate required duration for this group
+                required_duration = group_size * MIN_WORD_DURATION
+                
+                # Calculate actual available window
                 if group_end + 1 < len(fixed):
-                    window_end = fixed[group_end + 1]["start"]
+                    original_window_end = fixed[group_end + 1]["start"]
                 else:
-                    window_end = turn_end
+                    original_window_end = turn_end
                 
-                window_duration = window_end - window_start
-                per_word = window_duration / group_size if window_duration > 0 else MIN_WORD_DURATION
+                original_duration = original_window_end - window_start
                 
-                # Redistribute words evenly in this window
+                # If not enough space, expand window and push subsequent words
+                if original_duration < required_duration:
+                    # Expand window to fit all words at MIN_WORD_DURATION
+                    new_window_end = window_start + required_duration
+                    push_amount = new_window_end - original_window_end
+                    
+                    # Push all subsequent words by push_amount
+                    for k in range(group_end + 1, len(fixed)):
+                        fixed[k]["start"] += push_amount
+                        fixed[k]["end"] += push_amount
+                    
+                    window_end = new_window_end
+                    per_word = MIN_WORD_DURATION
+                    
+                    logger.warning(
+                        "TTD: Expanded window for %d bunched words by %.0fms (%.2f-%.2fs → %.2f-%.2fs): %s",
+                        group_size,
+                        push_amount * 1000,
+                        window_start,
+                        original_window_end,
+                        window_start,
+                        window_end,
+                        [w["word"] for w in fixed[group_start:group_end + 1]]
+                    )
+                else:
+                    # Window is large enough, redistribute evenly
+                    window_end = original_window_end
+                    per_word = original_duration / group_size
+                    
+                    logger.info(
+                        "TTD: Redistributed %d bunched words (%.2f-%.2fs → per_word=%.0fms): %s",
+                        group_size,
+                        window_start,
+                        window_end,
+                        per_word * 1000,
+                        [w["word"] for w in fixed[group_start:group_end + 1]]
+                    )
+                
+                # Apply redistribution
                 for j in range(group_size):
                     w_idx = group_start + j
                     fixed[w_idx]["start"] = window_start + j * per_word
                     fixed[w_idx]["end"] = window_start + (j + 1) * per_word
-                
-                logger.info(
-                    "TTD: Redistributed %d bunched words (%.2f-%.2fs → per_word=%.0fms): %s",
-                    group_size,
-                    window_start,
-                    window_end,
-                    per_word * 1000,
-                    [w["word"] for w in fixed[group_start:group_end + 1]]
-                )
             
             i += 1
         
-        # PASS 2: Ensure minimum duration for each word
-        for j in range(len(fixed)):
-            word_dur = fixed[j]["end"] - fixed[j]["start"]
-            if word_dur < MIN_WORD_DURATION:
-                # Extend word to minimum duration, but don't overlap with next word
-                desired_end = fixed[j]["start"] + MIN_WORD_DURATION
-                if j + 1 < len(fixed):
-                    max_end = fixed[j + 1]["start"] - 0.02  # 20ms gap
-                    fixed[j]["end"] = min(desired_end, max_end)
-                else:
-                    fixed[j]["end"] = min(desired_end, turn_end)
+        # PASS 2: Final cleanup - ensure no overlaps and minimum gaps
+        for j in range(len(fixed) - 1):
+            if fixed[j]["end"] > fixed[j + 1]["start"]:
+                # Overlap detected, adjust
+                mid = (fixed[j]["end"] + fixed[j + 1]["start"]) / 2
+                fixed[j]["end"] = mid - 0.01
+                fixed[j + 1]["start"] = mid + 0.01
+        
+        # Clamp last word to turn_end
+        if fixed and fixed[-1]["end"] > turn_end:
+            fixed[-1]["end"] = turn_end
         
         return fixed
 
