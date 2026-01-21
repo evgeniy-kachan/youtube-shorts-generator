@@ -1859,9 +1859,10 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         ElevenLabs sometimes returns compressed timestamps that cause subtitle overlaps.
         
         Algorithm:
-        1. Find groups of words with very close start times (< 200ms apart)
-        2. Redistribute within turn window to maintain audio sync
-        3. Borrow time from gaps AFTER bunched group (not push subsequent words)
+        PASS 0: If entire turn has clearly wrong timestamps (>10 words, <100ms each),
+                redistribute ALL words evenly across turn_duration
+        PASS 1: Find groups of words with very close start times (< 200ms apart)
+        PASS 2: Redistribute within turn window to maintain audio sync
         """
         if not words or len(words) < 2:
             return words
@@ -1871,6 +1872,52 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         MIN_WORD_DURATION = 0.15  # 150ms target per word for readability
         BUNCH_THRESHOLD = 0.20    # Words within 200ms are considered bunched
         MAX_BORROW_RATIO = 0.5    # Can borrow up to 50% of gap after bunched group
+        CLEARLY_WRONG_THRESHOLD = 0.10  # 100ms - if per_word < this, timestamps are wrong
+        MIN_WORDS_FOR_FULL_REDISTRIBUTION = 8  # Only redistribute if turn has >= 8 words
+        
+        # PASS 0: Check if entire turn has clearly wrong timestamps
+        # This happens when ElevenLabs returns very compressed character-level timestamps
+        turn_duration = turn_end - turn_start
+        word_count = len(fixed)
+        
+        if word_count >= MIN_WORDS_FOR_FULL_REDISTRIBUTION and turn_duration > 0:
+            # Calculate total time span that words occupy according to timestamps
+            first_word_start = fixed[0]["start"]
+            last_word_end = fixed[-1]["end"]
+            timestamps_span = last_word_end - first_word_start
+            
+            per_word_from_timestamps = timestamps_span / word_count if word_count > 0 else 0
+            per_word_from_turn = turn_duration / word_count
+            
+            # If timestamps give <100ms per word but turn_duration would give >=150ms,
+            # the timestamps are clearly wrong - redistribute evenly
+            if per_word_from_timestamps < CLEARLY_WRONG_THRESHOLD and per_word_from_turn >= MIN_WORD_DURATION:
+                logger.warning(
+                    "TTD PASS 0: Timestamps clearly wrong! %d words in %.0fms span (%.0fms/word) "
+                    "but turn=%.2fs (%.0fms/word available). REDISTRIBUTING ALL.",
+                    word_count,
+                    timestamps_span * 1000,
+                    per_word_from_timestamps * 1000,
+                    turn_duration,
+                    per_word_from_turn * 1000
+                )
+                
+                # Redistribute ALL words evenly across turn_duration
+                for i in range(word_count):
+                    fixed[i]["start"] = turn_start + i * per_word_from_turn
+                    fixed[i]["end"] = turn_start + (i + 1) * per_word_from_turn
+                
+                # Log result
+                logger.info(
+                    "TTD PASS 0: Redistributed %d words evenly: %.0fms/word, first='%s'@%.2fs, last='%s'@%.2fs",
+                    word_count,
+                    per_word_from_turn * 1000,
+                    fixed[0]["word"], fixed[0]["start"],
+                    fixed[-1]["word"], fixed[-1]["end"]
+                )
+                
+                # Skip PASS 1 - already redistributed everything
+                return fixed
         
         # PASS 1: Find bunched groups and redistribute within available window
         i = 0
