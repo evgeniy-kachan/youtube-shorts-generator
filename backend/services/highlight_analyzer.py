@@ -14,7 +14,8 @@ from backend.services.deepseek_client import DeepSeekClient
 logger = logging.getLogger(__name__)
 
 
-HIGHLIGHT_SCORE_THRESHOLD = 0.25   # Minimum score to be considered "good"
+STRICT_SCORE_THRESHOLD = 0.35      # "Строгая выборка" - only high-quality segments
+HIGHLIGHT_SCORE_THRESHOLD = 0.25   # "Расширенная выборка" - good segments
 MIN_HIGHLIGHTS_BASE = 3             # Base minimum highlights
 MIN_HIGHLIGHTS_PER_20MIN = 1        # Add +1 to minimum for every 20 minutes of video
 MAX_HIGHLIGHTS = 60                 # Never return more than this
@@ -119,20 +120,36 @@ class HighlightAnalyzer:
                 original_segments=segments,  # Pass original for dynamic expansion
             )
             
-            # Filter segments with good scores (>= HIGHLIGHT_SCORE_THRESHOLD)
+            # Filter segments into tiers:
+            # - "strict": score >= 0.35 (high quality)
+            # - "extended": score >= 0.25 (good quality)
+            # - "fallback": score >= 0.15 (acceptable, only to fill min_highlights)
             highlights = []
             scored_segments: list[tuple[int, dict, dict, float]] = []
+            strict_count = 0
+            extended_count = 0
+            
             for i, (segment, scores) in enumerate(analyzed_segments):
                 highlight_score = self._calculate_highlight_score(scores)
                 scored_segments.append((i, segment, scores, highlight_score))
 
-                if highlight_score >= HIGHLIGHT_SCORE_THRESHOLD:
-                    highlights.append(self._build_highlight_payload(i, segment, scores, highlight_score))
+                if highlight_score >= STRICT_SCORE_THRESHOLD:
+                    # High quality - "strict" tier
+                    highlights.append(self._build_highlight_payload(
+                        i, segment, scores, highlight_score, tier="strict"
+                    ))
+                    strict_count += 1
+                elif highlight_score >= HIGHLIGHT_SCORE_THRESHOLD:
+                    # Good quality - "extended" tier
+                    highlights.append(self._build_highlight_payload(
+                        i, segment, scores, highlight_score, tier="extended"
+                    ))
+                    extended_count += 1
 
-            good_count = len(highlights)
             logger.info(
-                "Found %d segments with score >= %.2f (threshold)",
-                good_count, HIGHLIGHT_SCORE_THRESHOLD
+                "Found %d segments: %d strict (>=%.2f), %d extended (>=%.2f)",
+                len(highlights), strict_count, STRICT_SCORE_THRESHOLD,
+                extended_count, HIGHLIGHT_SCORE_THRESHOLD
             )
 
             # If we have fewer than min_highlights, add fallbacks (but only if score >= FALLBACK_MIN_SCORE)
@@ -164,6 +181,7 @@ class HighlightAnalyzer:
                             segment,
                             scores,
                             highlight_score,
+                            tier="fallback",
                             is_fallback=True,
                         )
                     )
@@ -804,7 +822,22 @@ class HighlightAnalyzer:
             segment['primary_speaker'] = primary_speaker or "Unknown"
 
     @staticmethod
-    def _build_highlight_payload(idx: int, segment: dict, scores: dict, highlight_score: float, is_fallback: bool = False) -> dict:
+    def _build_highlight_payload(
+        idx: int,
+        segment: dict,
+        scores: dict,
+        highlight_score: float,
+        tier: str = "extended",
+        is_fallback: bool = False
+    ) -> dict:
+        """
+        Build highlight payload with tier classification.
+        
+        Tiers:
+        - "strict": score >= STRICT_SCORE_THRESHOLD (0.35) - high quality
+        - "extended": score >= HIGHLIGHT_SCORE_THRESHOLD (0.25) - good quality
+        - "fallback": score >= FALLBACK_MIN_SCORE (0.15) - acceptable
+        """
         payload = {
             'id': f"segment_{idx}",
             'start_time': segment['start'],
@@ -815,6 +848,7 @@ class HighlightAnalyzer:
             'dialogue': segment.get('dialogue', []),
             'words': segment.get('words', []),
             'highlight_score': highlight_score,
+            'tier': tier,  # "strict", "extended", or "fallback"
             'criteria_scores': scores,
             'needs_previous_context': scores.get('needs_previous_context', False),
             'needs_next_context': scores.get('needs_next_context', False),

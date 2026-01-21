@@ -366,6 +366,30 @@ const SegmentsList = ({
     setSelectedSegments([]);
   };
 
+  // Group segments by tier: strict, extended, fallback
+  const { strictSegments, extendedSegments, fallbackSegments } = useMemo(() => {
+    const strict = [];
+    const extended = [];
+    const fallback = [];
+    
+    segments.forEach((segment) => {
+      const tier = segment.tier || 'extended'; // Default to extended for backward compatibility
+      if (tier === 'strict') {
+        strict.push(segment);
+      } else if (tier === 'fallback') {
+        fallback.push(segment);
+      } else {
+        extended.push(segment);
+      }
+    });
+    
+    return { 
+      strictSegments: strict, 
+      extendedSegments: extended, 
+      fallbackSegments: fallback 
+    };
+  }, [segments]);
+
   const handleProcess = () => {
     if (selectedSegments.length > 0) {
       console.log('[SegmentsList] Calling onProcess with subtitleAnimation:', subtitleAnimation);
@@ -439,6 +463,10 @@ const SegmentsList = ({
             <p className="text-sm text-gray-600 mt-1">{videoTitle}</p>
             <p className="text-xs text-gray-500 mt-1">
               Найдено {segments.length} интересных моментов
+              {strictSegments.length > 0 && ` (⭐${strictSegments.length} строгих`}
+              {extendedSegments.length > 0 && `${strictSegments.length > 0 ? ', ' : ' ('}📋${extendedSegments.length} расширенных`}
+              {fallbackSegments.length > 0 && `, 📎${fallbackSegments.length} доп.`}
+              {(strictSegments.length > 0 || extendedSegments.length > 0 || fallbackSegments.length > 0) && ')'}
             </p>
             <p className="text-xs text-purple-500 mt-1">
               Нажмите карточку, чтобы раскрыть полный текст (по умолчанию видно
@@ -463,8 +491,9 @@ const SegmentsList = ({
           </div>
         </div>
 
-        <div className="space-y-3 max-h-96 overflow-y-auto mb-8">
-          {segments.map((segment, index) => {
+        {/* Helper function to render segment card */}
+        {(() => {
+          const renderSegmentCard = (segment, globalIndex) => {
             const isSelected = selectedSegments.includes(segment.id);
             const isExpanded = expandedSegments.includes(segment.id);
             return (
@@ -495,7 +524,7 @@ const SegmentsList = ({
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center space-x-2">
                         <span className="text-sm font-semibold text-gray-900">
-                          Сегмент {index + 1}
+                          Сегмент {globalIndex + 1}
                         </span>
                         <span className="text-xs text-gray-500">
                           {formatDuration(segment.start_time)} -{' '}
@@ -559,8 +588,63 @@ const SegmentsList = ({
                 </div>
               </div>
             );
-          })}
-        </div>
+          };
+
+          // Calculate global indices for proper numbering
+          let globalIndex = 0;
+          const strictWithIndex = strictSegments.map(s => ({ segment: s, index: globalIndex++ }));
+          const extendedWithIndex = extendedSegments.map(s => ({ segment: s, index: globalIndex++ }));
+          const fallbackWithIndex = fallbackSegments.map(s => ({ segment: s, index: globalIndex++ }));
+
+          return (
+            <div className="space-y-6 max-h-[600px] overflow-y-auto mb-8">
+              {/* STRICT tier - high quality segments */}
+              {strictSegments.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-3 sticky top-0 bg-white py-2 z-10">
+                    <span className="text-sm font-bold text-green-700">⭐ Строгая выборка</span>
+                    <span className="text-xs text-gray-500">
+                      ({strictSegments.length} сегментов, score ≥ 35%)
+                    </span>
+                  </div>
+                  <div className="space-y-3 pl-2 border-l-4 border-green-400">
+                    {strictWithIndex.map(({ segment, index }) => renderSegmentCard(segment, index))}
+                  </div>
+                </div>
+              )}
+
+              {/* EXTENDED tier - good quality segments */}
+              {extendedSegments.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-3 sticky top-0 bg-white py-2 z-10">
+                    <span className="text-sm font-bold text-blue-700">📋 Расширенная выборка</span>
+                    <span className="text-xs text-gray-500">
+                      ({extendedSegments.length} сегментов, score ≥ 25%)
+                    </span>
+                  </div>
+                  <div className="space-y-3 pl-2 border-l-4 border-blue-400">
+                    {extendedWithIndex.map(({ segment, index }) => renderSegmentCard(segment, index))}
+                  </div>
+                </div>
+              )}
+
+              {/* FALLBACK tier - acceptable segments */}
+              {fallbackSegments.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-3 sticky top-0 bg-white py-2 z-10">
+                    <span className="text-sm font-bold text-gray-500">📎 Дополнительные</span>
+                    <span className="text-xs text-gray-500">
+                      ({fallbackSegments.length} сегментов, score ≥ 15%)
+                    </span>
+                  </div>
+                  <div className="space-y-3 pl-2 border-l-4 border-gray-300">
+                    {fallbackWithIndex.map(({ segment, index }) => renderSegmentCard(segment, index))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         <div className="pt-6 border-t">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">
