@@ -1860,18 +1860,19 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         Algorithm:
         1. Find groups of words with very close start times (< 200ms apart)
-        2. If per_word < MIN_WORD_DURATION, expand window and push subsequent words
-        3. Final pass to ensure minimum duration and no overlaps
+        2. Redistribute within turn window to maintain audio sync
+        3. Borrow time from gaps AFTER bunched group (not push subsequent words)
         """
         if not words or len(words) < 2:
             return words
         
         fixed = [dict(w) for w in words]  # Deep copy
         
-        MIN_WORD_DURATION = 0.18  # 180ms minimum per word for readability
+        MIN_WORD_DURATION = 0.15  # 150ms target per word for readability
         BUNCH_THRESHOLD = 0.20    # Words within 200ms are considered bunched
+        MAX_BORROW_RATIO = 0.5    # Can borrow up to 50% of gap after bunched group
         
-        # PASS 1: Find bunched groups and redistribute with minimum duration guarantee
+        # PASS 1: Find bunched groups and redistribute within available window
         i = 0
         while i < len(fixed):
             # Find group of words bunched together (close start times)
@@ -1892,47 +1893,45 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             if group_size > 1:
                 # Found a group of bunched words
                 window_start = fixed[group_start]["start"]
+                bunched_end = fixed[group_end]["end"]  # Original end of last bunched word
                 
-                # Calculate required duration for this group
-                required_duration = group_size * MIN_WORD_DURATION
-                
-                # Calculate actual available window
+                # Determine available window end
                 if group_end + 1 < len(fixed):
-                    original_window_end = fixed[group_end + 1]["start"]
+                    next_word_start = fixed[group_end + 1]["start"]
+                    # Calculate gap between bunched group and next word
+                    gap_after = next_word_start - bunched_end
+                    
+                    # Borrow up to MAX_BORROW_RATIO of the gap (to maintain some pause)
+                    borrow_amount = min(gap_after * MAX_BORROW_RATIO, gap_after - 0.05)
+                    borrow_amount = max(0, borrow_amount)  # Don't borrow negative
+                    
+                    window_end = bunched_end + borrow_amount
+                    # But don't exceed next word's start
+                    window_end = min(window_end, next_word_start - 0.02)
                 else:
-                    original_window_end = turn_end
+                    # Last group in turn - can extend to turn_end
+                    window_end = turn_end
                 
-                original_duration = original_window_end - window_start
+                window_duration = window_end - window_start
+                per_word = window_duration / group_size if window_duration > 0 else 0.1
                 
-                # If not enough space, expand window and push subsequent words
-                if original_duration < required_duration:
-                    # Expand window to fit all words at MIN_WORD_DURATION
-                    new_window_end = window_start + required_duration
-                    push_amount = new_window_end - original_window_end
-                    
-                    # Push all subsequent words by push_amount
-                    for k in range(group_end + 1, len(fixed)):
-                        fixed[k]["start"] += push_amount
-                        fixed[k]["end"] += push_amount
-                    
-                    window_end = new_window_end
-                    per_word = MIN_WORD_DURATION
-                    
+                # Apply redistribution
+                for j in range(group_size):
+                    w_idx = group_start + j
+                    fixed[w_idx]["start"] = window_start + j * per_word
+                    fixed[w_idx]["end"] = window_start + (j + 1) * per_word
+                
+                # Log with appropriate level based on per_word duration
+                if per_word < MIN_WORD_DURATION:
                     logger.warning(
-                        "TTD: Expanded window for %d bunched words by %.0fms (%.2f-%.2fs → %.2f-%.2fs): %s",
+                        "TTD: Redistributed %d bunched words (%.2f-%.2fs → per_word=%.0fms ⚠️ FAST): %s",
                         group_size,
-                        push_amount * 1000,
-                        window_start,
-                        original_window_end,
                         window_start,
                         window_end,
+                        per_word * 1000,
                         [w["word"] for w in fixed[group_start:group_end + 1]]
                     )
                 else:
-                    # Window is large enough, redistribute evenly
-                    window_end = original_window_end
-                    per_word = original_duration / group_size
-                    
                     logger.info(
                         "TTD: Redistributed %d bunched words (%.2f-%.2fs → per_word=%.0fms): %s",
                         group_size,
@@ -1941,16 +1940,10 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         per_word * 1000,
                         [w["word"] for w in fixed[group_start:group_end + 1]]
                     )
-                
-                # Apply redistribution
-                for j in range(group_size):
-                    w_idx = group_start + j
-                    fixed[w_idx]["start"] = window_start + j * per_word
-                    fixed[w_idx]["end"] = window_start + (j + 1) * per_word
             
             i += 1
         
-        # PASS 2: Final cleanup - ensure no overlaps and minimum gaps
+        # PASS 2: Final cleanup - ensure no overlaps
         for j in range(len(fixed) - 1):
             if fixed[j]["end"] > fixed[j + 1]["start"]:
                 # Overlap detected, adjust
