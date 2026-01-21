@@ -1481,6 +1481,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 for line_text in lines:
                     ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,105,105,0,,{line_text}\n"
         
+        # Log subtitle line lengths for margin debugging
+        # With PlayResX=1080 and 105px margins on each side, max usable width = 870px
+        # Approximate: 1 char ≈ 20px at fontsize 60, so max ~43 chars
+        MAX_SAFE_CHARS = 40
+        for idx, subtitle in enumerate(subtitles):
+            words = [w.get('word', '') for w in subtitle.get('words', [])]
+            line_text = ' '.join(words)
+            char_count = len(line_text)
+            if char_count > MAX_SAFE_CHARS:
+                logger.warning(
+                    "SUBTITLE MARGIN WARNING: line %d has %d chars (max safe=%d): '%s'",
+                    idx, char_count, MAX_SAFE_CHARS, line_text[:50]
+                )
+        
         # Write to file
         output_path.write_text(ass_content, encoding='utf-8')
         
