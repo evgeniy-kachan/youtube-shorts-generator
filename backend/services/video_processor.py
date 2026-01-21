@@ -56,7 +56,7 @@ def get_max_chars_for_line(font_name: str, fontsize: int, fonts_dir: str = "font
     Uses cached font metrics for speed.
     
     Args:
-        font_name: Font name without extension (e.g., "Montserrat-Medium")
+        font_name: Font name without extension (e.g., "Montserrat-Medium" or "Montserrat Medium")
         fontsize: Font size in pixels
         fonts_dir: Directory containing .ttf files
     
@@ -66,15 +66,26 @@ def get_max_chars_for_line(font_name: str, fontsize: int, fonts_dir: str = "font
     cache_key = font_name
     
     if cache_key not in _font_width_cache:
-        # Find the font file
-        font_path = os.path.join(fonts_dir, f"{font_name}.ttf")
-        if not os.path.exists(font_path):
-            # Try common variations
-            for suffix in ["-Regular", "-Medium", "_Regular", ""]:
-                alt_path = os.path.join(fonts_dir, f"{font_name}{suffix}.ttf")
-                if os.path.exists(alt_path):
-                    font_path = alt_path
-                    break
+        # Normalize font name: "Montserrat Medium" -> "Montserrat-Medium"
+        normalized_name = font_name.replace(" ", "-")
+        
+        # Find the font file - try multiple variations
+        font_path = None
+        candidates = [
+            f"{normalized_name}.ttf",           # Montserrat-Medium.ttf
+            f"{font_name}.ttf",                 # Montserrat Medium.ttf (original)
+            f"{normalized_name}-Regular.ttf",   # Montserrat-Medium-Regular.ttf
+            f"{normalized_name}_Regular.ttf",   # Montserrat-Medium_Regular.ttf
+        ]
+        
+        for candidate in candidates:
+            test_path = os.path.join(fonts_dir, candidate)
+            if os.path.exists(test_path):
+                font_path = test_path
+                break
+        
+        if font_path is None:
+            font_path = os.path.join(fonts_dir, f"{normalized_name}.ttf")  # Default for error message
         
         _font_width_cache[cache_key] = _measure_font_width(font_path)
         logger.info(
