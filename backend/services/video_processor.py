@@ -8,10 +8,88 @@ from typing import List, Dict, Tuple, Literal
 import subprocess
 import uuid
 
+from PIL import ImageFont
+
 from backend.services.face_detector import FaceDetector
 from backend.services.diarization_runner import get_diarization_runner
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# FONT METRICS CACHE - for dynamic subtitle line splitting
+# =============================================================================
+# Cache stores: font_filename -> average character width per 1 unit of fontsize
+# Measured once per font, then used for any fontsize
+_font_width_cache: dict[str, float] = {}
+
+# Reference string for measuring (Russian alphabet + spaces for realistic average)
+_REFERENCE_STRING = "Абвгдеёжзийклмн опрстуфхцчшщъ ыьэюя абвгдеёжз"
+
+# Available width for subtitles (PlayResX - MarginL - MarginR)
+SUBTITLE_AVAILABLE_WIDTH = 870  # 1080 - 105 - 105
+
+# Fallback width ratio if font measurement fails
+FALLBACK_CHAR_WIDTH_RATIO = 0.55
+
+
+def _measure_font_width(font_path: str) -> float:
+    """
+    Measure average character width per fontsize unit for a font.
+    Returns width ratio: actual_char_width / fontsize
+    """
+    TEST_SIZE = 100  # Measure at size 100 for accuracy
+    try:
+        font = ImageFont.truetype(font_path, TEST_SIZE)
+        width = font.getlength(_REFERENCE_STRING)
+        avg_char_width = width / len(_REFERENCE_STRING)
+        ratio = avg_char_width / TEST_SIZE
+        logger.debug("Font '%s': width ratio = %.3f", font_path, ratio)
+        return ratio
+    except Exception as e:
+        logger.warning("Failed to measure font '%s': %s, using fallback", font_path, e)
+        return FALLBACK_CHAR_WIDTH_RATIO
+
+
+def get_max_chars_for_line(font_name: str, fontsize: int, fonts_dir: str = "fonts") -> int:
+    """
+    Calculate maximum characters that fit in subtitle line for given font and size.
+    Uses cached font metrics for speed.
+    
+    Args:
+        font_name: Font name without extension (e.g., "Montserrat-Medium")
+        fontsize: Font size in pixels
+        fonts_dir: Directory containing .ttf files
+    
+    Returns:
+        Maximum number of characters that fit in SUBTITLE_AVAILABLE_WIDTH
+    """
+    cache_key = font_name
+    
+    if cache_key not in _font_width_cache:
+        # Find the font file
+        font_path = os.path.join(fonts_dir, f"{font_name}.ttf")
+        if not os.path.exists(font_path):
+            # Try common variations
+            for suffix in ["-Regular", "-Medium", "_Regular", ""]:
+                alt_path = os.path.join(fonts_dir, f"{font_name}{suffix}.ttf")
+                if os.path.exists(alt_path):
+                    font_path = alt_path
+                    break
+        
+        _font_width_cache[cache_key] = _measure_font_width(font_path)
+        logger.info(
+            "Font metrics cached: '%s' -> width_ratio=%.3f (max %d chars at size %d)",
+            font_name, _font_width_cache[cache_key],
+            int(SUBTITLE_AVAILABLE_WIDTH / (_font_width_cache[cache_key] * fontsize)),
+            fontsize
+        )
+    
+    width_ratio = _font_width_cache[cache_key]
+    avg_char_width = width_ratio * fontsize
+    max_chars = int(SUBTITLE_AVAILABLE_WIDTH / avg_char_width)
+    
+    # Safety bounds: at least 15 chars, at most 60 chars
+    return max(15, min(60, max_chars))
 
 # Regex to remove emotion tags like [curiously], [excitedly], etc.
 EMOTION_TAG_PATTERN = re.compile(r'^\[[\w]+\]$')
@@ -833,16 +911,16 @@ class VideoProcessor:
                 auto_center_ratio = None
 
             # Step 2: prepare basic subtitles
-            # fade_short uses 4 words per line for better readability and edge margins
-            words_per_line = 4
+            # Use dynamic character limit based on font metrics for proper margins
             speaker_palette = self._assign_speaker_colors(dialogue_turns, speaker_color_mode)
             subtitles = self._generate_basic_subtitles(
                 text=text,
                 duration=duration,
-                max_words_per_line=words_per_line,
                 dialogue=dialogue_turns,
                 segment_start=start_time,
                 speaker_palette=speaker_palette,
+                font_name=subtitle_font,
+                font_size=subtitle_font_size,
             )
 
             # Step 3: add audio + subtitles + vertical conversion
@@ -938,21 +1016,28 @@ class VideoProcessor:
         self,
         text: str,
         duration: float,
-        max_words_per_line: int = 4,
         dialogue: list[dict] | None = None,
         segment_start: float = 0.0,
         speaker_palette: dict[str, str] | None = None,
+        font_name: str = "Montserrat-Medium",
+        font_size: int = 60,
     ) -> List[Dict]:
         """
         Create a multi-line subtitle track with approximate word-level timings.
-        Each subtitle line contains up to `max_words_per_line` words so the viewer
-        sees a few words at a time, synchronized with the TTS audio.
+        Uses dynamic character-based line splitting based on font metrics.
         """
+        # Calculate max characters per line based on font metrics
+        max_chars = get_max_chars_for_line(font_name, font_size, self.fonts_dir)
+        logger.info(
+            "Subtitle line limit: max %d chars (font='%s', size=%d)",
+            max_chars, font_name, font_size
+        )
+        
         if dialogue:
             return self._generate_dialogue_subtitles(
                 dialogue=dialogue,
                 duration=duration,
-                max_words_per_line=max_words_per_line,
+                max_chars_per_line=max_chars,
                 segment_start=segment_start,
                 speaker_palette=speaker_palette or {},
             )
@@ -967,15 +1052,19 @@ class VideoProcessor:
             words = ["..."]
             total_words = 1
 
-        # Group words into chunks (a few words per subtitle line)
+        # Group words into chunks using character-based limit
         word_chunks: List[List[str]] = []
         current_chunk: List[str] = []
+        current_chars = 0
 
         for word in words:
-            current_chunk.append(word)
-            if len(current_chunk) >= max_words_per_line:
+            word_len = len(word) + 1  # +1 for space
+            if current_chars + word_len > max_chars and current_chunk:
                 word_chunks.append(current_chunk)
                 current_chunk = []
+                current_chars = 0
+            current_chunk.append(word)
+            current_chars += word_len
 
         if current_chunk:
             word_chunks.append(current_chunk)
@@ -1030,13 +1119,14 @@ class VideoProcessor:
         self,
         dialogue: list[dict],
         duration: float,
-        max_words_per_line: int,
+        max_chars_per_line: int,
         segment_start: float,
         speaker_palette: dict[str, str],
     ) -> List[Dict]:
         """
         Build subtitles directly from dialogue turns, preserving per-speaker timing
         and enabling color coding.
+        Uses character-based line splitting for proper margin handling.
         """
         # Summary: check timing quality
         turns_with_timing = sum(1 for t in dialogue if t.get("tts_duration", 0) >= 0.1)
@@ -1165,9 +1255,18 @@ class VideoProcessor:
                 ]
                 
                 while word_idx < len(filtered_tts_words):
-                    # Take up to max_words_per_line words
-                    chunk_end = min(word_idx + max_words_per_line, len(filtered_tts_words))
-                    chunk_tts_words = filtered_tts_words[word_idx:chunk_end]
+                    # Take words until we hit max_chars_per_line
+                    chunk_tts_words = []
+                    current_chars = 0
+                    while word_idx < len(filtered_tts_words):
+                        word = filtered_tts_words[word_idx]["word"]
+                        word_len = len(word) + 1  # +1 for space
+                        if current_chars + word_len > max_chars_per_line and chunk_tts_words:
+                            # This word would exceed limit, stop here
+                            break
+                        chunk_tts_words.append(filtered_tts_words[word_idx])
+                        current_chars += word_len
+                        word_idx += 1
                     
                     if not chunk_tts_words:
                         break
@@ -1210,16 +1309,19 @@ class VideoProcessor:
                     })
                     last_subtitle_end = chunk_end_time
                     chunks_added += 1
-                    word_idx = chunk_end
             else:
-                # Fallback: distribute words proportionally (old behavior)
+                # Fallback: distribute words proportionally using character-based chunking
                 word_chunks: List[List[str]] = []
                 chunk: List[str] = []
+                current_chars = 0
                 for word in words:
-                    chunk.append(word)
-                    if len(chunk) >= max_words_per_line:
+                    word_len = len(word) + 1  # +1 for space
+                    if current_chars + word_len > max_chars_per_line and chunk:
                         word_chunks.append(chunk)
                         chunk = []
+                        current_chars = 0
+                    chunk.append(word)
+                    current_chars += word_len
                 if chunk:
                     word_chunks.append(chunk)
 
@@ -1481,19 +1583,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 for line_text in lines:
                     ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,105,105,0,,{line_text}\n"
         
-        # Log subtitle line lengths for margin debugging
-        # With PlayResX=1080 and 105px margins on each side, max usable width = 870px
-        # Approximate: 1 char ≈ 20px at fontsize 60, so max ~43 chars
-        MAX_SAFE_CHARS = 40
+        # Log subtitle line lengths for margin debugging (using dynamic font metrics)
+        actual_font_name = selected_style.get('fontname', 'Montserrat-Medium')
+        actual_font_size = selected_style.get('fontsize', 60)
+        max_safe_chars = get_max_chars_for_line(actual_font_name, actual_font_size, self.fonts_dir)
+        
+        over_limit_count = 0
         for idx, subtitle in enumerate(subtitles):
             words = [w.get('word', '') for w in subtitle.get('words', [])]
             line_text = ' '.join(words)
             char_count = len(line_text)
-            if char_count > MAX_SAFE_CHARS:
+            if char_count > max_safe_chars:
+                over_limit_count += 1
                 logger.warning(
-                    "SUBTITLE MARGIN WARNING: line %d has %d chars (max safe=%d): '%s'",
-                    idx, char_count, MAX_SAFE_CHARS, line_text[:50]
+                    "SUBTITLE MARGIN WARNING: line %d has %d chars (max=%d for font '%s' size %d): '%s'",
+                    idx, char_count, max_safe_chars, actual_font_name, actual_font_size, line_text[:50]
                 )
+        
+        if over_limit_count == 0:
+            logger.info(
+                "SUBTITLE MARGINS OK: all %d lines within %d char limit (font='%s', size=%d)",
+                len(subtitles), max_safe_chars, actual_font_name, actual_font_size
+            )
         
         # Write to file
         output_path.write_text(ass_content, encoding='utf-8')
