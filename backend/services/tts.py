@@ -1962,7 +1962,28 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 window_duration = window_end - window_start
                 per_word = window_duration / group_size if window_duration > 0 else 0.1
                 
-                # Apply redistribution
+                # CRITICAL: If per_word is still < 100ms after borrow, the timestamps are severely wrong
+                # Fall back to redistributing ALL words in the turn evenly
+                if per_word < CLEARLY_WRONG_THRESHOLD and group_size >= 5:
+                    per_word_from_turn = turn_duration / len(fixed) if len(fixed) > 0 else 0.2
+                    if per_word_from_turn >= MIN_WORD_DURATION:
+                        logger.warning(
+                            "TTD PASS 1 FALLBACK: Bunched group has %.0fms/word (<%dms threshold). "
+                            "Redistributing ALL %d words across turn (%.2fs → %.0fms/word)",
+                            per_word * 1000,
+                            int(CLEARLY_WRONG_THRESHOLD * 1000),
+                            len(fixed),
+                            turn_duration,
+                            per_word_from_turn * 1000
+                        )
+                        # Redistribute ALL words evenly across turn_duration
+                        for k in range(len(fixed)):
+                            fixed[k]["start"] = turn_start + k * per_word_from_turn
+                            fixed[k]["end"] = turn_start + (k + 1) * per_word_from_turn
+                        # Return immediately - all words are now redistributed
+                        return fixed
+                
+                # Apply redistribution for this group only
                 for j in range(group_size):
                     w_idx = group_start + j
                     fixed[w_idx]["start"] = window_start + j * per_word
