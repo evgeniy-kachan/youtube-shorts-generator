@@ -206,9 +206,10 @@ class HighlightAnalyzer:
                 )
                 highlights = highlights[:MAX_HIGHLIGHTS]
             
+            fallback_count = len([h for h in highlights if h.get('is_fallback')])
             logger.info(
-                "Final result: %d highlights (%d good + %d fallback)",
-                len(highlights), good_count, len(highlights) - good_count
+                "Final result: %d highlights (%d strict + %d extended + %d fallback)",
+                len(highlights), strict_count, extended_count, fallback_count
             )
             return highlights
             
