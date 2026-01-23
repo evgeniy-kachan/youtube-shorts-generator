@@ -175,7 +175,26 @@ class DeepSeekClient:
         )
         
         text = self.extract_text(response)
-        result = self.extract_json(text)
+        
+        # Handle empty response
+        if not text or text.strip() == "":
+            logger.warning("DeepSeek returned empty response for description generation")
+            # Return fallback
+            return {
+                "title": "Интересный момент из видео",
+                "description": "Смотрите до конца! 🔥",
+                "hashtags": ["#shorts", "#viral", "#рекомендации", "#интересное", "#факты"]
+            }
+        
+        try:
+            result = self.extract_json(text)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("Failed to parse DeepSeek response as JSON: %s, text: %s", e, text[:200])
+            return {
+                "title": "Интересный момент из видео",
+                "description": "Смотрите до конца! 🔥",
+                "hashtags": ["#shorts", "#viral", "#рекомендации", "#интересное", "#факты"]
+            }
         
         # Ensure hashtags is a list
         if isinstance(result.get("hashtags"), str):
