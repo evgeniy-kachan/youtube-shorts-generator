@@ -177,7 +177,7 @@ class DeepSeekClient:
             messages,
             model="deepseek-chat",  # Force non-reasoning model for simple tasks
             temperature=0.7,  # More creative
-            max_tokens=1200,  # Increased to ensure full JSON response
+            max_tokens=2000,  # Increased to ensure full JSON response
             response_format={"type": "json_object"}
         )
         
