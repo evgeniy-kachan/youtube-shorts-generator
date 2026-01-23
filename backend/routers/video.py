@@ -1381,6 +1381,49 @@ def _dubbing_task(
         }
 
 
+class GenerateDescriptionRequest(BaseModel):
+    """Request for generating shorts description."""
+    text_en: str
+    text_ru: str
+    duration: float
+    highlight_score: float = 0.0
+
+
+class GenerateDescriptionResponse(BaseModel):
+    """Response with generated description."""
+    title: str
+    description: str
+    hashtags: List[str]
+
+
+@router.post("/generate-description", response_model=GenerateDescriptionResponse)
+async def generate_description(request: GenerateDescriptionRequest):
+    """
+    Generate a catchy title, description, and hashtags for a short-form video.
+    Uses DeepSeek to create viral-optimized content.
+    """
+    try:
+        from backend.services.deepseek_client import DeepSeekClient
+        
+        client = DeepSeekClient()
+        result = client.generate_shorts_description(
+            text_en=request.text_en,
+            text_ru=request.text_ru,
+            duration=request.duration,
+            highlight_score=request.highlight_score,
+        )
+        client.close()
+        
+        return GenerateDescriptionResponse(
+            title=result.get("title", ""),
+            description=result.get("description", ""),
+            hashtags=result.get("hashtags", ["#shorts"]),
+        )
+    except Exception as e:
+        logger.error("Error generating description: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.on_event("startup")
 async def startup_event():
     # Clean up temp and output directories on startup

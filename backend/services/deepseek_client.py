@@ -110,4 +110,84 @@ class DeepSeekClient:
     def close(self):
         self._client.close()
 
+    def generate_shorts_description(
+        self,
+        text_en: str,
+        text_ru: str,
+        duration: float,
+        highlight_score: float = 0.0,
+    ) -> Dict[str, Any]:
+        """
+        Generate a catchy title, description, and hashtags for a short-form video.
+        
+        Returns:
+            {
+                "title": "Catchy hook title",
+                "description": "2-3 sentence description",
+                "hashtags": ["#shorts", "#viral", ...]
+            }
+        """
+        prompt = f"""Ты — SMM-специалист, создающий вирусные описания для коротких видео (Shorts/Reels/TikTok).
+
+КОНТЕНТ ВИДЕО:
+Английский текст: {text_en[:1500]}
+Русский перевод: {text_ru[:1500]}
+Длительность: {duration:.0f} сек
+
+ЗАДАЧА:
+Создай описание для этого видео на РУССКОМ языке.
+
+ТРЕБОВАНИЯ:
+1. ЗАГОЛОВОК (title):
+   - Цепляющий хук, вызывающий любопытство
+   - 5-10 слов максимум
+   - Можно использовать числа, вопросы, провокации
+   - НЕ спойлерить главную мысль
+
+2. ОПИСАНИЕ (description):
+   - 2-3 коротких предложения
+   - Интрига + призыв досмотреть
+   - Эмодзи уместны (1-2 штуки)
+
+3. ХЭШТЕГИ (hashtags):
+   - 5-7 релевантных хэштегов
+   - Первый всегда #shorts
+   - Микс популярных и нишевых
+   - На русском языке
+
+ФОРМАТ ОТВЕТА (строго JSON):
+{{
+  "title": "Заголовок видео",
+  "description": "Описание видео с эмодзи",
+  "hashtags": ["#shorts", "#тема", "#ниша", "#viral", "#рекомендации"]
+}}"""
+
+        messages = [
+            {"role": "system", "content": "Ты создаёшь вирусные описания для коротких видео. Отвечай только JSON."},
+            {"role": "user", "content": prompt}
+        ]
+
+        response = self.chat(
+            messages,
+            temperature=0.7,  # More creative
+            max_tokens=500,
+            response_format={"type": "json_object"}
+        )
+        
+        text = self.extract_text(response)
+        result = self.extract_json(text)
+        
+        # Ensure hashtags is a list
+        if isinstance(result.get("hashtags"), str):
+            result["hashtags"] = [h.strip() for h in result["hashtags"].split() if h.startswith("#")]
+        
+        # Ensure #shorts is first
+        hashtags = result.get("hashtags", [])
+        if hashtags and hashtags[0] != "#shorts":
+            hashtags = ["#shorts"] + [h for h in hashtags if h != "#shorts"]
+            result["hashtags"] = hashtags[:7]  # Max 7 hashtags
+        
+        logger.info("Generated description: title='%s', %d hashtags", result.get("title", "")[:30], len(result.get("hashtags", [])))
+        return result
+
 
