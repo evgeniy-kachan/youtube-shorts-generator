@@ -294,12 +294,12 @@ const SegmentsList = ({
   const [verticalMethod, setVerticalMethod] = useState('center_crop');
 
   // Style settings
-  const [subtitleAnimation, setSubtitleAnimation] = useState('fade');
-  const [subtitlePosition, setSubtitlePosition] = useState('mid_low');
-  const [subtitleFont, setSubtitleFont] = useState('Montserrat Light');
-  const [subtitleFontSize, setSubtitleFontSize] = useState(86);
+  const [subtitleAnimation, setSubtitleAnimation] = useState('highlight');
+  const [subtitlePosition, setSubtitlePosition] = useState('lower_center');
+  const [subtitleFont, setSubtitleFont] = useState('Montserrat Medium');
+  const [subtitleFontSize, setSubtitleFontSize] = useState(82);
   const [subtitleBackground, setSubtitleBackground] = useState(false);
-  const [subtitleGlow, setSubtitleGlow] = useState(true); // Soft glow effect for readability
+  const [subtitleGlow, setSubtitleGlow] = useState(false); // Soft glow effect for readability
   const [subtitleGradient, setSubtitleGradient] = useState(false); // Dark gradient at bottom
   const [speakerColorMode, setSpeakerColorMode] = useState('colored'); // 'colored' or 'white'
   
