@@ -830,56 +830,29 @@ def _process_segments_task(
                 if spk:
                     speakers_in_segment.add(spk)
             
-            logger.info(
-                "DIARIZATION CHECK [%s]: %d turns, %d unique speakers: %s",
-                segment['id'],
-                len(dialogue),
-                len(speakers_in_segment),
-                list(speakers_in_segment)
-            )
-            
-            # Log first few words of each turn to help identify speaker changes
-            for i, turn in enumerate(dialogue[:5]):  # First 5 turns
-                turn_text = (turn.get('text') or turn.get('text_ru') or '')[:50]
+            # Only log if multi-speaker detected
+            if len(speakers_in_segment) > 1:
                 logger.info(
-                    "  Turn %d [%s]: '%s...'",
-                    i, turn.get('speaker', '?'), turn_text
+                    "DIARIZATION [%s]: %d turns, %d speakers: %s",
+                    segment['id'], len(dialogue), len(speakers_in_segment), list(speakers_in_segment)
                 )
-            if len(dialogue) > 5:
-                logger.info("  ... and %d more turns", len(dialogue) - 5)
             
             # Check if we have a dialogue structure for multi-speaker synthesis
             has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
             
             if has_dialogue and voice_plan:
-                # Debug: check if words are present
-                for i, turn in enumerate(segment['dialogue']):
-                    words = turn.get('words') or []
-                    logger.info(
-                        "Turn %d [%s]: %d words, first=%s, last=%s",
-                        i,
-                        turn.get('speaker', '?'),
-                        len(words),
-                        words[0] if words else None,
-                        words[-1] if words else None,
-                    )
-                
-                # Refine turn boundaries using word-level timestamps (more accurate than Pyannote)
+                # Refine turn boundaries using word-level timestamps
                 _refine_turn_boundaries(segment['dialogue'])
                 
-                # SECOND PASS: Isochronic translation with precise timings
-                # This improves translation quality by considering exact durations
+                # Isochronic translation with precise timings
                 try:
                     translator = Translator()
-                    logger.info(f"Running isochronic translation for {segment['id']}")
                     segment['dialogue'] = translator.translate_with_timings(
                         dialogue_turns=segment['dialogue'],
                         segment_context=segment.get('title', ''),
                     )
                 except Exception as trans_exc:
-                    logger.warning("Isochronic translation failed, using original: %s", trans_exc)
-                
-                logger.info(f"Synthesizing multi-speaker dialogue for {segment['id']}")
+                    logger.warning("Isochronic translation failed: %s", trans_exc)
                 tts_service.synthesize_dialogue(
                     dialogue_turns=segment['dialogue'],
                     output_path=audio_path,
@@ -894,75 +867,41 @@ def _process_segments_task(
                 segment_start = float(segment.get('start_time', 0))
                 
                 if segment_words:
-                    # Create pseudo-dialogue by detecting pauses (like multi-speaker)
-                    logger.info(
-                        "Splitting single-speaker %s into pseudo-turns by pauses (%d words)",
-                        segment['id'], len(segment_words)
-                    )
+                    # Create pseudo-dialogue by detecting pauses
                     pseudo_dialogue = _create_pseudo_dialogue_from_words(
                         words=segment_words,
                         speaker=primary_speaker,
                         segment_start=segment_start,
-                        pause_threshold=0.4,  # 400ms pause = new turn
+                        pause_threshold=0.4,
                     )
                     
                     if pseudo_dialogue:
                         segment['dialogue'] = pseudo_dialogue
-                        # Log sample of turn boundaries for debugging
-                        turn_previews = [
-                            f"T{i}: '{t['text'][:25]}...' ({len(t['text'].split())}w)"
-                            for i, t in enumerate(pseudo_dialogue[:3])
-                        ]
-                        logger.info(
-                            "Created %d pseudo-turns for single-speaker %s (smart split: pause + sentence-end)",
-                            len(pseudo_dialogue), segment['id']
-                        )
-                        logger.info("  First turns: %s", turn_previews)
-                        
-                        # Now process exactly like multi-speaker
                         has_dialogue = True
                         
-                        # Refine boundaries
                         _refine_turn_boundaries(segment['dialogue'])
                         
-                        # Apply isochronic translation per turn
                         try:
                             translator = Translator()
-                            logger.info(f"Running isochronic translation for single-speaker {segment['id']} ({len(pseudo_dialogue)} turns)")
                             segment['dialogue'] = translator.translate_with_timings(
                                 dialogue_turns=segment['dialogue'],
                                 segment_context=segment.get('title', ''),
                             )
                         except Exception as trans_exc:
-                            logger.warning("Isochronic translation failed for single-speaker: %s", trans_exc)
+                            logger.warning("Isochronic translation failed: %s", trans_exc)
                         
-                        # Synthesize with TTD (preserves pauses)
-                        logger.info(f"Synthesizing single-speaker dialogue for {segment['id']} ({len(pseudo_dialogue)} turns)")
                         tts_service.synthesize_dialogue(
                             dialogue_turns=segment['dialogue'],
                             output_path=audio_path,
                             voice_map=voice_plan or {primary_speaker: tts_service.voice_id},
                             base_start=segment.get('start_time'),
                         )
-                        
-                        # Log post-synthesis timing coverage
-                        if segment.get('dialogue'):
-                            first_t = segment['dialogue'][0]
-                            last_t = segment['dialogue'][-1]
-                            tts_start = first_t.get('tts_start_offset', 0)
-                            tts_end = last_t.get('tts_end_offset', 0)
-                            logger.info(
-                                "POST-TTD %s: %d turns, tts_coverage=%.2f-%.2fs (%.2fs)",
-                                segment['id'], len(segment['dialogue']),
-                                tts_start, tts_end, tts_end - tts_start
-                            )
                     else:
-                        logger.warning("Failed to create pseudo-dialogue for %s, falling back to simple synthesis", segment['id'])
+                        logger.warning("Failed to create pseudo-dialogue for %s", segment['id'])
                         has_dialogue = False
                 
                 # Fallback: if no words available, use old single-block approach
                 if not has_dialogue:
-                    logger.info("Using fallback single-block synthesis for %s", segment['id'])
                     tts_text = segment.get('text_ru_tts') or segment.get('text_ru') or segment.get('text', '')
                     
                     voice_override = None
@@ -1034,18 +973,12 @@ def _process_segments_task(
                     if scale and segment.get('dialogue'):
                         _scale_dialogue_offsets(segment['dialogue'], scale)
                     
-                    logger.info(
-                        "Tempo adjusted %s: %.2fs -> %.2fs (scale=%.2f)",
-                        segment['id'],
-                        before_duration,
-                        audio_duration,
-                        scale,
-                    )
-                else:
-                    logger.info(
-                        "Tempo adjustment skipped for %s (negligible diff or limit reached)",
-                        segment['id'],
-                    )
+                    # Only log significant tempo changes
+                    if abs(scale - 1.0) > 0.1:
+                        logger.info(
+                            "TEMPO: %s %.2fs -> %.2fs (%.2fx)",
+                            segment['id'], before_duration, audio_duration, scale
+                        )
 
             target_duration = max(audio_duration, original_duration)
 
@@ -1054,12 +987,6 @@ def _process_segments_task(
                 audio_segment = audio_segment + AudioSegment.silent(duration=pad_ms)
                 audio_segment.export(audio_path, format="wav")
                 audio_duration = target_duration
-                logger.info(
-                    "Padded audio for %s with %.2fs silence to reach target duration %.2fs",
-                    segment['id'],
-                    pad_ms / 1000,
-                    target_duration,
-                )
 
             segment['tts_duration'] = audio_duration
             segment['target_duration'] = target_duration

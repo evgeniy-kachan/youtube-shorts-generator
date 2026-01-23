@@ -1893,13 +1893,8 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             # the timestamps are clearly wrong - redistribute evenly
             if per_word_from_timestamps < CLEARLY_WRONG_THRESHOLD and per_word_from_turn >= MIN_WORD_DURATION:
                 logger.warning(
-                    "TTD PASS 0: Timestamps clearly wrong! %d words in %.0fms span (%.0fms/word) "
-                    "but turn=%.2fs (%.0fms/word available). REDISTRIBUTING ALL.",
-                    word_count,
-                    timestamps_span * 1000,
-                    per_word_from_timestamps * 1000,
-                    turn_duration,
-                    per_word_from_turn * 1000
+                    "SUBTITLE FIX: %d words bunched (%.0fms/word) → redistributed (%.0fms/word)",
+                    word_count, per_word_from_timestamps * 1000, per_word_from_turn * 1000
                 )
                 
                 # Redistribute ALL words evenly across turn_duration
@@ -1907,16 +1902,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     fixed[i]["start"] = turn_start + i * per_word_from_turn
                     fixed[i]["end"] = turn_start + (i + 1) * per_word_from_turn
                 
-                # Log result
-                logger.info(
-                    "TTD PASS 0: Redistributed %d words evenly: %.0fms/word, first='%s'@%.2fs, last='%s'@%.2fs",
-                    word_count,
-                    per_word_from_turn * 1000,
-                    fixed[0]["word"], fixed[0]["start"],
-                    fixed[-1]["word"], fixed[-1]["end"]
-                )
-                
-                # Skip PASS 1 - already redistributed everything
                 return fixed
         
         # PASS 1: Find bunched groups and redistribute within available window
@@ -1968,19 +1953,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     per_word_from_turn = turn_duration / len(fixed) if len(fixed) > 0 else 0.2
                     if per_word_from_turn >= MIN_WORD_DURATION:
                         logger.warning(
-                            "TTD PASS 1 FALLBACK: Bunched group has %.0fms/word (<%dms threshold). "
-                            "Redistributing ALL %d words across turn (%.2fs → %.0fms/word)",
-                            per_word * 1000,
-                            int(CLEARLY_WRONG_THRESHOLD * 1000),
-                            len(fixed),
-                            turn_duration,
-                            per_word_from_turn * 1000
+                            "SUBTITLE FIX: %d bunched words → redistributed all %d words (%.0fms/word)",
+                            group_size, len(fixed), per_word_from_turn * 1000
                         )
-                        # Redistribute ALL words evenly across turn_duration
                         for k in range(len(fixed)):
                             fixed[k]["start"] = turn_start + k * per_word_from_turn
                             fixed[k]["end"] = turn_start + (k + 1) * per_word_from_turn
-                        # Return immediately - all words are now redistributed
                         return fixed
                 
                 # Apply redistribution for this group only
@@ -1989,24 +1967,11 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     fixed[w_idx]["start"] = window_start + j * per_word
                     fixed[w_idx]["end"] = window_start + (j + 1) * per_word
                 
-                # Log with appropriate level based on per_word duration
+                # Only log if subtitles might be too fast
                 if per_word < MIN_WORD_DURATION:
                     logger.warning(
-                        "TTD: Redistributed %d bunched words (%.2f-%.2fs → per_word=%.0fms ⚠️ FAST): %s",
-                        group_size,
-                        window_start,
-                        window_end,
-                        per_word * 1000,
-                        [w["word"] for w in fixed[group_start:group_end + 1]]
-                    )
-                else:
-                    logger.info(
-                        "TTD: Redistributed %d bunched words (%.2f-%.2fs → per_word=%.0fms): %s",
-                        group_size,
-                        window_start,
-                        window_end,
-                        per_word * 1000,
-                        [w["word"] for w in fixed[group_start:group_end + 1]]
+                        "SUBTITLE FIX: %d bunched words → %.0fms/word (may be fast)",
+                        group_size, per_word * 1000
                     )
             
             i += 1
@@ -2146,25 +2111,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         for attempt in range(1, max_attempts + 1):
             try:
-                logger.info("TTD API attempt %d/%d", attempt, max_attempts)
                 audio_bytes, voice_segments, alignment = self._call_ttd_api(inputs)
-                
-                logger.info(
-                    "TTD with-timestamps response: %d voice_segments, alignment=%d chars, audio_base64 length=%d",
-                    len(voice_segments),
-                    len(alignment.get("characters", [])),
-                    len(audio_bytes),
-                )
-                
-                # Log voice segments for debugging
-                for vs in voice_segments:
-                    logger.debug(
-                        "TTD voice_segment: input_idx=%d, %.2f-%.2fs, voice=%s",
-                        vs.get("dialogue_input_index", -1),
-                        vs.get("start_time_seconds", 0),
-                        vs.get("end_time_seconds", 0),
-                        vs.get("voice_id", "?")[:8],
-                    )
                 
                 # Validate timing (now returns tuple with missing indices)
                 is_valid, missing_indices = self._validate_ttd_timing(voice_segments, len(inputs))
@@ -2172,64 +2119,35 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 if is_valid:
                     if missing_indices:
                         logger.info(
-                            "TTD API returned sufficient timing on attempt %d (missing %d indices, will interpolate)",
-                            attempt, len(missing_indices)
+                            "TTD: attempt %d OK, %d voice_segments, %d missing (will interpolate)",
+                            attempt, len(voice_segments), len(missing_indices)
                         )
-                        # Log the actual text of missing turns for debugging
-                        for idx in missing_indices:
-                            if idx < len(inputs):
-                                missing_text = inputs[idx].get("text", "")[:80]
-                                logger.warning(
-                                    "  TTD MISSING timing for turn %d: '%s...'",
-                                    idx, missing_text
-                                )
-                    else:
-                        logger.info("TTD API returned complete timing on attempt %d", attempt)
                     break
                 else:
                     if attempt < max_attempts:
                         if attempt == 2:
-                            # Wait 30 seconds before 3rd attempt
-                            logger.warning(
-                                "TTD API returned insufficient timing (attempt %d), waiting 30s before retry...",
-                                attempt
-                            )
+                            logger.warning("TTD: insufficient timing, waiting 30s...")
                             time.sleep(30)
-                        else:
-                            logger.warning(
-                                "TTD API returned insufficient timing (attempt %d), retrying immediately...",
-                                attempt
-                            )
                     else:
-                        # 3rd attempt failed - but if we have audio, try to proceed with fallback
                         if audio_bytes and len(audio_bytes) > 1000:
-                            logger.warning(
-                                "TTD API timing incomplete after 3 attempts, proceeding with fallback estimation"
-                            )
+                            logger.warning("TTD: timing incomplete, using fallback")
                             break
                         else:
                             raise RuntimeError(
-                                "ElevenLabs TTD API не вернул корректные тайминги после 3 попыток. "
-                                "Пожалуйста, попробуйте позже."
+                                "ElevenLabs TTD API не вернул корректные тайминги после 3 попыток."
                             )
                         
             except httpx.HTTPStatusError as http_exc:
-                logger.error(
-                    "TTD API error (status=%s): %s",
-                    http_exc.response.status_code,
-                    http_exc.response.text,
-                )
+                logger.error("TTD API error: %s", http_exc.response.status_code)
                 if attempt == max_attempts:
                     raise
                 if attempt == 2:
-                    logger.warning("TTD API HTTP error, waiting 30s before retry...")
                     time.sleep(30)
             except httpx.HTTPError as exc:
-                logger.error("TTD API request failed: %s", exc)
+                logger.error("TTD API failed: %s", exc)
                 if attempt == max_attempts:
                     raise
                 if attempt == 2:
-                    logger.warning("TTD API error, waiting 30s before retry...")
                     time.sleep(30)
         
         if audio_bytes is None:
@@ -2378,41 +2296,13 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         duration_sec = len(audio) / 1000.0
         
-        # Diagnostic: log last voice segment timing vs audio duration
-        if voice_segments:
-            last_vs = max(voice_segments, key=lambda x: x.get("end_time_seconds", 0))
-            last_vs_end = last_vs.get("end_time_seconds", 0) + leading_sec + cumulative_offset
-            logger.info(
-                "TTD DIAGNOSTIC: audio_duration=%.2fs, last_voice_segment_end=%.2fs (raw=%.2fs + leading=%.2fs + offset=%.2fs)",
-                duration_sec,
-                last_vs_end,
-                last_vs.get("end_time_seconds", 0),
-                leading_sec,
-                cumulative_offset,
-            )
-            # Log last input text
-            last_input_idx = last_vs.get("dialogue_input_index", -1)
-            if 0 <= last_input_idx < len(inputs):
-                last_text = inputs[last_input_idx].get("text", "")[:50]
-                logger.info("TTD DIAGNOSTIC: last turn text: '%s...'", last_text)
-        
         logger.info(
-            "TTD: Dialogue saved to %s (duration=%.2fs, %d turns)",
-            output_path,
-            duration_sec,
-            len(inputs),
+            "TTD: audio=%.2fs, %d turns, %d voice_segments",
+            duration_sec, len(inputs), len(voice_segments) if voice_segments else 0
         )
         
         # Store timing info in turns for subtitle sync
-        # Use precise voice_segments from ElevenLabs API + our inserted silences
-        
         if voice_segments:
-            # Use exact timing from API response
-            logger.info(
-                "TTD using %d voice_segments for subtitle timing (leading_silence=%.2fs)",
-                len(voice_segments),
-                leading_sec,
-            )
             
             # Build mapping from dialogue_input_index to segment timing
             segment_timing = {}
@@ -2678,8 +2568,8 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 available_for_turns = (window_end - window_start) - total_gaps
                 per_turn_duration = max(MIN_TURN_DURATION, available_for_turns / group_size)
                 
-                logger.info(
-                    "TTD BUNCHED GROUP: redistributing turns %d-%d (%.2f-%.2fs) → %.0fms/turn",
+                logger.warning(
+                    "TTD BUNCHED: turns %d-%d redistributed (%.2f-%.2fs) → %.0fms/turn",
                     group_start_idx, group_end_idx, window_start, window_end, per_turn_duration * 1000
                 )
                 
@@ -2687,9 +2577,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 current_time = window_start
                 for idx in range(group_start_idx, group_end_idx + 1):
                     turn = dialogue_turns[idx]
-                    old_start = turn.get("tts_start_offset", 0)
-                    old_end = turn.get("tts_end_offset", 0)
-                    old_duration = old_end - old_start
                     
                     new_start = current_time
                     new_end = current_time + per_turn_duration
@@ -2707,11 +2594,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         for w_idx, w in enumerate(words):
                             w["start"] = new_start + w_idx * per_word_duration
                             w["end"] = new_start + (w_idx + 1) * per_word_duration
-                    
-                    logger.info(
-                        "  Turn %d: %.2f-%.2fs (%.2fs) → %.2f-%.2fs (%.2fs)",
-                        idx, old_start, old_end, old_duration, new_start, new_end, new_duration
-                    )
                     
                     current_time = new_end + TURN_GAP
                     total_fixes += 1
@@ -2790,50 +2672,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 "TTD TIMING SUMMARY: %d turns from API, %d interpolated",
                 api_count, interp_count
             )
-            
-            # Detailed log for each turn timing
-            for idx, turn in enumerate(dialogue_turns):
-                if idx >= len(inputs):
-                    break
-                text = inputs[idx]["text"][:40]
-                source = turn.get("_timing_source", "unknown")
-                words = turn.get("tts_words", [])
-                word_range = f"words: {words[0]['start']:.2f}-{words[-1]['end']:.2f}" if words else "no words"
-                logger.info(
-                    "  Turn %d [%s]: %.2f-%.2fs (%.2fs) %s | '%s...'",
-                    idx, source,
-                    turn.get("tts_start_offset", 0),
-                    turn.get("tts_end_offset", 0),
-                    turn.get("tts_duration", 0),
-                    word_range,
-                    text
-                )
-                
-                # For long turns (>15 words), show word timing distribution
-                if len(words) > 15:
-                    # Show first 3, middle gap, and last 3 words
-                    first_words = words[:3]
-                    last_words = words[-3:]
-                    middle_idx = len(words) // 2
-                    middle_word = words[middle_idx] if middle_idx < len(words) else None
-                    
-                    first_info = ", ".join([f"'{w['word']}'@{w['start']:.2f}" for w in first_words])
-                    last_info = ", ".join([f"'{w['word']}'@{w['start']:.2f}" for w in last_words])
-                    mid_info = f"'{middle_word['word']}'@{middle_word['start']:.2f}" if middle_word else "?"
-                    
-                    # Calculate gaps between consecutive words
-                    gaps = []
-                    for i in range(1, len(words)):
-                        gap = words[i]['start'] - words[i-1]['end']
-                        if gap > 0.3:  # Significant gap
-                            gaps.append(f"gap@{words[i-1]['end']:.2f}-{words[i]['start']:.2f}={gap:.2f}s")
-                    
-                    logger.info(
-                        "    WORD DIST (%d words): [%s] ... [%s] ... [%s]",
-                        len(words), first_info, mid_info, last_info
-                    )
-                    if gaps:
-                        logger.warning("    GAPS in turn %d: %s", idx, ", ".join(gaps[:5]))
         else:
             # Fallback: distribute proportionally by character count
             logger.warning("TTD: No voice_segments in response, using character-based estimation")

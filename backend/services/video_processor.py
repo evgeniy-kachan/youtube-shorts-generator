@@ -88,12 +88,6 @@ def get_max_chars_for_line(font_name: str, fontsize: int, fonts_dir: str = "font
             font_path = os.path.join(fonts_dir, f"{normalized_name}.ttf")  # Default for error message
         
         _font_width_cache[cache_key] = _measure_font_width(font_path)
-        logger.info(
-            "Font metrics cached: '%s' -> width_ratio=%.3f (max %d chars at size %d)",
-            font_name, _font_width_cache[cache_key],
-            int(SUBTITLE_AVAILABLE_WIDTH / (_font_width_cache[cache_key] * fontsize)),
-            fontsize
-        )
     
     width_ratio = _font_width_cache[cache_key]
     avg_char_width = width_ratio * fontsize
@@ -625,17 +619,15 @@ class VideoProcessor:
             Path to processed video
         """
         try:
-            logger.info(f"Adding audio and subtitles to video")
-            
-            # Diagnostic: log video and audio durations
+            # Check video/audio sync
             video_duration = self._probe_duration(video_path)
             audio_duration = self._probe_duration(audio_path)
-            logger.info(
-                "DIAGNOSTIC: video_duration=%.2fs, audio_duration=%.2fs, diff=%.2fs",
-                video_duration or 0,
-                audio_duration or 0,
-                (video_duration or 0) - (audio_duration or 0),
-            )
+            diff = abs((video_duration or 0) - (audio_duration or 0))
+            if diff > 1.0:  # Only log if significant difference
+                logger.warning(
+                    "VIDEO/AUDIO SYNC: video=%.2fs, audio=%.2fs, diff=%.2fs",
+                    video_duration or 0, audio_duration or 0, diff
+                )
             
             # Step 1: Convert to vertical if needed
             working_video = video_path
@@ -1215,17 +1207,16 @@ class VideoProcessor:
             if curr_start < prev_end - 0.05:  # 50ms tolerance
                 overlaps.append((i-1, i, prev_end - curr_start))
         
-        logger.info(
-            "SUBTITLE TIMING STATUS: %d/%d turns have timing, %d/%d have word timestamps, %d overlaps",
-            turns_with_timing, total_turns, turns_with_words, total_turns, len(overlaps)
-        )
-        if overlaps:
-            for prev_idx, curr_idx, overlap_sec in overlaps[:5]:  # Show first 5
+        # Only log if there are issues
+        if len(overlaps) > 0:
+            logger.warning(
+                "SUBTITLE SYNC: %d/%d turns have timing, %d overlaps detected",
+                turns_with_timing, total_turns, len(overlaps)
+            )
+            for prev_idx, curr_idx, overlap_sec in overlaps[:3]:
                 logger.warning(
-                    "  Overlap: turn %d ends at %.2fs, turn %d starts at %.2fs (overlap=%.2fs)",
-                    prev_idx, dialogue[prev_idx].get("tts_end_offset", 0),
-                    curr_idx, dialogue[curr_idx].get("tts_start_offset", 0),
-                    overlap_sec
+                    "  Overlap: turn %d--%d (%.2fs)",
+                    prev_idx, curr_idx, overlap_sec
                 )
         
         # Per-turn timing log disabled (enable for debugging)
@@ -1237,31 +1228,18 @@ class VideoProcessor:
         #         turn.get("tts_duration", -1), len(tts_words),
         #     )
         
-        # Diagnostic: log subtitle coverage
+        # Log subtitle coverage summary
         if dialogue:
             first_turn = dialogue[0]
             last_turn = dialogue[-1]
-            last_tts_words = last_turn.get("tts_words", [])
-            last_word = last_tts_words[-1] if last_tts_words else None
-            
             subtitle_start = first_turn.get("tts_start_offset", 0)
             subtitle_end = last_turn.get("tts_end_offset", 0)
             subtitle_coverage = subtitle_end - subtitle_start
             
-            logger.info(
-                "SUBTITLE COVERAGE: %d turns, %.2f-%.2fs (%.2fs coverage), last_word='%s' end=%.2f",
-                len(dialogue),
-                subtitle_start,
-                subtitle_end,
-                subtitle_coverage,
-                last_word.get("word", "?") if last_word else "N/A",
-                last_word.get("end", -1) if last_word else -1,
-            )
-            
             # Warn if subtitle coverage seems too short
             if subtitle_coverage < 10 and len(dialogue) > 5:
                 logger.warning(
-                    "SUBTITLE WARNING: Only %.2fs coverage for %d turns! Check TTD timing.",
+                    "SUBTITLE SYNC: Only %.2fs coverage for %d turns!",
                     subtitle_coverage, len(dialogue)
                 )
         
@@ -1518,7 +1496,6 @@ class VideoProcessor:
         subtitle_background: bool = False,
         subtitle_glow: bool = True,
     ):
-        logger.info(f"Generating subtitles with animation='{animation}', font='{font_name}', bg={subtitle_background}, glow={subtitle_glow}")
         """
         Create ASS subtitle file with TikTok/Instagram style.
         
@@ -1686,11 +1663,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     idx, char_count, max_safe_chars, actual_font_name, actual_font_size, line_text[:50]
                 )
         
-        if over_limit_count == 0:
-            logger.info(
-                "SUBTITLE MARGINS OK: all %d lines within %d char limit (font='%s', size=%d)",
-                len(subtitles), max_safe_chars, actual_font_name, actual_font_size
-            )
+        # Only log if there were issues
+        if over_limit_count > 0:
+            logger.warning("SUBTITLE: %d/%d lines exceed margin limit", over_limit_count, len(subtitles))
         
         # Write to file
         output_path.write_text(ass_content, encoding='utf-8')
