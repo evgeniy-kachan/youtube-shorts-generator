@@ -111,9 +111,9 @@ class VideoProcessor:
     TARGET_HEIGHT = 1920
     SUBTITLE_POSITIONS = {
         "mid_low": {"x": 540, "y": 1050, "an": 8, "marginv": 480},
-        "lower_center": {"x": 540, "y": 1250, "an": 8, "marginv": 420},
-        "lower_left": {"x": 360, "y": 1350, "an": 7, "marginv": 380},
-        "lower_right": {"x": 720, "y": 1350, "an": 9, "marginv": 380},
+        "lower_center": {"x": 540, "y": 1350, "an": 8, "marginv": 320},  # Updated: y=1350, marginv=320
+        "lower_left": {"x": 360, "y": 1350, "an": 7, "marginv": 320},
+        "lower_right": {"x": 720, "y": 1350, "an": 9, "marginv": 320},
         "bottom_center": {"x": 540, "y": 1520, "an": 2, "marginv": 260},
     }
 
