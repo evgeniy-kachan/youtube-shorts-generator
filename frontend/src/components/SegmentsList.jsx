@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { generateDescription } from '../services/api';
+import { generateDescription } from '../services/api'; // Used for regeneration
 
 const CRITERIA_LABELS = {
   surprise_novelty: 'Неожиданность',
@@ -304,9 +304,8 @@ const SegmentsList = ({
   const [subtitleGradient, setSubtitleGradient] = useState(false); // Dark gradient at bottom
   const [speakerColorMode, setSpeakerColorMode] = useState('colored'); // 'colored' or 'white'
   
-  // Description generator state
-  const [descriptionModal, setDescriptionModal] = useState(null); // {segment, loading, data, error}
-  const [copiedField, setCopiedField] = useState(null); // For copy feedback
+  // Copy feedback state
+  const [copiedField, setCopiedField] = useState(null);
   const [ttsProvider, setTtsProvider] = useState('elevenlabs');
   const [voiceMix, setVoiceMix] = useState('male_duo');
   const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(true);
@@ -396,29 +395,6 @@ const SegmentsList = ({
       fallbackSegments: fallback 
     };
   }, [segments]);
-
-  // Generate description for a segment
-  const handleGenerateDescription = async (segment) => {
-    setDescriptionModal({ segment, loading: true, data: null, error: null });
-    
-    try {
-      const result = await generateDescription(
-        segment.text_en || '',
-        segment.text_ru || '',
-        segment.duration || 60,
-        segment.highlight_score || 0
-      );
-      setDescriptionModal({ segment, loading: false, data: result, error: null });
-    } catch (error) {
-      console.error('Error generating description:', error);
-      setDescriptionModal({ 
-        segment, 
-        loading: false, 
-        data: null, 
-        error: error.response?.data?.detail || error.message || 'Ошибка генерации'
-      });
-    }
-  };
 
   // Copy to clipboard
   const handleCopy = async (text, fieldName) => {
@@ -579,25 +555,13 @@ const SegmentsList = ({
                           ({formatDuration(segment.duration)})
                         </span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleGenerateDescription(segment);
-                          }}
-                          className="px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 transition"
-                          title="Сгенерировать описание"
-                        >
-                          📝 Описание
-                        </button>
-                        <div
-                          className={`px-3 py-1 rounded-full text-xs font-semibold ${getScoreColor(
-                            segment.highlight_score
-                          )}`}
-                        >
-                          {getScoreLabel(segment.highlight_score)}{' '}
-                          {(segment.highlight_score * 100).toFixed(0)}%
-                        </div>
+                      <div
+                        className={`px-3 py-1 rounded-full text-xs font-semibold ${getScoreColor(
+                          segment.highlight_score
+                        )}`}
+                      >
+                        {getScoreLabel(segment.highlight_score)}{' '}
+                        {(segment.highlight_score * 100).toFixed(0)}%
                       </div>
                     </div>
 
@@ -1323,120 +1287,6 @@ const SegmentsList = ({
         </div>
       </div>
 
-      {/* Description Generator Modal */}
-      {descriptionModal && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          onClick={() => setDescriptionModal(null)}
-        >
-          <div 
-            className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="text-lg font-bold text-gray-900">📝 Описание для Shorts</h3>
-              <button 
-                onClick={() => setDescriptionModal(null)}
-                className="text-gray-400 hover:text-gray-600 text-2xl"
-              >
-                ×
-              </button>
-            </div>
-
-            {/* Content */}
-            <div className="p-4 space-y-4">
-              {descriptionModal.loading && (
-                <div className="flex items-center justify-center py-8">
-                  <svg className="animate-spin h-8 w-8 text-purple-600" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                  </svg>
-                  <span className="ml-3 text-gray-600">Генерируем описание...</span>
-                </div>
-              )}
-
-              {descriptionModal.error && (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-                  ❌ {descriptionModal.error}
-                </div>
-              )}
-
-              {descriptionModal.data && (
-                <>
-                  {/* Title */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-semibold text-gray-700">Заголовок</label>
-                      <button
-                        onClick={() => handleCopy(descriptionModal.data.title, 'title')}
-                        className="text-xs text-blue-600 hover:text-blue-800"
-                      >
-                        {copiedField === 'title' ? '✓ Скопировано!' : '📋 Копировать'}
-                      </button>
-                    </div>
-                    <div className="p-3 bg-gray-50 rounded-lg text-gray-900 font-medium">
-                      {descriptionModal.data.title}
-                    </div>
-                  </div>
-
-                  {/* Description */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-semibold text-gray-700">Описание</label>
-                      <button
-                        onClick={() => handleCopy(descriptionModal.data.description, 'description')}
-                        className="text-xs text-blue-600 hover:text-blue-800"
-                      >
-                        {copiedField === 'description' ? '✓ Скопировано!' : '📋 Копировать'}
-                      </button>
-                    </div>
-                    <div className="p-3 bg-gray-50 rounded-lg text-gray-700 whitespace-pre-wrap">
-                      {descriptionModal.data.description}
-                    </div>
-                  </div>
-
-                  {/* Hashtags */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-semibold text-gray-700">Хэштеги</label>
-                      <button
-                        onClick={() => handleCopy(descriptionModal.data.hashtags.join(' '), 'hashtags')}
-                        className="text-xs text-blue-600 hover:text-blue-800"
-                      >
-                        {copiedField === 'hashtags' ? '✓ Скопировано!' : '📋 Копировать'}
-                      </button>
-                    </div>
-                    <div className="p-3 bg-gray-50 rounded-lg">
-                      <div className="flex flex-wrap gap-2">
-                        {descriptionModal.data.hashtags.map((tag, idx) => (
-                          <span 
-                            key={idx}
-                            className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-sm"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Copy All Button */}
-                  <button
-                    onClick={() => handleCopy(
-                      `${descriptionModal.data.title}\n\n${descriptionModal.data.description}\n\n${descriptionModal.data.hashtags.join(' ')}`,
-                      'all'
-                    )}
-                    className="w-full py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition"
-                  >
-                    {copiedField === 'all' ? '✓ Всё скопировано!' : '📋 Копировать всё'}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

@@ -1,8 +1,13 @@
-import React from 'react';
-import { getDownloadUrl } from '../services/api';
+import React, { useState } from 'react';
+import { getDownloadUrl, generateDescription } from '../services/api';
 
 const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments }) => {
-  const segments = Array.isArray(processedSegments) ? processedSegments : [];
+  const [segments, setSegments] = useState(
+    Array.isArray(processedSegments) ? processedSegments : []
+  );
+  const [copiedField, setCopiedField] = useState(null);
+  const [regeneratingId, setRegeneratingId] = useState(null);
+  
   const segmentCount = segments.length;
 
   const formatDuration = (seconds) => {
@@ -25,12 +30,55 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
     segments.forEach((segment, index) => {
       setTimeout(() => {
         handleDownload(segment.segment_id, segment.filename);
-      }, index * 500); // Delay to avoid browser blocking multiple downloads
+      }, index * 500);
     });
   };
 
+  const handleCopy = async (text, fieldId) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(fieldId);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  const handleCopyAll = (segment) => {
+    const desc = segment.description;
+    if (!desc) return;
+    const fullText = `${desc.title}\n\n${desc.description}\n\n${desc.hashtags?.join(' ') || ''}`;
+    handleCopy(fullText, `all-${segment.segment_id}`);
+  };
+
+  const handleRegenerate = async (segment, index) => {
+    setRegeneratingId(segment.segment_id);
+    try {
+      // We need original text - use segment_id to find it or use existing description context
+      const result = await generateDescription(
+        '', // text_en not available here, but DeepSeek can work with just Russian
+        segment.description?.title || segment.filename, // Use title as context
+        segment.duration || 60,
+        0
+      );
+      
+      // Update segment with new description
+      const updatedSegments = [...segments];
+      updatedSegments[index] = {
+        ...segment,
+        description: result
+      };
+      setSegments(updatedSegments);
+    } catch (error) {
+      console.error('Error regenerating description:', error);
+      alert('Ошибка при генерации нового описания');
+    } finally {
+      setRegeneratingId(null);
+    }
+  };
+
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className="space-y-6 max-w-4xl mx-auto">
       <div className="card">
         <div className="text-center mb-6">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
@@ -52,87 +100,169 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
             Клипы готовы!
           </h2>
           <p className="text-gray-600">
-            Ваши {segmentCount} клипов обработаны и готовы к скачиванию
+            {segmentCount} {segmentCount === 1 ? 'клип обработан' : 'клипов обработаны'} и готовы к скачиванию
           </p>
         </div>
 
-        <div className="space-y-3 mb-6">
+        <div className="space-y-6 mb-6">
           {segments.map((segment, index) => (
             <div
               key={segment.segment_id}
-              className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200"
+              className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm"
             >
-              <div className="flex items-center space-x-4">
-                <div className="flex-shrink-0">
-                  <div className="w-12 h-12 bg-gradient-to-r from-pink-500 to-purple-600 rounded-lg flex items-center justify-center">
-                    <span className="text-white font-bold text-lg">{index + 1}</span>
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 bg-gradient-to-r from-purple-50 to-pink-50 border-b border-gray-100">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 bg-gradient-to-r from-pink-500 to-purple-600 rounded-lg flex items-center justify-center">
+                    <span className="text-white font-bold">{index + 1}</span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900">{segment.filename}</p>
+                    <p className="text-xs text-gray-500">
+                      Длительность: {formatDuration(segment.duration)}
+                    </p>
                   </div>
                 </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{segment.filename}</p>
-                  <p className="text-xs text-gray-500">
-                    Длительность: {formatDuration(segment.duration)}
-                  </p>
-                </div>
+                <button
+                  onClick={() => handleDownload(segment.segment_id, segment.filename)}
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 shadow-sm transition"
+                >
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Скачать
+                </button>
               </div>
 
-              <button
-                onClick={() => handleDownload(segment.segment_id, segment.filename)}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
-              >
-                <svg
-                  className="w-5 h-5 mr-2"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                  />
-                </svg>
-                Скачать
-              </button>
+              {/* Description */}
+              {segment.description && (
+                <div className="p-4 space-y-4">
+                  {/* Title */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Заголовок</span>
+                      <button
+                        onClick={() => handleCopy(segment.description.title, `title-${segment.segment_id}`)}
+                        className="text-xs text-purple-600 hover:text-purple-800"
+                      >
+                        {copiedField === `title-${segment.segment_id}` ? '✓ Скопировано' : '📋 Копировать'}
+                      </button>
+                    </div>
+                    <p className="text-gray-900 font-medium bg-gray-50 p-3 rounded-lg">
+                      {segment.description.title}
+                    </p>
+                  </div>
+
+                  {/* Description text */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Описание</span>
+                      <button
+                        onClick={() => handleCopy(segment.description.description, `desc-${segment.segment_id}`)}
+                        className="text-xs text-purple-600 hover:text-purple-800"
+                      >
+                        {copiedField === `desc-${segment.segment_id}` ? '✓ Скопировано' : '📋 Копировать'}
+                      </button>
+                    </div>
+                    <p className="text-gray-700 bg-gray-50 p-3 rounded-lg whitespace-pre-wrap">
+                      {segment.description.description}
+                    </p>
+                  </div>
+
+                  {/* Hashtags */}
+                  {segment.description.hashtags && segment.description.hashtags.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Хэштеги</span>
+                        <button
+                          onClick={() => handleCopy(segment.description.hashtags.join(' '), `tags-${segment.segment_id}`)}
+                          className="text-xs text-purple-600 hover:text-purple-800"
+                        >
+                          {copiedField === `tags-${segment.segment_id}` ? '✓ Скопировано' : '📋 Копировать'}
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2 bg-gray-50 p-3 rounded-lg">
+                        {segment.description.hashtags.map((tag, idx) => (
+                          <span
+                            key={idx}
+                            className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-sm"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      onClick={() => handleCopyAll(segment)}
+                      className="flex-1 py-2 px-4 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition text-sm"
+                    >
+                      {copiedField === `all-${segment.segment_id}` ? '✓ Скопировано!' : '📋 Копировать всё'}
+                    </button>
+                    <button
+                      onClick={() => handleRegenerate(segment, index)}
+                      disabled={regeneratingId === segment.segment_id}
+                      className="py-2 px-4 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition text-sm disabled:opacity-50"
+                    >
+                      {regeneratingId === segment.segment_id ? (
+                        <span className="flex items-center">
+                          <svg className="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                          </svg>
+                          Генерация...
+                        </span>
+                      ) : (
+                        '🔄 Новое описание'
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* No description fallback */}
+              {!segment.description && (
+                <div className="p-4 text-center text-gray-500">
+                  <p className="text-sm">Описание не сгенерировано</p>
+                  <button
+                    onClick={() => handleRegenerate(segment, index)}
+                    disabled={regeneratingId === segment.segment_id}
+                    className="mt-2 text-sm text-purple-600 hover:text-purple-800"
+                  >
+                    {regeneratingId === segment.segment_id ? 'Генерация...' : '📝 Сгенерировать'}
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
 
-        <div className="flex flex-col md:flex-row md:space-x-3 space-y-3 md:space-y-0">
+        {/* Bottom actions */}
+        <div className="flex flex-col sm:flex-row gap-3">
           <button
             onClick={downloadAll}
             className="flex-1 btn-primary"
           >
-            <svg
-              className="w-5 h-5 mr-2 inline"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-              />
+            <svg className="w-5 h-5 mr-2 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             Скачать все ({segmentCount})
           </button>
-          <div className="flex flex-col md:w-1/3 space-y-3">
-            <button
-              onClick={onBackToSegments}
-              className="btn-secondary"
-            >
-              Назад к выбору моментов
-            </button>
-            <button
-              onClick={onReset}
-              className="btn-outline"
-            >
-              Обработать новое видео
-            </button>
-          </div>
+          <button
+            onClick={onBackToSegments}
+            className="btn-secondary"
+          >
+            Назад к выбору
+          </button>
+          <button
+            onClick={onReset}
+            className="btn-outline"
+          >
+            Новое видео
+          </button>
         </div>
       </div>
     </div>
@@ -140,4 +270,3 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
 };
 
 export default DownloadList;
-

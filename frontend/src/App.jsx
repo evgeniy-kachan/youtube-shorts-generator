@@ -33,10 +33,15 @@ function App() {
       }
 
       if (Array.isArray(result?.output_videos)) {
-        return result.output_videos.map((relativePath) => {
+        return result.output_videos.map((item) => {
+          // New format: { path, segment_id, description }
+          // Old format: string (relativePath)
+          const isNewFormat = typeof item === 'object' && item.path;
+          const relativePath = isNewFormat ? item.path : item;
+          
           const parts = relativePath.split('/');
           const filename = parts[parts.length - 1] || relativePath;
-          const segmentId = filename.replace('.mp4', '');
+          const segmentId = isNewFormat ? item.segment_id : filename.replace('.mp4', '');
           const originalSegment =
             segments.find((segment) => segment.id === segmentId) || {};
 
@@ -53,6 +58,8 @@ function App() {
             start_time: originalSegment.start_time ?? null,
             end_time: originalSegment.end_time ?? null,
             download_path: relativePath,
+            // New: include description data
+            description: isNewFormat ? item.description : null,
           };
         });
       }

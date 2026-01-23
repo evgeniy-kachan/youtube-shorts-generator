@@ -991,12 +991,23 @@ def _process_segments_task(
             segment['tts_duration'] = audio_duration
             segment['target_duration'] = target_duration
             
-        # 3. Render videos
+        # 3. Render videos and generate descriptions in parallel
         tasks[task_id] = {"status": "processing", "progress": 0.6, "message": "Rendering videos..."}
         renderer = get_service("renderer")
         
+        # Import DeepSeek client for description generation
+        from backend.services.deepseek_client import DeepSeekClient
+        
         output_files = []
-        for segment in segments_to_process:
+        for idx, segment in enumerate(segments_to_process):
+            # Update progress
+            segment_progress = 0.6 + (0.35 * idx / len(segments_to_process))
+            tasks[task_id] = {
+                "status": "processing",
+                "progress": segment_progress,
+                "message": f"Rendering video {idx + 1}/{len(segments_to_process)}..."
+            }
+            
             output_path = os.path.join(output_dir, f"{segment['id']}.mp4")
             final_clip = renderer.create_vertical_video(
                 video_path=video_path,
@@ -1020,9 +1031,31 @@ def _process_segments_task(
             )
             renderer.save_video(final_clip, output_path)
             
+            # Generate description for this segment
+            try:
+                deepseek_client = DeepSeekClient()
+                description_data = deepseek_client.generate_shorts_description(
+                    text_en=segment.get('text', ''),
+                    text_ru=segment.get('text_ru', ''),
+                    duration=segment.get('duration', 60),
+                    highlight_score=segment.get('highlight_score', 0),
+                )
+                deepseek_client.close()
+            except Exception as desc_exc:
+                logger.warning("Failed to generate description for %s: %s", segment['id'], desc_exc)
+                description_data = {
+                    "title": "Интересный момент",
+                    "description": "Смотрите до конца! 🔥",
+                    "hashtags": ["#shorts", "#viral", "#рекомендации"]
+                }
+            
             # Relative path for API response
             relative_path = os.path.join(video_id, f"{segment['id']}.mp4")
-            output_files.append(relative_path)
+            output_files.append({
+                "path": relative_path,
+                "segment_id": segment['id'],
+                "description": description_data
+            })
         
         tasks[task_id] = {
             "status": "completed",
