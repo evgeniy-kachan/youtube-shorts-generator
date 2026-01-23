@@ -127,6 +127,12 @@ class DeepSeekClient:
                 "hashtags": ["#shorts", "#viral", ...]
             }
         """
+        # Log input data for debugging
+        logger.info(
+            "generate_shorts_description: text_en=%d chars, text_ru=%d chars, duration=%.1f",
+            len(text_en or ""), len(text_ru or ""), duration
+        )
+        
         prompt = f"""Ты — SMM-специалист, создающий вирусные описания для коротких видео (Shorts/Reels/TikTok).
 
 КОНТЕНТ ВИДЕО:
