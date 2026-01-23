@@ -2609,40 +2609,139 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     len(turn.get("tts_words", [])),
                 )
             
-            # POST-PROCESSING: Fix any remaining overlaps
-            # This handles cases where API timing itself has overlaps
-            overlap_fixes = 0
-            for idx in range(1, len(dialogue_turns)):
-                if idx >= len(inputs):
-                    break
+            # POST-PROCESSING: Fix bunched/overlapping turns
+            # ElevenLabs TTD sometimes returns multiple turns ending at the same time
+            # This causes subtitle overlaps. We need to detect and redistribute them.
+            
+            MIN_TURN_DURATION = 0.4  # Minimum 400ms per turn for subtitles
+            TURN_GAP = 0.05  # 50ms gap between turns
+            BUNCH_THRESHOLD = 0.15  # Turns ending within 150ms are "bunched"
+            
+            # Step 1: Find groups of bunched turns (same end time)
+            num_turns = min(len(dialogue_turns), len(inputs))
+            bunched_groups = []
+            i = 0
+            while i < num_turns:
+                group_start = i
+                group_end = i
+                base_end_time = dialogue_turns[i].get("tts_end_offset", 0)
+                
+                # Find all consecutive turns that end at approximately the same time
+                while group_end + 1 < num_turns:
+                    next_end_time = dialogue_turns[group_end + 1].get("tts_end_offset", 0)
+                    if abs(next_end_time - base_end_time) < BUNCH_THRESHOLD:
+                        group_end += 1
+                    else:
+                        break
+                
+                if group_end > group_start:  # Found a bunched group
+                    bunched_groups.append((group_start, group_end))
+                    i = group_end + 1
+                else:
+                    i += 1
+            
+            # Step 2: Redistribute each bunched group
+            total_fixes = 0
+            for group_start_idx, group_end_idx in bunched_groups:
+                group_size = group_end_idx - group_start_idx + 1
+                
+                # Window: from first turn's original start to a reasonable end
+                first_turn = dialogue_turns[group_start_idx]
+                last_turn = dialogue_turns[group_end_idx]
+                
+                window_start = first_turn.get("tts_start_offset", 0)
+                window_end = last_turn.get("tts_end_offset", 0)
+                
+                # If window is too small, extend it
+                # Check if there's a next turn to not overlap with
+                if group_end_idx + 1 < num_turns:
+                    next_turn_start = dialogue_turns[group_end_idx + 1].get("tts_start_offset", window_end + 2)
+                    max_window_end = next_turn_start - TURN_GAP
+                else:
+                    max_window_end = duration_sec  # Use total audio duration
+                
+                # Calculate required duration for all turns
+                required_duration = group_size * MIN_TURN_DURATION + (group_size - 1) * TURN_GAP
+                current_duration = window_end - window_start
+                
+                if current_duration < required_duration:
+                    # Need to extend the window
+                    new_window_end = min(window_start + required_duration, max_window_end)
+                    logger.warning(
+                        "TTD BUNCHED: turns %d-%d need %.2fs but have %.2fs, extending window to %.2fs",
+                        group_start_idx, group_end_idx, required_duration, current_duration, new_window_end - window_start
+                    )
+                    window_end = new_window_end
+                
+                # Calculate per-turn duration
+                total_gaps = (group_size - 1) * TURN_GAP
+                available_for_turns = (window_end - window_start) - total_gaps
+                per_turn_duration = max(MIN_TURN_DURATION, available_for_turns / group_size)
+                
+                logger.info(
+                    "TTD BUNCHED GROUP: redistributing turns %d-%d (%.2f-%.2fs) → %.0fms/turn",
+                    group_start_idx, group_end_idx, window_start, window_end, per_turn_duration * 1000
+                )
+                
+                # Redistribute turns
+                current_time = window_start
+                for idx in range(group_start_idx, group_end_idx + 1):
+                    turn = dialogue_turns[idx]
+                    old_start = turn.get("tts_start_offset", 0)
+                    old_end = turn.get("tts_end_offset", 0)
+                    old_duration = old_end - old_start
+                    
+                    new_start = current_time
+                    new_end = current_time + per_turn_duration
+                    new_duration = per_turn_duration
+                    
+                    turn["tts_start_offset"] = new_start
+                    turn["tts_end_offset"] = new_end
+                    turn["tts_duration"] = new_duration
+                    
+                    # Redistribute word timestamps within the new turn window
+                    words = turn.get("tts_words", [])
+                    if words:
+                        word_count = len(words)
+                        per_word_duration = new_duration / word_count
+                        for w_idx, w in enumerate(words):
+                            w["start"] = new_start + w_idx * per_word_duration
+                            w["end"] = new_start + (w_idx + 1) * per_word_duration
+                    
+                    logger.info(
+                        "  Turn %d: %.2f-%.2fs (%.2fs) → %.2f-%.2fs (%.2fs)",
+                        idx, old_start, old_end, old_duration, new_start, new_end, new_duration
+                    )
+                    
+                    current_time = new_end + TURN_GAP
+                    total_fixes += 1
+            
+            # Step 3: Simple overlap fix for any remaining non-bunched overlaps
+            for idx in range(1, num_turns):
                 prev_turn = dialogue_turns[idx - 1]
                 curr_turn = dialogue_turns[idx]
                 
                 prev_end = prev_turn.get("tts_end_offset", 0)
                 curr_start = curr_turn.get("tts_start_offset", 0)
                 
-                if prev_end > curr_start + 0.01:  # Overlap detected (1ms tolerance)
-                    # Fix by pushing current turn start to prev_end + small gap
-                    overlap = prev_end - curr_start
-                    new_start = prev_end + 0.05
-                    old_start = curr_start
-                    curr_turn["tts_start_offset"] = new_start
+                if prev_end > curr_start + 0.01:  # Still overlapping
+                    shift = prev_end - curr_start + TURN_GAP
+                    curr_turn["tts_start_offset"] = curr_start + shift
+                    curr_turn["tts_end_offset"] = curr_turn.get("tts_end_offset", 0) + shift
                     
-                    # Also adjust word timestamps if present
-                    shift = new_start - old_start
-                    if "tts_words" in curr_turn:
-                        for w in curr_turn["tts_words"]:
-                            w["start"] += shift
-                            w["end"] += shift
+                    # Shift word timestamps
+                    for w in curr_turn.get("tts_words", []):
+                        w["start"] += shift
+                        w["end"] += shift
                     
-                    overlap_fixes += 1
                     logger.warning(
-                        "TTD OVERLAP FIX turn %d: shifted start %.2f->%.2f (was overlapping turn %d by %.2fs)",
-                        idx, old_start, new_start, idx - 1, overlap
+                        "TTD OVERLAP FIX turn %d: shifted by %.2fs to avoid overlap with turn %d",
+                        idx, shift, idx - 1
                     )
+                    total_fixes += 1
             
-            if overlap_fixes > 0:
-                logger.info("TTD: Fixed %d overlapping turns", overlap_fixes)
+            if total_fixes > 0:
+                logger.info("TTD: Fixed %d turn timing issues (bunched/overlapping)", total_fixes)
             
             # POST-PROCESSING: Merge very short turns into previous turn for subtitle display
             # If a turn has < 0.5s duration, its text will be merged with the previous turn
