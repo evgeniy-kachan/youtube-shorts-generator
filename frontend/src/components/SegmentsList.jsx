@@ -1,5 +1,4 @@
 import React, { useMemo, useState } from 'react';
-import { generateDescription } from '../services/api'; // Used for regeneration
 
 const CRITERIA_LABELS = {
   surprise_novelty: 'Неожиданность',
@@ -304,8 +303,6 @@ const SegmentsList = ({
   const [subtitleGradient, setSubtitleGradient] = useState(false); // Dark gradient at bottom
   const [speakerColorMode, setSpeakerColorMode] = useState('colored'); // 'colored' or 'white'
   
-  // Copy feedback state
-  const [copiedField, setCopiedField] = useState(null);
   const [ttsProvider, setTtsProvider] = useState('elevenlabs');
   const [voiceMix, setVoiceMix] = useState('male_duo');
   const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(true);
@@ -395,17 +392,6 @@ const SegmentsList = ({
       fallbackSegments: fallback 
     };
   }, [segments]);
-
-  // Copy to clipboard
-  const handleCopy = async (text, fieldName) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedField(fieldName);
-      setTimeout(() => setCopiedField(null), 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
-    }
-  };
 
   const handleProcess = () => {
     if (selectedSegments.length > 0) {
