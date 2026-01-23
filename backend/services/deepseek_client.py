@@ -177,7 +177,7 @@ class DeepSeekClient:
             messages,
             model="deepseek-chat",  # Force non-reasoning model for simple tasks
             temperature=0.7,  # More creative
-            max_tokens=800,  # Increased to ensure full JSON response
+            max_tokens=1200,  # Increased to ensure full JSON response
             response_format={"type": "json_object"}
         )
         
@@ -208,12 +208,17 @@ class DeepSeekClient:
         try:
             result = self.extract_json(text)
         except (json.JSONDecodeError, ValueError) as e:
-            logger.warning("Failed to parse DeepSeek response as JSON: %s, text: %s", e, text[:200])
-            return {
-                "title": "Интересный момент из видео",
-                "description": "Смотрите до конца! 🔥",
-                "hashtags": ["#shorts", "#viral", "#рекомендации", "#интересное", "#факты"]
-            }
+            logger.warning("Failed to parse DeepSeek response as JSON: %s, text: %s", e, text[:300])
+            # Try to extract partial data from truncated JSON
+            result = self._extract_partial_description(text)
+            if result:
+                logger.info("Recovered partial description from truncated JSON: title='%s'", result.get("title", "")[:30])
+            else:
+                return {
+                    "title": "Интересный момент из видео",
+                    "description": "Смотрите до конца! 🔥",
+                    "hashtags": ["#shorts", "#viral", "#рекомендации", "#интересное", "#факты"]
+                }
         
         # Ensure hashtags is a list
         if isinstance(result.get("hashtags"), str):
@@ -227,5 +232,45 @@ class DeepSeekClient:
         
         logger.info("Generated description: title='%s', %d hashtags", result.get("title", "")[:30], len(result.get("hashtags", [])))
         return result
+
+    def _extract_partial_description(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        Try to extract title and description from a truncated JSON response.
+        Returns None if extraction fails.
+        """
+        import re
+        result = {}
+        
+        # Extract title
+        title_match = re.search(r'"title"\s*:\s*"([^"]+)"', text)
+        if title_match:
+            result["title"] = title_match.group(1)
+        
+        # Extract description (may be truncated)
+        desc_match = re.search(r'"description"\s*:\s*"([^"]*)', text)
+        if desc_match:
+            desc = desc_match.group(1)
+            # Clean up truncated description
+            if not desc.endswith('"'):
+                desc = desc.rstrip() + "..."
+            result["description"] = desc
+        
+        # Extract hashtags if present
+        hashtags_match = re.search(r'"hashtags"\s*:\s*\[(.*?)\]', text, re.DOTALL)
+        if hashtags_match:
+            hashtags_str = hashtags_match.group(1)
+            hashtags = re.findall(r'"(#[^"]+)"', hashtags_str)
+            if hashtags:
+                result["hashtags"] = hashtags
+        
+        # If we got at least title, return with defaults for missing fields
+        if result.get("title"):
+            if "description" not in result:
+                result["description"] = "Смотрите до конца! 🔥"
+            if "hashtags" not in result:
+                result["hashtags"] = ["#shorts", "#viral", "#рекомендации"]
+            return result
+        
+        return None
 
 
