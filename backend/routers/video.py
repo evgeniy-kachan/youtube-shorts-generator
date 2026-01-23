@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import ffmpeg
+import httpx
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse
@@ -1041,6 +1042,16 @@ def _process_segments_task(
                     highlight_score=segment.get('highlight_score', 0),
                 )
                 deepseek_client.close()
+            except httpx.HTTPStatusError as http_exc:
+                logger.warning(
+                    "Description generation HTTP error for %s: status=%s, response=%s",
+                    segment['id'], http_exc.response.status_code, http_exc.response.text[:200]
+                )
+                description_data = {
+                    "title": "Интересный момент",
+                    "description": "Смотрите до конца! 🔥",
+                    "hashtags": ["#shorts", "#viral", "#рекомендации"]
+                }
             except Exception as desc_exc:
                 logger.warning("Failed to generate description for %s: %s", segment['id'], desc_exc)
                 description_data = {
