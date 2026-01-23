@@ -789,6 +789,7 @@ def _process_segments_task(
     subtitle_font_size: int = 86,
     subtitle_background: bool = False,
     subtitle_glow: bool = True,
+    subtitle_gradient: bool = False,
     preserve_background_audio: bool = True,
     crop_focus: str = "center",
     speaker_color_mode: str = "colored",
@@ -1084,6 +1085,7 @@ def _process_segments_task(
                 subtitle_font_size=subtitle_font_size,
                 subtitle_background=subtitle_background,
                 subtitle_glow=subtitle_glow,
+                subtitle_gradient=subtitle_gradient,
                 dialogue=segment.get('dialogue'),
                 preserve_background_audio=preserve_background_audio,
                 crop_focus=crop_focus,
@@ -1203,6 +1205,7 @@ async def process_segments(request: ProcessRequest, background_tasks: Background
         request.subtitle_font_size,
         request.subtitle_background,
         request.subtitle_glow,
+        request.subtitle_gradient,
         request.preserve_background_audio,
         request.crop_focus,
         request.speaker_color_mode,
@@ -1233,6 +1236,7 @@ async def dub_segment(request: DubbingRequest, background_tasks: BackgroundTasks
         request.subtitle_font_size,
         request.subtitle_background,
         request.subtitle_glow,
+        request.subtitle_gradient,
     )
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Dubbing task queued")
 
@@ -1251,6 +1255,7 @@ def _dubbing_task(
     subtitle_font_size: int,
     subtitle_background: bool,
     subtitle_glow: bool,
+    subtitle_gradient: bool,
 ):
     """Background task for AI dubbing."""
     try:
@@ -1341,6 +1346,7 @@ def _dubbing_task(
             subtitle_font_size=subtitle_font_size,
             subtitle_background=subtitle_background,
             subtitle_glow=subtitle_glow,
+            subtitle_gradient=subtitle_gradient,
             crop_focus=crop_focus,
         )
         

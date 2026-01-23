@@ -75,6 +75,10 @@ class ProcessRequest(BaseModel):
         default=True,
         description="Enable soft glow/shadow around subtitle text for readability"
     )
+    subtitle_gradient: bool = Field(
+        default=False,
+        description="Enable dark gradient at bottom of video for subtitle readability"
+    )
     speaker_color_mode: str = Field(
         default="colored",
         description="Speaker color mode: colored (different colors) or white (same white for all)"
@@ -132,4 +136,5 @@ class DubbingRequest(BaseModel):
     subtitle_font_size: int = Field(default=86, description="Font size")
     subtitle_background: bool = Field(default=False, description="Subtitle background box")
     subtitle_glow: bool = Field(default=True, description="Subtitle glow effect")
+    subtitle_gradient: bool = Field(default=False, description="Dark gradient at bottom")
 

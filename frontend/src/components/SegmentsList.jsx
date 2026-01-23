@@ -300,6 +300,7 @@ const SegmentsList = ({
   const [subtitleFontSize, setSubtitleFontSize] = useState(86);
   const [subtitleBackground, setSubtitleBackground] = useState(false);
   const [subtitleGlow, setSubtitleGlow] = useState(true); // Soft glow effect for readability
+  const [subtitleGradient, setSubtitleGradient] = useState(false); // Dark gradient at bottom
   const [speakerColorMode, setSpeakerColorMode] = useState('colored'); // 'colored' or 'white'
   const [ttsProvider, setTtsProvider] = useState('elevenlabs');
   const [voiceMix, setVoiceMix] = useState('male_duo');
@@ -403,6 +404,7 @@ const SegmentsList = ({
         subtitleFontSize,
         subtitleBackground,
         subtitleGlow,
+        subtitleGradient,
         ttsProvider,
         voiceMix,
         preserveBackgroundAudio,
@@ -424,6 +426,7 @@ const SegmentsList = ({
         subtitleFontSize,
         subtitleBackground,
         subtitleGlow,
+        subtitleGradient,
         cropFocus
       );
     }
@@ -1072,9 +1075,25 @@ const SegmentsList = ({
                               : '⬜️ Бокс'}
                           </span>
                         </button>
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() => setSubtitleGradient((prev) => !prev)}
+                          className={`px-4 py-2 rounded-lg border text-sm font-semibold transition flex items-center justify-center gap-2 ${
+                            subtitleGradient
+                              ? 'border-purple-600 bg-purple-50 text-purple-700'
+                              : 'border-gray-200 hover:border-purple-500 text-gray-700'
+                          }`}
+                        >
+                          <span>
+                            {subtitleGradient
+                              ? '🌑 Градиент'
+                              : '⬜️ Градиент'}
+                          </span>
+                        </button>
                       </div>
                       <p className="text-xs text-gray-500 mt-2">
-                        Свечение — мягкая тень вокруг текста. Бокс — полупрозрачный прямоугольник.
+                        Свечение — тень вокруг текста. Бокс — прямоугольник. Градиент — затемнение снизу.
                       </p>
                     </div>
 

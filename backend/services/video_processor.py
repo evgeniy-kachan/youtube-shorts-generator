@@ -597,6 +597,7 @@ class VideoProcessor:
         subtitle_position: str = "mid_low",
         subtitle_background: bool = False,
         subtitle_glow: bool = True,
+        subtitle_gradient: bool = False,
         convert_to_vertical: bool = True,
         vertical_method: str = "letterbox",
         crop_focus: str = "center",
@@ -723,6 +724,10 @@ class VideoProcessor:
                         target_duration,
                     )
             
+            # Apply gradient overlay before subtitles (so subtitles appear on top)
+            if subtitle_gradient:
+                video_stream = self._apply_gradient_filter(video_stream)
+            
             video_stream = self._apply_ass_filter(video_stream, subtitle_path)
 
             output = (
@@ -773,6 +778,7 @@ class VideoProcessor:
         subtitle_font_size: int = 86,
         subtitle_background: bool = False,
         subtitle_glow: bool = True,
+        subtitle_gradient: bool = False,
         dialogue: list[dict] | None = None,
         preserve_background_audio: bool = False,
         crop_focus: str = "center",
@@ -950,6 +956,7 @@ class VideoProcessor:
                 subtitle_position=subtitle_position,
                 subtitle_background=subtitle_background,
                 subtitle_glow=subtitle_glow,
+                subtitle_gradient=subtitle_gradient,
                 convert_to_vertical=True,
                 vertical_method=method,
                 crop_focus=effective_crop_focus,
@@ -991,6 +998,58 @@ class VideoProcessor:
             original_size = f"{self.TARGET_WIDTH}x{self.TARGET_HEIGHT}"
             return video_stream.filter("ass", subtitle_arg, original_size, fonts_dir)
         return video_stream.filter("ass", subtitle_arg)
+
+    def _apply_gradient_filter(self, video_stream):
+        """
+        Apply a dark gradient at the bottom of the video for subtitle readability.
+        
+        Gradient covers bottom 40% of the frame, fading from transparent to 65% black.
+        This makes white subtitles readable on any background.
+        """
+        # Create gradient using geq filter:
+        # - Top 60% of frame: keep original (lum, cb, cr unchanged)
+        # - Bottom 40%: darken progressively from 100% brightness to 35% (65% dark)
+        #
+        # Formula for Y (luminance):
+        # - If Y position < 60% of height: keep original (lum(X,Y))
+        # - If Y position >= 60%: darken based on position
+        #   - At 60%: multiply by 1.0 (no change)
+        #   - At 100%: multiply by 0.35 (65% darker)
+        #
+        # Linear interpolation: factor = 1.0 - 0.65 * (Y - 0.6*H) / (0.4*H)
+        #                              = 1.0 - 1.625 * (Y/H - 0.6)
+        #
+        # For 1920px height:
+        # - Gradient starts at Y = 1152 (60%)
+        # - Gradient ends at Y = 1920 (100%)
+        
+        # Using drawbox with gradient effect via multiple semi-transparent boxes
+        # This is more compatible than geq across FFmpeg versions
+        
+        # Approach: 8 horizontal bands, each slightly darker
+        # Band heights: 5% each (40% total / 8 bands)
+        bands = 8
+        band_height_pct = 0.05  # 5% of frame height each
+        start_y_pct = 0.60  # Start at 60% from top
+        max_opacity = 0.65  # Maximum darkness at bottom
+        
+        result = video_stream
+        for i in range(bands):
+            y_pct = start_y_pct + i * band_height_pct
+            # Opacity increases linearly from 0 at start to max_opacity at bottom
+            opacity = max_opacity * (i + 1) / bands
+            # drawbox: y=ih*pct, height=ih*band_pct, color=black@opacity, thickness=fill
+            result = result.drawbox(
+                x=0,
+                y=f"ih*{y_pct}",
+                width="iw",
+                height=f"ih*{band_height_pct}",
+                color=f"black@{opacity:.2f}",
+                thickness="fill"
+            )
+        
+        logger.info("Applied gradient overlay: bottom 40%%, 8 bands, max %.0f%% opacity", max_opacity * 100)
+        return result
 
     @staticmethod
     def _assign_speaker_colors(
