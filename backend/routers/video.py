@@ -1034,9 +1034,14 @@ def _process_segments_task(
             
             # Generate description for this segment
             try:
+                # Get English text - fallback to dialogue if main text is empty
+                text_en = segment.get('text', '')
+                if not text_en and segment.get('dialogue'):
+                    text_en = ' '.join(turn.get('text', '') for turn in segment['dialogue'])
+                
                 deepseek_client = DeepSeekClient()
                 description_data = deepseek_client.generate_shorts_description(
-                    text_en=segment.get('text', ''),
+                    text_en=text_en,
                     text_ru=segment.get('text_ru', ''),
                     duration=segment.get('duration', 60),
                     highlight_score=segment.get('highlight_score', 0),
