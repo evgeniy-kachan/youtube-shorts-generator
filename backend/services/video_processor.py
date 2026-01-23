@@ -993,34 +993,28 @@ class VideoProcessor:
 
     def _apply_gradient_filter(self, video_stream):
         """
-        Apply a smooth dark gradient at the bottom of the video for subtitle readability.
+        Apply a smooth dark gradient overlay at the bottom of the video for subtitle readability.
         
-        Gradient covers bottom 40% of the frame, fading from transparent to 60% black.
-        Uses 32 bands for smooth transition without visible banding.
+        Uses a pre-generated PNG with perfect gradient (no banding).
+        Gradient covers bottom 40% of the frame, fading from transparent to 65% black.
         """
-        # 32 bands for smooth gradient (each ~1.25% of frame height)
-        bands = 32
-        gradient_height_pct = 0.40  # Bottom 40% of frame
-        band_height_pct = gradient_height_pct / bands
-        start_y_pct = 1.0 - gradient_height_pct  # Start at 60% from top
-        max_opacity = 0.60  # Maximum darkness at bottom (slightly reduced)
+        # Path to pre-generated gradient PNG
+        gradient_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "assets", "overlays", "gradient_bottom.png"
+        )
         
-        result = video_stream
-        for i in range(bands):
-            y_pct = start_y_pct + i * band_height_pct
-            # Quadratic easing for smoother transition (slower start, faster end)
-            progress = (i + 1) / bands
-            opacity = max_opacity * (progress ** 1.5)  # Easing curve
-            
-            result = result.drawbox(
-                x=0,
-                y=f"ih*{y_pct:.4f}",
-                width="iw",
-                height=f"ih*{band_height_pct:.4f}",
-                color=f"black@{opacity:.3f}",
-                thickness="fill"
-            )
+        if not os.path.exists(gradient_path):
+            logger.warning("Gradient overlay not found at %s, skipping gradient", gradient_path)
+            return video_stream
         
+        # Load gradient PNG and overlay on video
+        gradient_input = ffmpeg.input(gradient_path, loop=1, framerate=30)
+        
+        # Overlay gradient on video (gradient has alpha channel for transparency)
+        result = ffmpeg.overlay(video_stream, gradient_input, x=0, y=0, shortest=1)
+        
+        logger.info("Applied PNG gradient overlay from %s", gradient_path)
         return result
 
     @staticmethod
