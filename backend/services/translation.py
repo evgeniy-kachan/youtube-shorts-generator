@@ -39,28 +39,31 @@ Translate English dialogue to Russian that:
 
 === TIMING HEURISTIC (CRITICAL) ===
 
+Russian words take LONGER to pronounce than English words.
+To match original timing, use FEWER Russian words than English.
+
 • Short phrases (EN < 10 words):
-  RU range = 0.75–0.95× EN word count
-  TARGET: aim for 0.85× (midpoint)
-  Prefer abbreviations and compact phrasing.
+  RU range = 0.65–0.80× EN word count
+  TARGET: aim for 0.70× 
+  Use abbreviations, compact phrasing.
 
 • Medium phrases (EN 10–25 words):
-  RU range = 0.9–1.1× EN word count
-  TARGET: aim for 1.0× (midpoint)
-  This is the ideal isochronic zone.
+  RU range = 0.70–0.85× EN word count
+  TARGET: aim for 0.75×
+  Be concise, avoid filler words.
 
 • Long phrases (EN > 25 words):
-  RU range = 0.95–1.1× EN word count
-  TARGET: aim for 1.0× (midpoint)
-  Prefer punctuation and rhythm over added words.
+  RU range = 0.75–0.90× EN word count
+  TARGET: aim for 0.80×
+  Condense without losing meaning.
 
-Treat ranges as SOFT BOUNDS. Prioritize naturalness within them.
-If exact midpoint sounds unnatural, stay within range.
+CRITICAL: Russian TTS speaks ~30% slower than English.
+Same word count = Russian audio 30-50% LONGER!
 
 Examples:
-• EN: 8 words → TARGET: 7 RU words (0.85×), acceptable: 6–8
-• EN: 15 words → TARGET: 15 RU words (1.0×), acceptable: 14–17
-• EN: 30 words → TARGET: 30 RU words (1.0×), acceptable: 28–33
+• EN: 8 words → TARGET: 6 RU words (0.75×), acceptable: 5–7
+• EN: 15 words → TARGET: 11 RU words (0.75×), acceptable: 10–13
+• EN: 30 words → TARGET: 24 RU words (0.80×), acceptable: 22–27
 
 === PUNCTUATION FOR TIMING (USE ACTIVELY) ===
 
@@ -634,18 +637,19 @@ class Translator:
                     ratio = ru_words / en_words if en_words > 0 else 1.0
                     
                     # Determine expected range based on EN length
+                    # Russian TTS is ~30% slower, so we need FEWER words
                     if en_words < 10:
-                        target_ratio = 0.85
-                        range_str = "0.75-0.95"
-                        in_range = 0.75 <= ratio <= 0.95
+                        target_ratio = 0.70
+                        range_str = "0.65-0.80"
+                        in_range = 0.65 <= ratio <= 0.80
                     elif en_words <= 25:
-                        target_ratio = 1.0
-                        range_str = "0.9-1.1"
-                        in_range = 0.9 <= ratio <= 1.1
+                        target_ratio = 0.75
+                        range_str = "0.70-0.85"
+                        in_range = 0.70 <= ratio <= 0.85
                     else:
-                        target_ratio = 1.0
-                        range_str = "0.95-1.1"
-                        in_range = 0.95 <= ratio <= 1.1
+                        target_ratio = 0.80
+                        range_str = "0.75-0.90"
+                        in_range = 0.75 <= ratio <= 0.90
                     
                     status = "✓" if in_range else ("⚠ SHORT" if ratio < target_ratio else "⚠ LONG")
                     
@@ -753,24 +757,25 @@ Respond with ONLY the Russian translation, no JSON, no quotes, just the text."""
             ratio = ru_words / en_words if en_words > 0 else 1.0
             
             # Determine if below lower bound based on EN length
+            # Russian TTS is ~30% slower, so target ratios are lower
             needs_expansion = False
-            target_ratio = 1.0
+            target_ratio = 0.75
             
             if en_words < 10:
-                # Short: lower bound = 0.75×, target midpoint = 0.85×
+                # Short: lower bound = 0.65×, target = 0.70×
+                if ratio < 0.65:
+                    needs_expansion = True
+                    target_ratio = 0.70
+            elif en_words <= 25:
+                # Medium: lower bound = 0.70×, target = 0.75×
+                if ratio < 0.70:
+                    needs_expansion = True
+                    target_ratio = 0.75
+            else:
+                # Long: lower bound = 0.75×, target = 0.80×
                 if ratio < 0.75:
                     needs_expansion = True
-                    target_ratio = 0.85
-            elif en_words <= 25:
-                # Medium: lower bound = 0.9×, target midpoint = 1.0×
-                if ratio < 0.9:
-                    needs_expansion = True
-                    target_ratio = 1.0
-            else:
-                # Long: lower bound = 0.95×, target midpoint = 1.0×
-                if ratio < 0.95:
-                    needs_expansion = True
-                    target_ratio = 1.0
+                    target_ratio = 0.80
             
             if needs_expansion:
                 target_words = int(en_words * target_ratio)
