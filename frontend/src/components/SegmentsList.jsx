@@ -21,7 +21,7 @@ const SUBTITLE_POSITIONS = [
     id: 'lower_center',
     label: 'Нижняя треть',
     description: 'Классическая позиция ближе к нижней трети',
-    coords: { x: 540, y: 1320 },
+    coords: { x: 540, y: 1350 },
   },
   {
     id: 'bottom_center',
