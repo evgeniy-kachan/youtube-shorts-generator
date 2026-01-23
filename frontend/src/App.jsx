@@ -170,6 +170,7 @@ function App() {
     subtitleFont,
     subtitleFontSize,
     subtitleBackground,
+    subtitleGlow = true,
     ttsProvider = 'local',
     voiceMix = 'male_duo',
     preserveBackgroundAudio = true,
@@ -194,6 +195,7 @@ function App() {
         subtitleFont,
         subtitleFontSize,
         subtitleBackground,
+        subtitleGlow,
         preserveBackgroundAudio,
         cropFocus,
         speakerColorMode
@@ -214,6 +216,7 @@ function App() {
     subtitleFont,
     subtitleFontSize,
     subtitleBackground,
+    subtitleGlow = true,
     cropFocus = 'face_auto'
   ) => {
     try {
@@ -233,7 +236,8 @@ function App() {
         subtitlePosition,
         subtitleFont,
         subtitleFontSize,
-        subtitleBackground
+        subtitleBackground,
+        subtitleGlow
       );
       setProcessingTask(response.task_id);
     } catch (error) {

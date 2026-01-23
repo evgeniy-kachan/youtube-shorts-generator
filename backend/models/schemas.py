@@ -69,7 +69,11 @@ class ProcessRequest(BaseModel):
     )
     subtitle_background: bool = Field(
         default=False,
-        description="Enable background blur/box behind subtitles"
+        description="Enable background box behind subtitles"
+    )
+    subtitle_glow: bool = Field(
+        default=True,
+        description="Enable soft glow/shadow around subtitle text for readability"
     )
     speaker_color_mode: str = Field(
         default="colored",
@@ -126,5 +130,6 @@ class DubbingRequest(BaseModel):
     subtitle_position: str = Field(default="mid_low", description="Subtitle position")
     subtitle_font: str = Field(default="Montserrat Light", description="Font family")
     subtitle_font_size: int = Field(default=86, description="Font size")
-    subtitle_background: bool = Field(default=False, description="Subtitle background")
+    subtitle_background: bool = Field(default=False, description="Subtitle background box")
+    subtitle_glow: bool = Field(default=True, description="Subtitle glow effect")
 

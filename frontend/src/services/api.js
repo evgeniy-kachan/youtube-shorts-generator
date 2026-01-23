@@ -32,6 +32,7 @@ export const processSegments = async (
   subtitleFont = 'Montserrat Light',
   subtitleFontSize = 86,
   subtitleBackground = false,
+  subtitleGlow = true,
   preserveBackgroundAudio = true,
   cropFocus = 'center',
   speakerColorMode = 'colored'
@@ -47,6 +48,7 @@ export const processSegments = async (
     subtitle_font: subtitleFont,
     subtitle_font_size: subtitleFontSize,
     subtitle_background: subtitleBackground,
+    subtitle_glow: subtitleGlow,
     preserve_background_audio: preserveBackgroundAudio,
     crop_focus: cropFocus,
     speaker_color_mode: speakerColorMode,
@@ -69,7 +71,8 @@ export const dubSegment = async (
   subtitlePosition = 'mid_low',
   subtitleFont = 'Montserrat Light',
   subtitleFontSize = 86,
-  subtitleBackground = false
+  subtitleBackground = false,
+  subtitleGlow = true
 ) => {
   const response = await api.post('/api/video/dubbing', {
     video_id: videoId,
@@ -83,6 +86,7 @@ export const dubSegment = async (
     subtitle_font: subtitleFont,
     subtitle_font_size: subtitleFontSize,
     subtitle_background: subtitleBackground,
+    subtitle_glow: subtitleGlow,
   });
   return response.data;
 };

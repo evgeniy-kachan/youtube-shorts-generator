@@ -299,6 +299,7 @@ const SegmentsList = ({
   const [subtitleFont, setSubtitleFont] = useState('Montserrat Light');
   const [subtitleFontSize, setSubtitleFontSize] = useState(86);
   const [subtitleBackground, setSubtitleBackground] = useState(false);
+  const [subtitleGlow, setSubtitleGlow] = useState(true); // Soft glow effect for readability
   const [speakerColorMode, setSpeakerColorMode] = useState('colored'); // 'colored' or 'white'
   const [ttsProvider, setTtsProvider] = useState('elevenlabs');
   const [voiceMix, setVoiceMix] = useState('male_duo');
@@ -401,6 +402,7 @@ const SegmentsList = ({
         subtitleFont,
         subtitleFontSize,
         subtitleBackground,
+        subtitleGlow,
         ttsProvider,
         voiceMix,
         preserveBackgroundAudio,
@@ -421,6 +423,7 @@ const SegmentsList = ({
         subtitleFont,
         subtitleFontSize,
         subtitleBackground,
+        subtitleGlow,
         cropFocus
       );
     }
@@ -1034,26 +1037,44 @@ const SegmentsList = ({
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Подложка
+                        Эффекты читаемости
                       </label>
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={() => setSubtitleBackground((prev) => !prev)}
-                        className={`w-full sm:w-auto px-4 py-2 rounded-lg border text-sm font-semibold transition flex items-center justify-center gap-2 ${
-                          subtitleBackground
-                            ? 'border-purple-600 bg-purple-50 text-purple-700'
-                            : 'border-gray-200 hover:border-purple-500 text-gray-700'
-                        }`}
-                      >
-                        <span>
-                          {subtitleBackground
-                            ? '✅ Фон включён'
-                            : '⬜️ Фон выключен'}
-                        </span>
-                      </button>
+                      <div className="flex gap-3 flex-wrap">
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() => setSubtitleGlow((prev) => !prev)}
+                          className={`px-4 py-2 rounded-lg border text-sm font-semibold transition flex items-center justify-center gap-2 ${
+                            subtitleGlow
+                              ? 'border-purple-600 bg-purple-50 text-purple-700'
+                              : 'border-gray-200 hover:border-purple-500 text-gray-700'
+                          }`}
+                        >
+                          <span>
+                            {subtitleGlow
+                              ? '✨ Свечение'
+                              : '⬜️ Свечение'}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() => setSubtitleBackground((prev) => !prev)}
+                          className={`px-4 py-2 rounded-lg border text-sm font-semibold transition flex items-center justify-center gap-2 ${
+                            subtitleBackground
+                              ? 'border-purple-600 bg-purple-50 text-purple-700'
+                              : 'border-gray-200 hover:border-purple-500 text-gray-700'
+                          }`}
+                        >
+                          <span>
+                            {subtitleBackground
+                              ? '🔲 Бокс'
+                              : '⬜️ Бокс'}
+                          </span>
+                        </button>
+                      </div>
                       <p className="text-xs text-gray-500 mt-2">
-                        Полупрозрачный черный блок для лучшей читаемости.
+                        Свечение — мягкая тень вокруг текста. Бокс — полупрозрачный прямоугольник.
                       </p>
                     </div>
 

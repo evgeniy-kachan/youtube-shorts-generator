@@ -596,6 +596,7 @@ class VideoProcessor:
         font_size: int = 86,
         subtitle_position: str = "mid_low",
         subtitle_background: bool = False,
+        subtitle_glow: bool = True,
         convert_to_vertical: bool = True,
         vertical_method: str = "letterbox",
         crop_focus: str = "center",
@@ -669,6 +670,7 @@ class VideoProcessor:
                 font_size,
                 subtitle_position,
                 subtitle_background,
+                subtitle_glow,
             )
             
             # Step 3: Process video with ffmpeg
@@ -770,6 +772,7 @@ class VideoProcessor:
         subtitle_font: str = "Montserrat Light",
         subtitle_font_size: int = 86,
         subtitle_background: bool = False,
+        subtitle_glow: bool = True,
         dialogue: list[dict] | None = None,
         preserve_background_audio: bool = False,
         crop_focus: str = "center",
@@ -946,6 +949,7 @@ class VideoProcessor:
                 font_size=subtitle_font_size,
                 subtitle_position=subtitle_position,
                 subtitle_background=subtitle_background,
+                subtitle_glow=subtitle_glow,
                 convert_to_vertical=True,
                 vertical_method=method,
                 crop_focus=effective_crop_focus,
@@ -1453,8 +1457,9 @@ class VideoProcessor:
         font_size: int = 86,
         subtitle_position: str = "mid_low",
         subtitle_background: bool = False,
+        subtitle_glow: bool = True,
     ):
-        logger.info(f"Generating subtitles with animation='{animation}', font='{font_name}', bg={subtitle_background}")
+        logger.info(f"Generating subtitles with animation='{animation}', font='{font_name}', bg={subtitle_background}, glow={subtitle_glow}")
         """
         Create ASS subtitle file with TikTok/Instagram style.
         
@@ -1532,17 +1537,28 @@ class VideoProcessor:
         selected_style['alignment'] = position_config.get('an', selected_style['alignment'])
         selected_style['marginv'] = position_config.get('marginv', selected_style['marginv'])
         
-        # For subtitle background, use BorderStyle=3 (opaque box)
-        # In BorderStyle=3: OutlineColour = box color, Outline = padding
+        # Style options priority:
+        # 1. Background box (BorderStyle=3) - takes precedence
+        # 2. Glow effect (outline + shadow) - soft halo around text
+        # 3. Neither - plain white text
+        
         if subtitle_background:
+            # Opaque box behind text (BorderStyle=3)
             selected_style['borderstyle'] = 3
-            selected_style['outline'] = 14  # Padding around text (slightly larger)
+            selected_style['outline'] = 14  # Padding around text
             # OutlineColour becomes the box color in BorderStyle=3
             # Format: &HAABBGGRR (AA=alpha, BB=blue, GG=green, RR=red)
-            # Higher alpha = more transparent: 00=opaque, FF=invisible
-            box_color = "&HC0000000"  # More transparent black (C0 hex = ~75% transparent)
-            back_color = "&H00000000"  # No shadow
+            box_color = "&HC0000000"  # ~75% transparent black
+            back_color = "&H00000000"
+        elif subtitle_glow:
+            # Soft glow effect - black outline + shadow for readability
+            selected_style['borderstyle'] = 1  # Outline + shadow mode
+            selected_style['outline'] = 3  # Black stroke around text
+            selected_style['shadow'] = 2  # Soft shadow offset
+            box_color = "&H80000000"  # Semi-transparent black outline (50% alpha)
+            back_color = "&H80000000"  # Semi-transparent black shadow
         else:
+            # No effects - plain text
             box_color = selected_style['outlinecolor']
             back_color = "&H00000000"
 
