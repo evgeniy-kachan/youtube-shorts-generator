@@ -174,11 +174,23 @@ class DeepSeekClient:
             response_format={"type": "json_object"}
         )
         
+        # Log full response for debugging
+        finish_reason = response.get("choices", [{}])[0].get("finish_reason", "unknown")
+        usage = response.get("usage", {})
+        logger.info(
+            "DeepSeek description response: finish_reason=%s, prompt_tokens=%s, completion_tokens=%s",
+            finish_reason, usage.get("prompt_tokens"), usage.get("completion_tokens")
+        )
+        
         text = self.extract_text(response)
         
         # Handle empty response
         if not text or text.strip() == "":
-            logger.warning("DeepSeek returned empty response for description generation")
+            logger.warning(
+                "DeepSeek returned empty response for description generation. "
+                "finish_reason=%s, full_response=%s",
+                finish_reason, json.dumps(response, ensure_ascii=False)[:500]
+            )
             # Return fallback
             return {
                 "title": "Интересный момент из видео",
