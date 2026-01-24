@@ -1821,9 +1821,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         final_alignment = normalized_alignment if normalized_alignment else alignment
         
         if normalized_alignment:
-            logger.debug("TTD: Using normalized_alignment (more accurate after text normalization)")
+            logger.info("TTD: Using normalized_alignment (more accurate after text normalization)")
         else:
-            logger.debug("TTD: Using alignment (normalized_alignment not available)")
+            logger.info("TTD: Using alignment (normalized_alignment not available)")
         
         audio_bytes = base64.b64decode(audio_base64)
         

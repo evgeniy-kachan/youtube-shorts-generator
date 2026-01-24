@@ -126,20 +126,24 @@ class DeepSeekClient:
         import re
         
         # Fix missing quotes around hashtags in arrays
-        # Pattern: finds #hashtag not in quotes, after comma or opening bracket, before ] or ,
+        # Pattern: finds #hashtag not in quotes, after comma or opening bracket, before ] or , or "
         # Example: ["#shorts", #экономика] -> ["#shorts", "#экономика"]
         # Example: [#tag] -> ["#tag"]
+        # Example: ["#shorts", #ии"] -> ["#shorts", "#ии"]  (missing quote before, but has quote after)
         def fix_hashtag_quotes(match):
             prefix = match.group(1)  # ", " or "["
             hashtag = match.group(2)  # "#tag"
-            suffix = match.group(3)  # "]" or ","
+            suffix = match.group(3)  # "]" or "," or """
+            # If suffix is a quote, we already have the closing quote, just add opening
+            if suffix == '"':
+                return f'{prefix}"{hashtag}"'
             return f'{prefix}"{hashtag}"{suffix}'
         
-        # Find patterns like: , #tag] or , #tag, or [ #tag] or , #tag ]
+        # Find patterns like: , #tag] or , #tag, or [ #tag] or , #tag ] or , #tag"
         # This handles the case where DeepSeek forgets quotes around hashtags
         # Pattern matches: comma/bracket, optional whitespace, # followed by word chars (including unicode), 
-        # optional whitespace, then ] or ,
-        text = re.sub(r'([,\[])\s*(#[\w\u0400-\u04FF]+)\s*([,\]])', fix_hashtag_quotes, text)
+        # optional whitespace, then ] or , or "
+        text = re.sub(r'([,\[])\s*(#[\w\u0400-\u04FF]+)\s*([,\]"])', fix_hashtag_quotes, text)
         
         return text
 
