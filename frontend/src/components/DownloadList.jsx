@@ -136,87 +136,78 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
 
               {/* Description */}
               {segment.description && (
-                <div className="p-4 space-y-4">
-                  {/* Title */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Заголовок</span>
-                      <button
-                        onClick={() => handleCopy(segment.description.title, `title-${segment.segment_id}`)}
-                        className="text-xs text-purple-600 hover:text-purple-800"
-                      >
-                        {copiedField === `title-${segment.segment_id}` ? '✓ Скопировано' : '📋 Копировать'}
-                      </button>
-                    </div>
-                    <p className="text-gray-900 font-medium bg-gray-50 p-3 rounded-lg">
-                      {segment.description.title}
-                    </p>
-                  </div>
-
-                  {/* Description text */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Описание</span>
-                      <button
-                        onClick={() => handleCopy(segment.description.description, `desc-${segment.segment_id}`)}
-                        className="text-xs text-purple-600 hover:text-purple-800"
-                      >
-                        {copiedField === `desc-${segment.segment_id}` ? '✓ Скопировано' : '📋 Копировать'}
-                      </button>
-                    </div>
-                    <p className="text-gray-700 bg-gray-50 p-3 rounded-lg whitespace-pre-wrap">
-                      {segment.description.description}
-                    </p>
-                  </div>
-
-                  {/* Hashtags */}
-                  {segment.description.hashtags && segment.description.hashtags.length > 0 && (
+                <div className="p-4">
+                  {/* Combined description block */}
+                  <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                    {/* Title */}
                     <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Хэштеги</span>
-                        <button
-                          onClick={() => handleCopy(segment.description.hashtags.join(' '), `tags-${segment.segment_id}`)}
-                          className="text-xs text-purple-600 hover:text-purple-800"
-                        >
-                          {copiedField === `tags-${segment.segment_id}` ? '✓ Скопировано' : '📋 Копировать'}
-                        </button>
-                      </div>
-                      <div className="flex flex-wrap gap-2 bg-gray-50 p-3 rounded-lg">
-                        {segment.description.hashtags.map((tag, idx) => (
-                          <span
-                            key={idx}
-                            className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-sm"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
+                      <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">Заголовок</span>
+                      <p className="text-gray-900 font-semibold mt-1">
+                        {segment.description.title}
+                      </p>
                     </div>
-                  )}
+
+                    {/* Description text */}
+                    <div>
+                      <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">Описание</span>
+                      <p className="text-gray-700 mt-1 whitespace-pre-wrap">
+                        {segment.description.description}
+                      </p>
+                    </div>
+
+                    {/* Hashtags */}
+                    {segment.description.hashtags && segment.description.hashtags.length > 0 && (
+                      <div>
+                        <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">Хэштеги</span>
+                        <p className="text-purple-700 mt-1">
+                          {segment.description.hashtags.join(' ')}
+                        </p>
+                      </div>
+                    )}
+                  </div>
 
                   {/* Action buttons */}
-                  <div className="flex gap-3 pt-2">
+                  <div className="flex gap-3 mt-4">
                     <button
                       onClick={() => handleCopyAll(segment)}
-                      className="flex-1 py-2 px-4 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition text-sm"
+                      className="flex-1 py-2.5 px-4 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition text-sm flex items-center justify-center"
                     >
-                      {copiedField === `all-${segment.segment_id}` ? '✓ Скопировано!' : '📋 Копировать всё'}
+                      {copiedField === `all-${segment.segment_id}` ? (
+                        <>
+                          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          Скопировано!
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                          </svg>
+                          Копировать описание
+                        </>
+                      )}
                     </button>
                     <button
                       onClick={() => handleRegenerate(segment, index)}
                       disabled={regeneratingId === segment.segment_id}
-                      className="py-2 px-4 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition text-sm disabled:opacity-50"
+                      className="py-2.5 px-4 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition text-sm disabled:opacity-50 flex items-center"
                     >
                       {regeneratingId === segment.segment_id ? (
-                        <span className="flex items-center">
+                        <>
                           <svg className="animate-spin h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
                           </svg>
                           Генерация...
-                        </span>
+                        </>
                       ) : (
-                        '🔄 Новое описание'
+                        <>
+                          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                          Новое
+                        </>
                       )}
                     </button>
                   </div>
