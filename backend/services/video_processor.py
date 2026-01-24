@@ -1335,60 +1335,60 @@ class VideoProcessor:
                 
                 if has_valid_timestamps:
                     while word_idx < len(filtered_tts_words):
-                    # Take words until we hit max_chars_per_line
-                    chunk_tts_words = []
-                    current_chars = 0
-                    while word_idx < len(filtered_tts_words):
-                        word = filtered_tts_words[word_idx]["word"]
-                        word_len = len(word) + 1  # +1 for space
-                        if current_chars + word_len > max_chars_per_line and chunk_tts_words:
-                            # This word would exceed limit, stop here
+                        # Take words until we hit max_chars_per_line
+                        chunk_tts_words = []
+                        current_chars = 0
+                        while word_idx < len(filtered_tts_words):
+                            word = filtered_tts_words[word_idx]["word"]
+                            word_len = len(word) + 1  # +1 for space
+                            if current_chars + word_len > max_chars_per_line and chunk_tts_words:
+                                # This word would exceed limit, stop here
+                                break
+                            chunk_tts_words.append(filtered_tts_words[word_idx])
+                            current_chars += word_len
+                            word_idx += 1
+                        
+                        if not chunk_tts_words:
                             break
-                        chunk_tts_words.append(filtered_tts_words[word_idx])
-                        current_chars += word_len
-                        word_idx += 1
-                    
-                    if not chunk_tts_words:
-                        break
-                    
-                    # Get timing from first and last word in chunk
-                    chunk_start = chunk_tts_words[0]["start"]
-                    chunk_end_time = chunk_tts_words[-1]["end"]
-                    
-                    # Build word entries
-                    word_entries = []
-                    for tw in chunk_tts_words:
-                        word_entries.append({
-                            "word": tw["word"],
-                            "start": tw["start"],
-                            "end": tw["end"],
+                        
+                        # Get timing from first and last word in chunk
+                        chunk_start = chunk_tts_words[0]["start"]
+                        chunk_end_time = chunk_tts_words[-1]["end"]
+                        
+                        # Build word entries
+                        word_entries = []
+                        for tw in chunk_tts_words:
+                            word_entries.append({
+                                "word": tw["word"],
+                                "start": tw["start"],
+                                "end": tw["end"],
+                            })
+                        
+                        lane_idx = 0  # All subtitles at same position
+                        
+                        # Prevent overlap: if this subtitle starts before previous ends, adjust
+                        if chunk_start < last_subtitle_end + MIN_SUBTITLE_GAP:
+                            # Option 1: Trim previous subtitle's end
+                            if subtitles:
+                                old_end = subtitles[-1]["end"]
+                                subtitles[-1]["end"] = max(subtitles[-1]["start"] + 0.3, chunk_start - MIN_SUBTITLE_GAP)
+                                if old_end != subtitles[-1]["end"]:
+                                    logger.debug(
+                                        "Trimmed previous subtitle end: %.2f -> %.2f to avoid overlap",
+                                        old_end, subtitles[-1]["end"]
+                                    )
+                        
+                        subtitles.append({
+                            "start": chunk_start,
+                            "end": chunk_end_time,
+                            "text": " ".join(tw["word"] for tw in chunk_tts_words),
+                            "words": word_entries,
+                            "speaker": speaker_id,
+                            "color": speaker_palette.get(speaker_id),
+                            "lane": lane_idx,
                         })
-                    
-                    lane_idx = 0  # All subtitles at same position
-                    
-                    # Prevent overlap: if this subtitle starts before previous ends, adjust
-                    if chunk_start < last_subtitle_end + MIN_SUBTITLE_GAP:
-                        # Option 1: Trim previous subtitle's end
-                        if subtitles:
-                            old_end = subtitles[-1]["end"]
-                            subtitles[-1]["end"] = max(subtitles[-1]["start"] + 0.3, chunk_start - MIN_SUBTITLE_GAP)
-                            if old_end != subtitles[-1]["end"]:
-                                logger.debug(
-                                    "Trimmed previous subtitle end: %.2f -> %.2f to avoid overlap",
-                                    old_end, subtitles[-1]["end"]
-                                )
-                    
-                    subtitles.append({
-                        "start": chunk_start,
-                        "end": chunk_end_time,
-                        "text": " ".join(tw["word"] for tw in chunk_tts_words),
-                        "words": word_entries,
-                        "speaker": speaker_id,
-                        "color": speaker_palette.get(speaker_id),
-                        "lane": lane_idx,
-                    })
-                    last_subtitle_end = chunk_end_time
-                    chunks_added += 1
+                        last_subtitle_end = chunk_end_time
+                        chunks_added += 1
             else:
                 # Fallback: distribute words proportionally using character-based chunking
                 word_chunks: List[List[str]] = []
