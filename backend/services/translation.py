@@ -394,11 +394,18 @@ class Translator:
         """Translate payload groups sequentially or in parallel depending on config."""
         results: Dict[str, Dict[str, str]] = {}
         if not payloads:
+            logger.warning("_process_payloads: No payloads provided")
             return results
+
+        total_items = sum(len(p) for p in payloads)
+        logger.info("_process_payloads: Processing %d payload groups with %d total items", len(payloads), total_items)
 
         if len(payloads) == 1 or self.max_parallel <= 1:
             for payload in payloads:
-                results.update(self._translate_chunk(payload))
+                chunk_result = self._translate_chunk(payload)
+                logger.info("_process_payloads: Chunk returned %d results for %d items", len(chunk_result), len(payload))
+                results.update(chunk_result)
+            logger.info("_process_payloads: Total results after sequential processing: %d", len(results))
             return results
 
         logger.info(
@@ -415,6 +422,7 @@ class Translator:
                 payload = future_to_payload[future]
                 try:
                     chunk_result = future.result()
+                    logger.info("_process_payloads: Chunk returned %d results for %d items", len(chunk_result), len(payload))
                     results.update(chunk_result)
                 except Exception as exc:
                     logger.error(
@@ -423,7 +431,8 @@ class Translator:
                         exc,
                         exc_info=True,
                     )
-
+        
+        logger.info("_process_payloads: Total results after parallel processing: %d", len(results))
         return results
 
     def _build_payload_group(self, texts: List[str], start_index: int):
@@ -528,12 +537,16 @@ class Translator:
             temperature=self.temperature,
         )
         response_text = DeepSeekClient.extract_text(response_json)
+        
+        logger.debug("DeepSeek translation response (first 500 chars): %s", response_text[:500])
 
         try:
             parsed = DeepSeekClient.extract_json(response_text)
             results_list = parsed.get("results", [])
+            logger.info("DeepSeek returned %d translation results for payload with %d items", len(results_list), len(payload))
         except Exception as exc:
             logger.error("Failed to parse DeepSeek translation response: %s", exc, exc_info=True)
+            logger.error("Response text (first 1000 chars): %s", response_text[:1000])
             return {}
 
         result_map: Dict[str, Dict[str, str]] = {}
@@ -544,6 +557,11 @@ class Translator:
                 result_map[seg_id] = {"subtitle_text": subtitle_text}
             else:
                 logger.warning("Malformed translation item: %s", item)
+        
+        logger.info("Translation result map: %d items mapped from %d payload items", len(result_map), len(payload))
+        if len(result_map) < len(payload):
+            missing_ids = [item["id"] for item in payload if item["id"] not in result_map]
+            logger.warning("Missing translations for IDs: %s", missing_ids)
 
         return result_map
 
