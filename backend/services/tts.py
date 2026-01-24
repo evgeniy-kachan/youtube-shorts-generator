@@ -1513,6 +1513,116 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         
         return words_by_input
 
+    @staticmethod
+    def _validate_and_fix_timings_with_voice_segments(
+        words_by_input: dict[int, list[dict]],
+        voice_segments: list[dict],
+    ) -> dict[int, list[dict]]:
+        """
+        Validate and fix word timings using voice_segments as a reference.
+        
+        voice_segments contain precise start_time_seconds and end_time_seconds for each segment,
+        which can be used to validate and correct character-level timings from alignment.
+        
+        Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert-with-timestamps
+        
+        Args:
+            words_by_input: Dict mapping dialogue_input_index to list of word dicts
+            voice_segments: List of voice segment dicts with start_time_seconds, end_time_seconds,
+                          dialogue_input_index, character_start_index, character_end_index
+        
+        Returns:
+            Validated and corrected words_by_input dict
+        """
+        if not voice_segments or not words_by_input:
+            return words_by_input
+        
+        # Build mapping from dialogue_input_index to segment timing
+        segment_timings = {}
+        for vs in voice_segments:
+            input_idx = vs.get("dialogue_input_index", -1)
+            if input_idx >= 0:
+                # If multiple segments per input, use the earliest start and latest end
+                if input_idx not in segment_timings:
+                    segment_timings[input_idx] = {
+                        "start": vs.get("start_time_seconds", 0),
+                        "end": vs.get("end_time_seconds", 0),
+                    }
+                else:
+                    segment_timings[input_idx]["start"] = min(
+                        segment_timings[input_idx]["start"],
+                        vs.get("start_time_seconds", 0)
+                    )
+                    segment_timings[input_idx]["end"] = max(
+                        segment_timings[input_idx]["end"],
+                        vs.get("end_time_seconds", 0)
+                    )
+        
+        # Validate and fix word timings for each input
+        corrected_words = {}
+        for input_idx, words in words_by_input.items():
+            if not words:
+                continue
+            
+            segment_timing = segment_timings.get(input_idx)
+            if not segment_timing:
+                # No segment timing available, keep original words
+                corrected_words[input_idx] = words
+                continue
+            
+            segment_start = segment_timing["start"]
+            segment_end = segment_timing["end"]
+            segment_duration = segment_end - segment_start
+            
+            # Check if word timings are within segment boundaries
+            first_word_start = words[0].get("start", segment_start)
+            last_word_end = words[-1].get("end", segment_end)
+            
+            # If word timings are outside segment boundaries, scale them proportionally
+            if first_word_start < segment_start or last_word_end > segment_end:
+                # Calculate scale factor to fit words within segment
+                word_span = last_word_end - first_word_start
+                if word_span > 0.01:  # Avoid division by zero
+                    scale = segment_duration / word_span
+                    offset = segment_start - (first_word_start * scale)
+                    
+                    logger.debug(
+                        "TTD: Scaling word timings for input %d: "
+                        "words=[%.2f-%.2f]s, segment=[%.2f-%.2f]s, scale=%.3f",
+                        input_idx, first_word_start, last_word_end,
+                        segment_start, segment_end, scale
+                    )
+                    
+                    # Scale all word timings
+                    corrected_words[input_idx] = []
+                    for word in words:
+                        corrected_words[input_idx].append({
+                            "word": word.get("word", ""),
+                            "start": max(segment_start, min(segment_end, word.get("start", 0) * scale + offset)),
+                            "end": max(segment_start, min(segment_end, word.get("end", 0) * scale + offset)),
+                        })
+                else:
+                    # Word span too small, distribute evenly
+                    corrected_words[input_idx] = []
+                    word_duration = segment_duration / len(words) if words else 0.1
+                    for i, word in enumerate(words):
+                        corrected_words[input_idx].append({
+                            "word": word.get("word", ""),
+                            "start": segment_start + i * word_duration,
+                            "end": segment_start + (i + 1) * word_duration,
+                        })
+            else:
+                # Timings are within bounds, but clamp to be safe
+                corrected_words[input_idx] = []
+                for word in words:
+                    corrected_words[input_idx].append({
+                        "word": word.get("word", ""),
+                        "start": max(segment_start, min(segment_end, word.get("start", segment_start))),
+                        "end": max(segment_start, min(segment_end, word.get("end", segment_end))),
+                    })
+        
+        return corrected_words
+
     # Audio tags for emotional delivery
     EMOTION_TAGS = {
         # Positive emotions
@@ -2674,6 +2784,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             
             logger.info("TTD: Using ElevenLabs TTD alignment for word timestamps")
             words_by_input = self._parse_alignment_to_words(alignment, voice_segments)
+            
+            # Validate and fix timings using voice_segments as reference
+            if words_by_input and voice_segments:
+                words_by_input = self._validate_and_fix_timings_with_voice_segments(
+                    words_by_input, voice_segments
+                )
             
             # Apply fixes for bunched words and check quality
             if words_by_input:
