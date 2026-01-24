@@ -1361,9 +1361,18 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         """
         Parse ElevenLabs character alignment into word-level timestamps.
         
+        Can use either 'alignment' (original text) or 'normalized_alignment' (normalized text).
+        normalized_alignment is preferred as it may be more accurate after text normalization.
+        
+        Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert-with-timestamps
+        
         Returns a dict mapping dialogue_input_index to list of word dicts:
         {0: [{"word": "Привет", "start": 0.1, "end": 0.5}, ...], ...}
         """
+        if not alignment:
+            logger.warning("TTD alignment is empty or None")
+            return {}
+        
         characters = alignment.get("characters", [])
         char_starts = alignment.get("character_start_times_seconds", [])
         char_ends = alignment.get("character_end_times_seconds", [])
@@ -1375,21 +1384,42 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             )
             return {}
         
+        logger.debug(
+            "TTD parsing alignment: %d characters, %d voice_segments",
+            len(characters), len(voice_segments)
+        )
+        
         # Build character-to-segment mapping from voice_segments
         # voice_segments have character_start_index and character_end_index
+        # These indices point to characters array in the alignment (or normalized_alignment)
         segment_ranges = []
+        max_char_idx = len(characters) - 1
+        
         for vs in voice_segments:
+            char_start = vs.get("character_start_index", 0)
+            char_end = vs.get("character_end_index", 0)
+            
+            # Validate indices are within bounds
+            if char_start < 0 or char_end > len(characters):
+                logger.warning(
+                    "TTD voice_segment: invalid char_range [%d, %d) for input_idx=%d (max=%d), clamping",
+                    char_start, char_end, vs.get("dialogue_input_index", -1), max_char_idx
+                )
+                char_start = max(0, min(char_start, max_char_idx))
+                char_end = max(char_start, min(char_end, len(characters)))
+            
             segment_ranges.append({
                 "input_idx": vs.get("dialogue_input_index", -1),
-                "char_start": vs.get("character_start_index", 0),
-                "char_end": vs.get("character_end_index", 0),
+                "char_start": char_start,
+                "char_end": char_end,
             })
         
         # Log segment ranges for debugging
         for sr in segment_ranges:
             logger.debug(
-                "TTD voice_segment: input_idx=%d, char_range=[%d, %d)",
-                sr["input_idx"], sr["char_start"], sr["char_end"]
+                "TTD voice_segment: input_idx=%d, char_range=[%d, %d), chars_in_range=%d",
+                sr["input_idx"], sr["char_start"], sr["char_end"],
+                sr["char_end"] - sr["char_start"]
             )
         
         def get_input_idx_for_char(char_idx: int) -> int:
@@ -1778,11 +1808,26 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         response_data = response.json()
         audio_base64 = response_data.get("audio_base64", "")
         voice_segments = response_data.get("voice_segments", [])
+        
+        # Prefer normalized_alignment if available (more accurate after text normalization)
+        # Fallback to alignment if normalized_alignment is not present
+        # Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert-with-timestamps
+        normalized_alignment = response_data.get("normalized_alignment")
         alignment = response_data.get("alignment", {})
+        
+        # Use normalized_alignment if available, otherwise use alignment
+        # normalized_alignment has timestamps for normalized text (e.g., numbers spelled out)
+        # which may be more accurate for synchronization
+        final_alignment = normalized_alignment if normalized_alignment else alignment
+        
+        if normalized_alignment:
+            logger.debug("TTD: Using normalized_alignment (more accurate after text normalization)")
+        else:
+            logger.debug("TTD: Using alignment (normalized_alignment not available)")
         
         audio_bytes = base64.b64decode(audio_base64)
         
-        return audio_bytes, voice_segments, alignment
+        return audio_bytes, voice_segments, final_alignment
 
     def _get_speaker_rate(
         self,
