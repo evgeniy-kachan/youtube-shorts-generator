@@ -17,7 +17,7 @@ import soundfile as sf
 from pydub import AudioSegment
 from sentence_splitter import SentenceSplitter
 
-from backend.config import TEMP_DIR, TTD_TIMESTAMPS_SOURCE, USE_WHISPER_FOR_TTD_TIMESTAMPS
+from backend.config import TEMP_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -2039,116 +2039,89 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         is_valid = coverage >= 0.7
         return is_valid, missing_timing
 
-    def _get_timestamps_via_scribe(
-        self,
-        audio_path: str,
-        dialogue_turns: list[dict],
-        inputs: list[dict],
-    ) -> dict[int, list[dict]]:
+    def _check_timing_quality(self, words_by_input: dict[int, list[dict]], dialogue_turns: list[dict], inputs: list[dict]) -> bool:
         """
-        Get word-level timestamps using ElevenLabs Scribe API (Speech-to-Text).
+        Check if TTD alignment timestamps are of acceptable quality.
         
-        Scribe provides accurate word-level timestamps by analyzing the actual audio,
-        unlike TTD alignment which often has "bunched" timestamps.
+        Returns True if timestamps are good enough, False if Whisper fallback is needed.
         
-        Reference: https://elevenlabs.io/docs/developers/guides/cookbooks/speech-to-text/quickstart
-        
-        Args:
-            audio_path: Path to the generated TTD audio file
-            dialogue_turns: Original dialogue turns with text_ru
-            inputs: TTD API inputs (with text after emotion tags)
-            
-        Returns:
-            Dict mapping turn index to list of word dicts:
-            {0: [{"word": "Привет", "start": 0.1, "end": 0.5}, ...], ...}
+        Criteria for poor quality:
+        - Many bunched words (< 100ms per word after fixes)
+        - Many turns with very fast words (< 150ms per word)
+        - Large gaps or overlaps between words
         """
-        logger.info("TTD SCRIBE: Getting timestamps via ElevenLabs Scribe for %s", audio_path)
+        if not words_by_input:
+            return False
         
-        try:
-            # Read audio file
-            with open(audio_path, "rb") as f:
-                audio_data = f.read()
+        total_words = 0
+        fast_words = 0
+        bunched_groups = 0
+        turns_with_issues = 0
+        
+        for turn_idx, words in words_by_input.items():
+            if not words or turn_idx >= len(dialogue_turns):
+                continue
             
-            # Call Scribe API
-            url = f"{self.base_url}/speech-to-text"
-            headers = {
-                "xi-api-key": self.api_key,
-            }
+            # Calculate turn duration from word timestamps
+            if not words:
+                continue
             
-            # Prepare multipart form data
-            files = {
-                "file": ("audio.wav", audio_data, "audio/wav"),
-            }
-            data = {
-                "model_id": "scribe_v2",
-                "language_code": "rus",  # Russian
-                "diarize": "false",  # We already know turn structure
-                "tag_audio_events": "false",
-            }
+            turn_start = words[0]["start"]
+            turn_end = words[-1]["end"]
+            turn_duration = turn_end - turn_start
             
-            logger.info("TTD SCRIBE: Calling Scribe API...")
+            if turn_duration <= 0:
+                continue
             
-            client_kwargs = {"timeout": 120.0}  # 2 min timeout for transcription
-            transport = None
-            if self.proxy_url:
-                try:
-                    transport = httpx.HTTPTransport(proxy=self.proxy_url)
-                except TypeError:
-                    transport = None
-            if transport:
-                client_kwargs["transport"] = transport
+            total_words += len(words)
+            turn_has_issues = False
             
-            with httpx.Client(**client_kwargs) as client:
-                response = client.post(url, headers=headers, files=files, data=data)
+            # Check for bunched words (very close start times)
+            for i in range(len(words) - 1):
+                word_duration = words[i]["end"] - words[i]["start"]
+                next_start = words[i + 1]["start"]
+                gap = next_start - words[i]["end"]
+                
+                # Word is too fast
+                if word_duration < 0.15:  # 150ms
+                    fast_words += 1
+                    turn_has_issues = True
+                
+                # Words are bunched (gap < 50ms and word is fast)
+                if gap < 0.05 and word_duration < 0.15:
+                    if i == 0 or (i > 0 and words[i]["start"] - words[i-1]["end"] >= 0.05):
+                        bunched_groups += 1
+                        turn_has_issues = True
             
-            response.raise_for_status()
-            result = response.json()
-            
-            # Extract words from Scribe response
-            # Response format: {"words": [{"text": "word", "start": 0.1, "end": 0.5, "type": "word"}, ...]}
-            scribe_words = []
-            for word_info in result.get("words", []):
-                word_type = word_info.get("type", "")
-                if word_type == "word":
-                    word = word_info.get("text", "").strip()
-                    start = word_info.get("start", 0)
-                    end = word_info.get("end", 0)
-                    if word and end > start:
-                        scribe_words.append({
-                            "word": word,
-                            "start": start,
-                            "end": end,
-                        })
-            
-            logger.info("TTD SCRIBE: Extracted %d words with timestamps", len(scribe_words))
-            
-            if not scribe_words:
-                logger.warning("TTD SCRIBE: No words extracted, falling back to TTD alignment")
-                return {}
-            
-            # Match Scribe words to original turns (reuse Whisper matching logic)
-            words_by_input = self._match_whisper_words_to_turns(
-                scribe_words, dialogue_turns, inputs
+            if turn_has_issues:
+                turns_with_issues += 1
+        
+        if total_words == 0:
+            return False
+        
+        # Calculate quality metrics
+        fast_word_ratio = fast_words / total_words if total_words > 0 else 0
+        bunched_ratio = bunched_groups / len(words_by_input) if words_by_input else 0
+        turns_with_issues_ratio = turns_with_issues / len(words_by_input) if words_by_input else 0
+        
+        # Quality is poor if:
+        # - More than 30% of words are too fast
+        # - More than 50% of turns have bunched groups
+        # - More than 60% of turns have any issues
+        is_poor_quality = fast_word_ratio > 0.30 or bunched_ratio > 0.50 or turns_with_issues_ratio > 0.60
+        
+        if is_poor_quality:
+            logger.warning(
+                "TTD QUALITY CHECK: Poor timestamps detected (%.1f%% fast words, %.1f%% bunched turns, %.1f%% turns with issues) - using Whisper fallback",
+                fast_word_ratio * 100, bunched_ratio * 100, turns_with_issues_ratio * 100
             )
-            
-            # Log success
-            matched_count = sum(len(w) for w in words_by_input.values())
-            logger.info(
-                "TTD SCRIBE: Successfully matched %d words to %d turns",
-                matched_count, len(words_by_input)
-            )
-            
-            return words_by_input
-            
-        except httpx.HTTPStatusError as e:
-            logger.error("TTD SCRIBE: API error %d: %s", e.response.status_code, e.response.text[:200])
-            return {}
-        except httpx.HTTPError as e:
-            logger.error("TTD SCRIBE: HTTP error: %s", e)
-            return {}
-        except Exception as e:
-            logger.error("TTD SCRIBE: Unexpected error: %s", e)
-            return {}
+            return False
+        
+        logger.debug(
+            "TTD QUALITY CHECK: Timestamps acceptable (%.1f%% fast words, %.1f%% bunched turns, %.1f%% turns with issues)",
+            fast_word_ratio * 100, bunched_ratio * 100, turns_with_issues_ratio * 100
+        )
+        return True
 
     def _get_timestamps_via_whisper(
         self,
@@ -2647,43 +2620,57 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         )
             
             # Parse character alignment into word-level timestamps
-            # Options:
-            # - "scribe": ElevenLabs Scribe API (accurate word-level, costs API credits)
-            # - "whisper": Local WhisperX (accurate, free, requires GPU)
-            # - "ttd": ElevenLabs TTD alignment (can have "bunched" timestamps)
+            # Strategy:
+            # 1. First try ElevenLabs TTD alignment (fast, but can have "bunched" timestamps)
+            # 2. Apply fixes for bunched words
+            # 3. Check quality - if poor, fallback to Whisper for accurate timestamps
             
-            words_by_input = {}
-            timestamps_source = TTD_TIMESTAMPS_SOURCE.lower()
+            logger.info("TTD: Using ElevenLabs TTD alignment for word timestamps")
+            words_by_input = self._parse_alignment_to_words(alignment, voice_segments)
             
-            # Legacy flag support
-            if USE_WHISPER_FOR_TTD_TIMESTAMPS and timestamps_source == "ttd":
-                timestamps_source = "whisper"
-            
-            if timestamps_source == "scribe":
-                logger.info("TTD: Using ElevenLabs Scribe for word timestamps (TTD_TIMESTAMPS_SOURCE=scribe)")
-                words_by_input = self._get_timestamps_via_scribe(
-                    str(output_path), dialogue_turns, inputs
-                )
+            # Apply fixes for bunched words and check quality
+            if words_by_input:
+                # Calculate turn timings for quality check (before applying offsets)
+                temp_turn_timings = {}
+                for turn_idx in words_by_input.keys():
+                    if turn_idx < len(inputs):
+                        timing = segment_timing.get(turn_idx, {})
+                        # Use timing without offsets for quality check
+                        temp_turn_timings[turn_idx] = {
+                            "start": timing.get("start", 0) + leading_sec,
+                            "end": timing.get("end", 0) + leading_sec,
+                        }
                 
-                if not words_by_input:
-                    logger.warning("TTD: Scribe failed, trying Whisper fallback...")
-                    timestamps_source = "whisper"  # Try Whisper as fallback
-            
-            if timestamps_source == "whisper" and not words_by_input:
-                logger.info("TTD: Using WhisperX for word timestamps (TTD_TIMESTAMPS_SOURCE=whisper)")
-                words_by_input = self._get_timestamps_via_whisper(
-                    str(output_path), dialogue_turns, inputs
-                )
+                # Apply fixes for bunched words
+                temp_words_by_input = {}
+                for turn_idx, words in words_by_input.items():
+                    if turn_idx in temp_turn_timings:
+                        turn_timing = temp_turn_timings[turn_idx]
+                        fixed_words = self._fix_bunched_word_timestamps(
+                            words, turn_timing["start"], turn_timing["end"]
+                        )
+                        temp_words_by_input[turn_idx] = fixed_words
+                    else:
+                        temp_words_by_input[turn_idx] = words
                 
-                if not words_by_input:
-                    logger.warning("TTD: Whisper failed, falling back to TTD alignment")
-                    timestamps_source = "ttd"  # Fall back to TTD alignment
-            
-            if timestamps_source == "ttd" or not words_by_input:
-                # Original approach: use ElevenLabs TTD alignment
-                # This can have "bunched" timestamps where multiple words have same start time
-                logger.info("TTD: Using ElevenLabs TTD alignment for word timestamps")
-                words_by_input = self._parse_alignment_to_words(alignment, voice_segments)
+                # Check quality of fixed timestamps
+                if not self._check_timing_quality(temp_words_by_input, dialogue_turns, inputs):
+                    # Quality is poor - use Whisper fallback
+                    logger.warning("TTD: TTD alignment quality is poor, using Whisper fallback")
+                    whisper_words = self._get_timestamps_via_whisper(
+                        str(output_path), dialogue_turns, inputs
+                    )
+                    
+                    if whisper_words:
+                        logger.info("TTD: Whisper fallback successful, using Whisper timestamps")
+                        words_by_input = whisper_words
+                    else:
+                        logger.warning("TTD: Whisper fallback failed, using fixed TTD alignment")
+                        words_by_input = temp_words_by_input
+                else:
+                    # Quality is acceptable - use fixed TTD alignment
+                    logger.info("TTD: TTD alignment quality is acceptable after fixes")
+                    words_by_input = temp_words_by_input
             
             # Apply timing to dialogue turns (with inserted silence offsets)
             for idx, turn in enumerate(dialogue_turns):
@@ -2804,6 +2791,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 # Add word-level timestamps if available
                 if idx in words_by_input:
                     # Adjust word timestamps for leading silence + inserted silences
+                    # Note: words are already fixed for bunched timestamps during quality check
                     tts_words = []
                     for w in words_by_input[idx]:
                         tts_words.append({
@@ -2811,11 +2799,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             "start": w["start"] + leading_sec + offset,
                             "end": w["end"] + leading_sec + offset,
                         })
-                    
-                    # FIX: Redistribute bunched-up words (same start time)
-                    # ElevenLabs sometimes returns multiple words with identical timestamps
-                    if len(tts_words) > 1:
-                        tts_words = self._fix_bunched_word_timestamps(tts_words, start_time, end_time)
                     
                     turn["tts_words"] = tts_words
                     logger.debug(
