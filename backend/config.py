@@ -93,6 +93,11 @@ ELEVENLABS_PROXY = os.getenv("ELEVENLABS_PROXY")
 ELEVENLABS_VOICE_IDS_MALE = _split_env_list(os.getenv("ELEVENLABS_VOICE_IDS_MALE"))
 ELEVENLABS_VOICE_IDS_FEMALE = _split_env_list(os.getenv("ELEVENLABS_VOICE_IDS_FEMALE"))
 
+# TTD Timestamps Configuration
+# When True, use Whisper to get word timestamps from generated TTD audio (more accurate)
+# When False, use ElevenLabs TTD alignment (can have "bunched" timestamps)
+USE_WHISPER_FOR_TTD_TIMESTAMPS = os.getenv("USE_WHISPER_FOR_TTD_TIMESTAMPS", "true").lower() in ("1", "true", "yes")
+
 # Video Processing Configuration
 VERTICAL_CONVERSION_METHOD = "letterbox"  # letterbox, center_crop
 TARGET_WIDTH = 1080  # Width for vertical video (9:16)

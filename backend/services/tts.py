@@ -17,7 +17,7 @@ import soundfile as sf
 from pydub import AudioSegment
 from sentence_splitter import SentenceSplitter
 
-from backend.config import TEMP_DIR
+from backend.config import TEMP_DIR, USE_WHISPER_FOR_TTD_TIMESTAMPS
 
 logger = logging.getLogger(__name__)
 
@@ -2039,6 +2039,219 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         is_valid = coverage >= 0.7
         return is_valid, missing_timing
 
+    def _get_timestamps_via_whisper(
+        self,
+        audio_path: str,
+        dialogue_turns: list[dict],
+        inputs: list[dict],
+    ) -> dict[int, list[dict]]:
+        """
+        Get word-level timestamps by running Whisper on the generated TTD audio.
+        
+        This is more accurate than ElevenLabs TTD alignment which often has
+        "bunched" timestamps (multiple words with same start time).
+        
+        Args:
+            audio_path: Path to the generated TTD audio file
+            dialogue_turns: Original dialogue turns with text_ru
+            inputs: TTD API inputs (with text after emotion tags)
+            
+        Returns:
+            Dict mapping turn index to list of word dicts:
+            {0: [{"word": "Привет", "start": 0.1, "end": 0.5}, ...], ...}
+        """
+        import json
+        import subprocess
+        import tempfile
+        
+        logger.info("TTD WHISPER: Getting timestamps via WhisperX for %s", audio_path)
+        
+        # Get paths from environment (same as transcription_runner.py)
+        python_path = os.getenv(
+            "EXTERNAL_ASR_PY",
+            "/opt/youtube-shorts-generator/venv-asr/bin/python"
+        )
+        script_path = os.getenv(
+            "EXTERNAL_ASR_SCRIPT",
+            "/opt/youtube-shorts-generator/backend/tools/transcribe.py"
+        )
+        
+        # Check if external transcription is available
+        if not os.path.exists(python_path) or not os.path.exists(script_path):
+            logger.warning(
+                "TTD WHISPER: External ASR not available (python=%s, script=%s), falling back to TTD alignment",
+                python_path, script_path
+            )
+            return {}
+        
+        # Create temp file for output
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as tmp_out:
+            output_json_path = tmp_out.name
+        
+        try:
+            # Run WhisperX on the generated audio (Russian language)
+            cmd = [
+                python_path,
+                script_path,
+                "--audio", audio_path,
+                "--model", "large-v3",
+                "--language", "ru",
+                "--device", "cuda",
+                "--compute_type", "float16",
+                "--output", output_json_path,
+                # No diarization needed - we know the turn structure
+            ]
+            
+            logger.info("TTD WHISPER: Running WhisperX...")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 min max
+                check=True,
+            )
+            
+            if result.stderr:
+                logger.debug("TTD WHISPER stderr: %s", result.stderr[:500])
+            
+            # Read Whisper output
+            with open(output_json_path, "r", encoding="utf-8") as f:
+                whisper_data = json.load(f)
+            
+            segments = whisper_data.get("segments", [])
+            logger.info("TTD WHISPER: Got %d segments from WhisperX", len(segments))
+            
+            # Extract all words with timestamps from Whisper
+            whisper_words = []
+            for seg in segments:
+                for word_info in seg.get("words", []):
+                    word = word_info.get("word", "").strip()
+                    start = word_info.get("start", 0)
+                    end = word_info.get("end", 0)
+                    if word and end > start:
+                        whisper_words.append({
+                            "word": word,
+                            "start": start,
+                            "end": end,
+                        })
+            
+            logger.info("TTD WHISPER: Extracted %d words with timestamps", len(whisper_words))
+            
+            if not whisper_words:
+                logger.warning("TTD WHISPER: No words extracted, falling back to TTD alignment")
+                return {}
+            
+            # Now match Whisper words to original turns
+            # Strategy: sequential matching by position
+            words_by_input = self._match_whisper_words_to_turns(
+                whisper_words, dialogue_turns, inputs
+            )
+            
+            return words_by_input
+            
+        except subprocess.TimeoutExpired:
+            logger.error("TTD WHISPER: WhisperX timed out")
+            return {}
+        except subprocess.CalledProcessError as e:
+            logger.error("TTD WHISPER: WhisperX failed: %s", e.stderr[:500] if e.stderr else str(e))
+            return {}
+        except Exception as e:
+            logger.error("TTD WHISPER: Unexpected error: %s", e)
+            return {}
+        finally:
+            # Cleanup temp file
+            try:
+                os.unlink(output_json_path)
+            except Exception:
+                pass
+
+    def _match_whisper_words_to_turns(
+        self,
+        whisper_words: list[dict],
+        dialogue_turns: list[dict],
+        inputs: list[dict],
+    ) -> dict[int, list[dict]]:
+        """
+        Match Whisper-recognized words to original dialogue turns.
+        
+        Strategy:
+        1. Get expected words for each turn (from inputs, cleaned of emotion tags)
+        2. Go through Whisper words sequentially
+        3. Match by position, using original text but Whisper timestamps
+        
+        Args:
+            whisper_words: Words from Whisper with timestamps
+            dialogue_turns: Original turns
+            inputs: TTD inputs with text
+            
+        Returns:
+            Dict mapping turn index to word list with timestamps
+        """
+        words_by_input: dict[int, list[dict]] = {}
+        
+        # Build expected words per turn
+        expected_words_per_turn = []
+        for idx, inp in enumerate(inputs):
+            text = inp.get("text", "")
+            # Remove emotion tags like [cheerfully], [sadly], etc.
+            clean_text = re.sub(r'\[[\w]+\]\s*', '', text)
+            words = clean_text.split()
+            expected_words_per_turn.append(words)
+        
+        total_expected = sum(len(w) for w in expected_words_per_turn)
+        logger.info(
+            "TTD WHISPER MATCH: %d expected words across %d turns, %d Whisper words",
+            total_expected, len(expected_words_per_turn), len(whisper_words)
+        )
+        
+        # Sequential matching
+        whisper_idx = 0
+        
+        for turn_idx, expected_words in enumerate(expected_words_per_turn):
+            turn_words = []
+            
+            for word_idx, expected_word in enumerate(expected_words):
+                if whisper_idx >= len(whisper_words):
+                    # Ran out of Whisper words - estimate remaining
+                    logger.warning(
+                        "TTD WHISPER MATCH: Ran out of Whisper words at turn %d, word %d",
+                        turn_idx, word_idx
+                    )
+                    break
+                
+                whisper_word = whisper_words[whisper_idx]
+                
+                # Use original word text but Whisper timestamps
+                turn_words.append({
+                    "word": expected_word,  # Original text (correct spelling)
+                    "start": whisper_word["start"],
+                    "end": whisper_word["end"],
+                    "_whisper_word": whisper_word["word"],  # For debugging
+                })
+                
+                whisper_idx += 1
+            
+            if turn_words:
+                words_by_input[turn_idx] = turn_words
+                logger.debug(
+                    "TTD WHISPER MATCH: Turn %d: %d words (%.2f-%.2fs)",
+                    turn_idx, len(turn_words),
+                    turn_words[0]["start"], turn_words[-1]["end"]
+                )
+        
+        # Log matching quality
+        matched_count = sum(len(w) for w in words_by_input.values())
+        logger.info(
+            "TTD WHISPER MATCH: Matched %d/%d expected words (%.0f%%), used %d/%d Whisper words",
+            matched_count, total_expected,
+            (matched_count / total_expected * 100) if total_expected > 0 else 0,
+            whisper_idx, len(whisper_words)
+        )
+        
+        return words_by_input
+
     def synthesize_dialogue(
         self,
         dialogue_turns: list[dict],
@@ -2323,7 +2536,24 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         )
             
             # Parse character alignment into word-level timestamps
-            words_by_input = self._parse_alignment_to_words(alignment, voice_segments)
+            # Option 1: Use Whisper for more accurate timestamps (recommended)
+            # Option 2: Use ElevenLabs TTD alignment (can have "bunched" timestamps)
+            
+            if USE_WHISPER_FOR_TTD_TIMESTAMPS:
+                logger.info("TTD: Using Whisper for word timestamps (USE_WHISPER_FOR_TTD_TIMESTAMPS=True)")
+                words_by_input = self._get_timestamps_via_whisper(
+                    str(output_path), dialogue_turns, inputs
+                )
+                
+                if not words_by_input:
+                    # Fallback to TTD alignment if Whisper failed
+                    logger.warning("TTD: Whisper failed, falling back to TTD alignment")
+                    words_by_input = self._parse_alignment_to_words(alignment, voice_segments)
+            else:
+                # Original approach: use ElevenLabs TTD alignment
+                # This can have "bunched" timestamps where multiple words have same start time
+                logger.info("TTD: Using ElevenLabs alignment for word timestamps (USE_WHISPER_FOR_TTD_TIMESTAMPS=False)")
+                words_by_input = self._parse_alignment_to_words(alignment, voice_segments)
             
             # Apply timing to dialogue turns (with inserted silence offsets)
             for idx, turn in enumerate(dialogue_turns):
