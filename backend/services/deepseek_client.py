@@ -80,6 +80,7 @@ class DeepSeekClient:
     def extract_json(text: str) -> Dict[str, Any]:
         """
         Extract JSON payload from a string that may contain extra characters/markdown.
+        Attempts to fix common JSON errors like missing quotes.
         """
         text = text.strip()
         if not text:
@@ -105,7 +106,42 @@ class DeepSeekClient:
             raise ValueError(f"Incomplete JSON in response: {text[:200]}...")
 
         snippet = text[start : end + 1]
-        return json.loads(snippet)
+        
+        # Try to fix common JSON errors before parsing
+        fixed_snippet = DeepSeekClient._fix_json_errors(snippet)
+        
+        try:
+            return json.loads(fixed_snippet)
+        except json.JSONDecodeError:
+            # If fixed version also fails, try original
+            raise ValueError(f"JSON parse error in response: {snippet[:200]}...")
+    
+    @staticmethod
+    def _fix_json_errors(text: str) -> str:
+        """
+        Fix common JSON errors that DeepSeek sometimes produces:
+        - Missing quotes around hashtags in arrays: [#tag] -> ["#tag"]
+        - Missing quotes around string values in arrays
+        """
+        import re
+        
+        # Fix missing quotes around hashtags in arrays
+        # Pattern: finds #hashtag not in quotes, after comma or opening bracket, before ] or ,
+        # Example: ["#shorts", #экономика] -> ["#shorts", "#экономика"]
+        # Example: [#tag] -> ["#tag"]
+        def fix_hashtag_quotes(match):
+            prefix = match.group(1)  # ", " or "["
+            hashtag = match.group(2)  # "#tag"
+            suffix = match.group(3)  # "]" or ","
+            return f'{prefix}"{hashtag}"{suffix}'
+        
+        # Find patterns like: , #tag] or , #tag, or [ #tag] or , #tag ]
+        # This handles the case where DeepSeek forgets quotes around hashtags
+        # Pattern matches: comma/bracket, optional whitespace, # followed by word chars (including unicode), 
+        # optional whitespace, then ] or ,
+        text = re.sub(r'([,\[])\s*(#[\w\u0400-\u04FF]+)\s*([,\]])', fix_hashtag_quotes, text)
+        
+        return text
 
     def close(self):
         self._client.close()
@@ -259,7 +295,12 @@ class DeepSeekClient:
         hashtags_match = re.search(r'"hashtags"\s*:\s*\[(.*?)\]', text, re.DOTALL)
         if hashtags_match:
             hashtags_str = hashtags_match.group(1)
+            # First try to find quoted hashtags
             hashtags = re.findall(r'"(#[^"]+)"', hashtags_str)
+            # If not found, try to find unquoted hashtags (common DeepSeek error)
+            # Pattern matches # followed by word chars (including unicode), before ] or ,
+            if not hashtags:
+                hashtags = re.findall(r'(#[\w\u0400-\u04FF]+)', hashtags_str)
             if hashtags:
                 result["hashtags"] = hashtags
         
