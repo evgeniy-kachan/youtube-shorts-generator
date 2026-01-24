@@ -1788,6 +1788,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         payload = {
             "inputs": inputs,
             "output_format": "mp3_44100_128",
+            "apply_text_normalization": "off",  # Disable to preserve abbreviations like "ИИ" (AI)
         }
         
         client_kwargs = {"timeout": self.request_timeout}
