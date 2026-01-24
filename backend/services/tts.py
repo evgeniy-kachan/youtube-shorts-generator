@@ -1810,21 +1810,22 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         audio_base64 = response_data.get("audio_base64", "")
         voice_segments = response_data.get("voice_segments", [])
         
-        # Prefer normalized_alignment if available (more accurate after text normalization)
-        # Fallback to alignment if normalized_alignment is not present
+        # Since apply_text_normalization is "off", we should use alignment (not normalized_alignment)
+        # normalized_alignment contains timestamps for normalized text, which won't match our original text
         # Reference: https://elevenlabs.io/docs/api-reference/text-to-dialogue/convert-with-timestamps
         normalized_alignment = response_data.get("normalized_alignment")
         alignment = response_data.get("alignment", {})
         
-        # Use normalized_alignment if available, otherwise use alignment
-        # normalized_alignment has timestamps for normalized text (e.g., numbers spelled out)
-        # which may be more accurate for synchronization
-        final_alignment = normalized_alignment if normalized_alignment else alignment
+        # Always use alignment when normalization is disabled
+        # normalized_alignment would have timestamps for normalized text that doesn't match our input
+        final_alignment = alignment
         
-        if normalized_alignment:
-            logger.info("TTD: Using normalized_alignment (more accurate after text normalization)")
+        if normalized_alignment and not alignment:
+            # Fallback: if alignment is missing but normalized_alignment exists, use it
+            logger.warning("TTD: alignment missing, falling back to normalized_alignment (may cause sync issues)")
+            final_alignment = normalized_alignment
         else:
-            logger.info("TTD: Using alignment (normalized_alignment not available)")
+            logger.info("TTD: Using alignment (text normalization disabled)")
         
         audio_bytes = base64.b64decode(audio_base64)
         
