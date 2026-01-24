@@ -1258,6 +1258,10 @@ class VideoProcessor:
                 relative_end = relative_start + duration_override
 
             relative_end = min(duration, max(relative_end, relative_start + 0.1))
+            
+            # Define total_words and total_window here so they're available in fallback block
+            total_words = len(words)
+            total_window = max(relative_end - relative_start, 0.1)
 
             # Check if we have precise word timestamps from ElevenLabs
             tts_words = turn.get("tts_words")
@@ -1405,8 +1409,7 @@ class VideoProcessor:
                 if chunk:
                     word_chunks.append(chunk)
 
-                total_words = len(words)
-                total_window = max(relative_end - relative_start, 0.1)
+                # total_words and total_window are already defined above
                 elapsed = relative_start
 
                 chunks_added = 0
@@ -1463,7 +1466,6 @@ class VideoProcessor:
                     )
                     last_subtitle_end = end_time
                     chunks_added += 1
-                chunks_added += 1
 
             if subtitles and subtitles[-1]["end"] < relative_end:
                 # Extend last subtitle to cover remaining time
