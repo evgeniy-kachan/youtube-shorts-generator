@@ -1269,6 +1269,41 @@ class VideoProcessor:
                     len(tts_words), speaker_id
                 )
                 
+                # Validate and fix word timestamps to ensure they're within turn boundaries
+                # and in correct order (fixes issues with interpolated/short turns)
+                validated_tts_words = []
+                for tw in tts_words:
+                    word_start = tw.get("start", relative_start)
+                    word_end = tw.get("end", relative_end)
+                    
+                    # Clamp timestamps to turn boundaries
+                    word_start = max(relative_start, min(word_start, relative_end))
+                    word_end = max(word_start, min(word_end, relative_end))
+                    
+                    # Ensure minimum duration (50ms per word)
+                    if word_end - word_start < 0.05:
+                        word_end = min(relative_end, word_start + 0.05)
+                    
+                    validated_tts_words.append({
+                        "word": tw.get("word", ""),
+                        "start": word_start,
+                        "end": word_end,
+                    })
+                
+                # Sort words by start time to ensure correct order
+                validated_tts_words.sort(key=lambda w: w["start"])
+                
+                # Fix any overlapping words by redistributing evenly
+                if len(validated_tts_words) > 1:
+                    for i in range(len(validated_tts_words) - 1):
+                        current_end = validated_tts_words[i]["end"]
+                        next_start = validated_tts_words[i + 1]["start"]
+                        if current_end > next_start:
+                            # Redistribute overlap evenly
+                            overlap = current_end - next_start
+                            validated_tts_words[i]["end"] = current_end - overlap / 2
+                            validated_tts_words[i + 1]["start"] = next_start + overlap / 2
+                
                 # Build word entries with precise timestamps
                 # Chunk words while preserving their timestamps
                 word_idx = 0
@@ -1276,11 +1311,30 @@ class VideoProcessor:
                 
                 # Filter out emotion tags like [curiously], [excitedly], etc.
                 filtered_tts_words = [
-                    tw for tw in tts_words 
+                    tw for tw in validated_tts_words 
                     if not EMOTION_TAG_PATTERN.match(tw.get("word", ""))
                 ]
                 
-                while word_idx < len(filtered_tts_words):
+                # Check if word timestamps are valid (within turn boundaries and reasonable)
+                has_valid_timestamps = (
+                    filtered_tts_words and
+                    all(tw.get("start", 0) >= relative_start - 0.1 for tw in filtered_tts_words) and
+                    all(tw.get("end", 0) <= relative_end + 0.1 for tw in filtered_tts_words) and
+                    all(tw.get("end", 0) > tw.get("start", 0) for tw in filtered_tts_words)
+                )
+                
+                if not has_valid_timestamps:
+                    logger.warning(
+                        "Turn %d: Invalid word timestamps (turn: %.2f-%.2fs, words: %d), using fallback distribution",
+                        dialogue.index(turn) if turn in dialogue else -1,
+                        relative_start, relative_end,
+                        len(filtered_tts_words) if filtered_tts_words else 0
+                    )
+                    # Clear tts_words to trigger fallback logic
+                    tts_words = None
+                
+                if has_valid_timestamps:
+                    while word_idx < len(filtered_tts_words):
                     # Take words until we hit max_chars_per_line
                     chunk_tts_words = []
                     current_chars = 0
