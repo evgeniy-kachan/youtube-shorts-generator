@@ -94,9 +94,14 @@ ELEVENLABS_VOICE_IDS_MALE = _split_env_list(os.getenv("ELEVENLABS_VOICE_IDS_MALE
 ELEVENLABS_VOICE_IDS_FEMALE = _split_env_list(os.getenv("ELEVENLABS_VOICE_IDS_FEMALE"))
 
 # TTD Timestamps Configuration
-# When True, use Whisper to get word timestamps from generated TTD audio (more accurate)
-# When False, use ElevenLabs TTD alignment (can have "bunched" timestamps)
-USE_WHISPER_FOR_TTD_TIMESTAMPS = os.getenv("USE_WHISPER_FOR_TTD_TIMESTAMPS", "true").lower() in ("1", "true", "yes")
+# Options for getting word timestamps from generated TTD audio:
+# - "scribe": Use ElevenLabs Scribe API (recommended, accurate word-level timestamps)
+# - "whisper": Use local WhisperX (free, but requires GPU)
+# - "ttd": Use ElevenLabs TTD alignment (can have "bunched" timestamps)
+TTD_TIMESTAMPS_SOURCE = os.getenv("TTD_TIMESTAMPS_SOURCE", "scribe")  # scribe, whisper, ttd
+
+# Legacy flag (deprecated, use TTD_TIMESTAMPS_SOURCE instead)
+USE_WHISPER_FOR_TTD_TIMESTAMPS = os.getenv("USE_WHISPER_FOR_TTD_TIMESTAMPS", "false").lower() in ("1", "true", "yes")
 
 # Video Processing Configuration
 VERTICAL_CONVERSION_METHOD = "letterbox"  # letterbox, center_crop

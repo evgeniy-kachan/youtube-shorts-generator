@@ -17,7 +17,7 @@ import soundfile as sf
 from pydub import AudioSegment
 from sentence_splitter import SentenceSplitter
 
-from backend.config import TEMP_DIR, USE_WHISPER_FOR_TTD_TIMESTAMPS
+from backend.config import TEMP_DIR, TTD_TIMESTAMPS_SOURCE, USE_WHISPER_FOR_TTD_TIMESTAMPS
 
 logger = logging.getLogger(__name__)
 
@@ -2039,6 +2039,117 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         is_valid = coverage >= 0.7
         return is_valid, missing_timing
 
+    def _get_timestamps_via_scribe(
+        self,
+        audio_path: str,
+        dialogue_turns: list[dict],
+        inputs: list[dict],
+    ) -> dict[int, list[dict]]:
+        """
+        Get word-level timestamps using ElevenLabs Scribe API (Speech-to-Text).
+        
+        Scribe provides accurate word-level timestamps by analyzing the actual audio,
+        unlike TTD alignment which often has "bunched" timestamps.
+        
+        Reference: https://elevenlabs.io/docs/developers/guides/cookbooks/speech-to-text/quickstart
+        
+        Args:
+            audio_path: Path to the generated TTD audio file
+            dialogue_turns: Original dialogue turns with text_ru
+            inputs: TTD API inputs (with text after emotion tags)
+            
+        Returns:
+            Dict mapping turn index to list of word dicts:
+            {0: [{"word": "Привет", "start": 0.1, "end": 0.5}, ...], ...}
+        """
+        logger.info("TTD SCRIBE: Getting timestamps via ElevenLabs Scribe for %s", audio_path)
+        
+        try:
+            # Read audio file
+            with open(audio_path, "rb") as f:
+                audio_data = f.read()
+            
+            # Call Scribe API
+            url = f"{self.base_url}/speech-to-text"
+            headers = {
+                "xi-api-key": self.api_key,
+            }
+            
+            # Prepare multipart form data
+            files = {
+                "file": ("audio.wav", audio_data, "audio/wav"),
+            }
+            data = {
+                "model_id": "scribe_v2",
+                "language_code": "rus",  # Russian
+                "diarize": "false",  # We already know turn structure
+                "tag_audio_events": "false",
+            }
+            
+            logger.info("TTD SCRIBE: Calling Scribe API...")
+            
+            client_kwargs = {"timeout": 120.0}  # 2 min timeout for transcription
+            transport = None
+            if self.proxy_url:
+                try:
+                    transport = httpx.HTTPTransport(proxy=self.proxy_url)
+                except TypeError:
+                    transport = None
+            if transport:
+                client_kwargs["transport"] = transport
+            
+            with httpx.Client(**client_kwargs) as client:
+                response = client.post(url, headers=headers, files=files, data=data)
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            # Extract words from Scribe response
+            # Response format: {"words": [{"text": "word", "start": 0.1, "end": 0.5, "type": "word"}, ...]}
+            scribe_words = []
+            for word_info in result.get("words", []):
+                word_type = word_info.get("type", "")
+                if word_type == "word":
+                    word = word_info.get("text", "").strip()
+                    start = word_info.get("start", 0)
+                    end = word_info.get("end", 0)
+                    if word and end > start:
+                        scribe_words.append({
+                            "word": word,
+                            "start": start,
+                            "end": end,
+                        })
+            
+            logger.info("TTD SCRIBE: Extracted %d words with timestamps", len(scribe_words))
+            
+            if not scribe_words:
+                logger.warning("TTD SCRIBE: No words extracted, falling back to TTD alignment")
+                return {}
+            
+            # Match Scribe words to original turns (reuse Whisper matching logic)
+            words_by_input = self._match_whisper_words_to_turns(
+                scribe_words, dialogue_turns, inputs
+            )
+            
+            # Log success
+            matched_count = sum(len(w) for w in words_by_input.values())
+            logger.info(
+                "TTD SCRIBE: Successfully matched %d words to %d turns",
+                matched_count, len(words_by_input)
+            )
+            
+            return words_by_input
+            
+        except httpx.HTTPStatusError as e:
+            logger.error("TTD SCRIBE: API error %d: %s", e.response.status_code, e.response.text[:200])
+            return {}
+        except httpx.HTTPError as e:
+            logger.error("TTD SCRIBE: HTTP error: %s", e)
+            return {}
+        except Exception as e:
+            logger.error("TTD SCRIBE: Unexpected error: %s", e)
+            return {}
+
     def _get_timestamps_via_whisper(
         self,
         audio_path: str,
@@ -2536,23 +2647,42 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         )
             
             # Parse character alignment into word-level timestamps
-            # Option 1: Use Whisper for more accurate timestamps (recommended)
-            # Option 2: Use ElevenLabs TTD alignment (can have "bunched" timestamps)
+            # Options:
+            # - "scribe": ElevenLabs Scribe API (accurate word-level, costs API credits)
+            # - "whisper": Local WhisperX (accurate, free, requires GPU)
+            # - "ttd": ElevenLabs TTD alignment (can have "bunched" timestamps)
             
-            if USE_WHISPER_FOR_TTD_TIMESTAMPS:
-                logger.info("TTD: Using Whisper for word timestamps (USE_WHISPER_FOR_TTD_TIMESTAMPS=True)")
+            words_by_input = {}
+            timestamps_source = TTD_TIMESTAMPS_SOURCE.lower()
+            
+            # Legacy flag support
+            if USE_WHISPER_FOR_TTD_TIMESTAMPS and timestamps_source == "ttd":
+                timestamps_source = "whisper"
+            
+            if timestamps_source == "scribe":
+                logger.info("TTD: Using ElevenLabs Scribe for word timestamps (TTD_TIMESTAMPS_SOURCE=scribe)")
+                words_by_input = self._get_timestamps_via_scribe(
+                    str(output_path), dialogue_turns, inputs
+                )
+                
+                if not words_by_input:
+                    logger.warning("TTD: Scribe failed, trying Whisper fallback...")
+                    timestamps_source = "whisper"  # Try Whisper as fallback
+            
+            if timestamps_source == "whisper" and not words_by_input:
+                logger.info("TTD: Using WhisperX for word timestamps (TTD_TIMESTAMPS_SOURCE=whisper)")
                 words_by_input = self._get_timestamps_via_whisper(
                     str(output_path), dialogue_turns, inputs
                 )
                 
                 if not words_by_input:
-                    # Fallback to TTD alignment if Whisper failed
                     logger.warning("TTD: Whisper failed, falling back to TTD alignment")
-                    words_by_input = self._parse_alignment_to_words(alignment, voice_segments)
-            else:
+                    timestamps_source = "ttd"  # Fall back to TTD alignment
+            
+            if timestamps_source == "ttd" or not words_by_input:
                 # Original approach: use ElevenLabs TTD alignment
                 # This can have "bunched" timestamps where multiple words have same start time
-                logger.info("TTD: Using ElevenLabs alignment for word timestamps (USE_WHISPER_FOR_TTD_TIMESTAMPS=False)")
+                logger.info("TTD: Using ElevenLabs TTD alignment for word timestamps")
                 words_by_input = self._parse_alignment_to_words(alignment, voice_segments)
             
             # Apply timing to dialogue turns (with inserted silence offsets)
