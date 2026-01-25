@@ -184,18 +184,23 @@ class DeepSeekClient:
 Создай описание для этого видео на РУССКОМ языке.
 
 ТРЕБОВАНИЯ:
-1. ЗАГОЛОВОК (title):
+1. КАТЕГОРИЯ (category):
+   - Определи одну категорию из списка: продуктивность, образование, карьера, бизнес, технологии, финансы, мотивация, саморазвитие, другое
+   - Выбери наиболее подходящую категорию по основной теме видео
+   - Если тема не подходит ни под одну категорию, используй "другое"
+
+2. ЗАГОЛОВОК (title):
    - Цепляющий хук, вызывающий любопытство
    - 5-10 слов максимум
    - Можно использовать числа, вопросы, провокации
    - НЕ спойлерить главную мысль
 
-2. ОПИСАНИЕ (description):
+3. ОПИСАНИЕ (description):
    - 2-3 коротких предложения
    - Интрига + призыв досмотреть
    - Эмодзи уместны (1-2 штуки)
 
-3. ХЭШТЕГИ (hashtags):
+4. ХЭШТЕГИ (hashtags):
    - 5-7 релевантных хэштегов
    - Первый всегда #shorts
    - Микс популярных и нишевых
@@ -203,6 +208,7 @@ class DeepSeekClient:
 
 ФОРМАТ ОТВЕТА (строго JSON):
 {{
+  "category": "продуктивность",
   "title": "Заголовок видео",
   "description": "Описание видео с эмодзи",
   "hashtags": ["#shorts", "#тема", "#ниша", "#viral", "#рекомендации"]
@@ -240,6 +246,7 @@ class DeepSeekClient:
             )
             # Return fallback
             return {
+                "category": "другое",
                 "title": "Интересный момент из видео",
                 "description": "Смотрите до конца! 🔥",
                 "hashtags": ["#shorts", "#viral", "#рекомендации", "#интересное", "#факты"]
@@ -255,6 +262,7 @@ class DeepSeekClient:
                 logger.info("Recovered partial description from truncated JSON: title='%s'", result.get("title", "")[:30])
             else:
                 return {
+                    "category": "другое",
                     "title": "Интересный момент из видео",
                     "description": "Смотрите до конца! 🔥",
                     "hashtags": ["#shorts", "#viral", "#рекомендации", "#интересное", "#факты"]
@@ -270,7 +278,16 @@ class DeepSeekClient:
             hashtags = ["#shorts"] + [h for h in hashtags if h != "#shorts"]
             result["hashtags"] = hashtags[:7]  # Max 7 hashtags
         
-        logger.info("Generated description: title='%s', %d hashtags", result.get("title", "")[:30], len(result.get("hashtags", [])))
+        # Ensure category is set (default to "другое" if missing)
+        if "category" not in result or not result.get("category"):
+            result["category"] = "другое"
+        
+        logger.info(
+            "Generated description: category='%s', title='%s', %d hashtags",
+            result.get("category", "другое"),
+            result.get("title", "")[:30],
+            len(result.get("hashtags", []))
+        )
         return result
 
     def _extract_partial_description(self, text: str) -> Optional[Dict[str, Any]]:
@@ -310,6 +327,8 @@ class DeepSeekClient:
         
         # If we got at least title, return with defaults for missing fields
         if result.get("title"):
+            if "category" not in result:
+                result["category"] = "другое"
             if "description" not in result:
                 result["description"] = "Смотрите до конца! 🔥"
             if "hashtags" not in result:

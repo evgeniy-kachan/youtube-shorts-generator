@@ -47,7 +47,8 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
   const handleCopyAll = (segment) => {
     const desc = segment.description;
     if (!desc) return;
-    const fullText = `${desc.title}\n\n${desc.description}\n\n${desc.hashtags?.join(' ') || ''}`;
+    const categoryText = desc.category ? `Категория: ${desc.category}\n\n` : '';
+    const fullText = `${categoryText}${desc.title}\n\n${desc.description}\n\n${desc.hashtags?.join(' ') || ''}`;
     handleCopy(fullText, `all-${segment.segment_id}`);
   };
 
@@ -139,6 +140,16 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
                 <div className="p-4">
                   {/* Combined description block */}
                   <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                    {/* Category */}
+                    {segment.description.category && (
+                      <div>
+                        <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">Категория</span>
+                        <p className="text-gray-800 font-medium mt-1">
+                          {segment.description.category}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Title */}
                     <div>
                       <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">Заголовок</span>

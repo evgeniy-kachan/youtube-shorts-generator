@@ -1053,6 +1053,7 @@ def _process_segments_task(
                     segment['id'], http_exc.response.status_code, http_exc.response.text[:200]
                 )
                 description_data = {
+                    "category": "другое",
                     "title": "Интересный момент",
                     "description": "Смотрите до конца! 🔥",
                     "hashtags": ["#shorts", "#viral", "#рекомендации"]
@@ -1060,6 +1061,7 @@ def _process_segments_task(
             except Exception as desc_exc:
                 logger.warning("Failed to generate description for %s: %s", segment['id'], desc_exc)
                 description_data = {
+                    "category": "другое",
                     "title": "Интересный момент",
                     "description": "Смотрите до конца! 🔥",
                     "hashtags": ["#shorts", "#viral", "#рекомендации"]
