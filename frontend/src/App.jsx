@@ -24,6 +24,7 @@ function App() {
   const [statusMessage, setStatusMessage] = useState('');
   const [taskStatus, setTaskStatus] = useState('pending');
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ loadedMB: 0, totalMB: 0, percent: 0 });
 
   // Poll task status
   const buildProcessedSegments = useMemo(
@@ -145,8 +146,16 @@ function App() {
       setProgress(0.02);
       setStatusMessage('Загружаем файл...');
       setTaskStatus('pending');
+      setUploadProgress({ loadedMB: 0, totalMB: 0, percent: 0 });
 
-      const uploadResponse = await uploadVideoFile(file);
+      const uploadResponse = await uploadVideoFile(file, (progressData) => {
+        setUploadProgress(progressData);
+        const percent = progressData.percent * 0.95; // Upload takes up to 95% of initial progress
+        setProgress(0.02 + percent);
+        setStatusMessage(
+          `Загружаем файл: ${progressData.loadedMB.toFixed(1)} / ${progressData.totalMB.toFixed(1)} МБ (${(progressData.percent * 100).toFixed(1)}%)`
+        );
+      });
       const uploadedFilename = uploadResponse?.result?.filename;
 
       if (!uploadedFilename) {

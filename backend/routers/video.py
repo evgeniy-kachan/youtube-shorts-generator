@@ -1112,14 +1112,22 @@ async def upload_video(file: UploadFile = File(...)):
     file_path = os.path.join(temp_dir, file.filename)
     
     try:
+        # Stream file in chunks for better memory efficiency
+        # Progress is tracked on client side via axios onUploadProgress
+        total_size = 0
         with open(file_path, "wb") as buffer:
-            buffer.write(await file.read())
+            while chunk := await file.read(8192):  # 8KB chunks
+                buffer.write(chunk)
+                total_size += len(chunk)
+        
+        file_size_mb = total_size / (1024 * 1024)
+        logger.info(f"File '{file.filename}' uploaded successfully. Size: {file_size_mb:.2f} MB")
         
         return TaskStatus(
             task_id=task_id,
             status="completed",
             progress=1.0,
-            message=f"File '{file.filename}' uploaded successfully.",
+            message=f"File '{file.filename}' uploaded successfully ({file_size_mb:.2f} MB).",
             result={"filename": file.filename}
         )
     except Exception as e:

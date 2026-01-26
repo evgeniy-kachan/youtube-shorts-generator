@@ -95,13 +95,25 @@ export const dubSegment = async (
   return response.data;
 };
 
-export const uploadVideoFile = async (file) => {
+export const uploadVideoFile = async (file, onUploadProgress) => {
   const formData = new FormData();
   formData.append('file', file);
 
   const response = await api.post('/api/video/upload-video', formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress: (progressEvent) => {
+      if (onUploadProgress && progressEvent.total) {
+        const percentCompleted = progressEvent.loaded / progressEvent.total;
+        const loadedMB = (progressEvent.loaded / (1024 * 1024)).toFixed(2);
+        const totalMB = (progressEvent.total / (1024 * 1024)).toFixed(2);
+        onUploadProgress({
+          percent: percentCompleted,
+          loadedMB: parseFloat(loadedMB),
+          totalMB: parseFloat(totalMB),
+        });
+      }
     },
   });
 
