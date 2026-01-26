@@ -24,6 +24,7 @@ function App() {
   const [statusMessage, setStatusMessage] = useState('');
   const [taskStatus, setTaskStatus] = useState('pending');
   const [isUploading, setIsUploading] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [uploadProgress, setUploadProgress] = useState({ loadedMB: 0, totalMB: 0, percent: 0 });
 
   // Poll task status
