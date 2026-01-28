@@ -18,11 +18,13 @@ const VideoInput = ({ onSubmit, loading }) => {
     const isSupported =
       file.type === 'video/mp4' ||
       file.type === 'video/quicktime' ||
+      file.type === 'video/webm' ||
       normalizedName.endsWith('.mp4') ||
-      normalizedName.endsWith('.mov');
+      normalizedName.endsWith('.mov') ||
+      normalizedName.endsWith('.webm');
 
     if (!isSupported) {
-      setError('Поддерживаются только файлы MP4 или MOV');
+      setError('Поддерживаются только файлы MP4, MOV или WEBM');
       setSelectedFile(null);
       return;
     }
@@ -35,7 +37,7 @@ const VideoInput = ({ onSubmit, loading }) => {
     setError('');
 
     if (!selectedFile) {
-      setError('Пожалуйста, выберите видеофайл MP4 или MOV');
+      setError('Пожалуйста, выберите видеофайл MP4, MOV или WEBM');
       return;
     }
 
@@ -49,7 +51,7 @@ const VideoInput = ({ onSubmit, loading }) => {
           Загрузите видео — AI сделает клипы
         </h2>
         <p className="text-gray-600">
-          Выберите MP4-файл на своём компьютере, мы загрузим его на сервер и
+          Выберите видеофайл (MP4, MOV или WEBM) на своём компьютере, мы загрузим его на сервер и
           найдём самые интересные моменты автоматически.
         </p>
       </div>
@@ -60,18 +62,18 @@ const VideoInput = ({ onSubmit, loading }) => {
             htmlFor="video-upload"
             className="block text-sm font-medium text-gray-700 mb-2"
           >
-            Видеофайл (MP4 / MOV)
+            Видеофайл (MP4 / MOV / WEBM)
           </label>
           <input
             id="video-upload"
             type="file"
-            accept="video/mp4,video/quicktime,.mov"
+            accept="video/mp4,video/quicktime,video/webm,.mov,.webm"
             onChange={handleFileChange}
             className="input-field"
             disabled={loading}
           />
           <p className="mt-2 text-sm text-gray-500">
-            Поддерживаются файлы MP4 или MOV до 2 ГБ.
+            Поддерживаются файлы MP4, MOV или WEBM до 2 ГБ.
           </p>
           {selectedFile && !error && (
             <div className="mt-3 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3">

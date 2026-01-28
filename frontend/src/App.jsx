@@ -137,7 +137,7 @@ function App() {
 
   const handleAnalyze = async (file, analysisMode = 'fast') => {
     if (!file) {
-      alert('Пожалуйста, выберите видеофайл формата MP4');
+      alert('Пожалуйста, выберите видеофайл формата MP4, MOV или WEBM');
       return;
     }
 
