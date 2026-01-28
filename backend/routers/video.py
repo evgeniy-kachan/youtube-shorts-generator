@@ -831,17 +831,28 @@ def _process_segments_task(
                 if spk:
                     speakers_in_segment.add(spk)
             
-            # Only log if multi-speaker detected
-            if len(speakers_in_segment) > 1:
+            # Always log speaker info (was only logging multi-speaker before)
+            if dialogue:
                 logger.info(
-                    "DIARIZATION [%s]: %d turns, %d speakers: %s",
-                    segment['id'], len(dialogue), len(speakers_in_segment), list(speakers_in_segment)
+                    "DIARIZATION [%s]: %d turns, %d speaker(s): %s | TTS Provider: %s",
+                    segment['id'], len(dialogue), len(speakers_in_segment), 
+                    list(speakers_in_segment) if speakers_in_segment else ['NO_SPEAKERS'],
+                    tts_provider
+                )
+            else:
+                logger.warning(
+                    "DIARIZATION [%s]: No dialogue structure found! Segment may be single-speaker without turns. | TTS Provider: %s",
+                    segment['id'], tts_provider
                 )
             
             # Check if we have a dialogue structure for multi-speaker synthesis
             has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
             
             if has_dialogue and voice_plan:
+                logger.info(
+                    "TTS METHOD [%s]: Using TTD (Text-to-Dialogue) synthesis with %d turns",
+                    segment['id'], len(segment['dialogue'])
+                )
                 # Refine turn boundaries using word-level timestamps
                 _refine_turn_boundaries(segment['dialogue'])
                 
@@ -880,6 +891,11 @@ def _process_segments_task(
                         segment['dialogue'] = pseudo_dialogue
                         has_dialogue = True
                         
+                        logger.info(
+                            "TTS METHOD [%s]: Using TTD (pseudo-dialogue from pauses) with %d turns",
+                            segment['id'], len(pseudo_dialogue)
+                        )
+                        
                         _refine_turn_boundaries(segment['dialogue'])
                         
                         try:
@@ -903,6 +919,10 @@ def _process_segments_task(
                 
                 # Fallback: if no words available, use old single-block approach
                 if not has_dialogue:
+                    logger.info(
+                        "TTS METHOD [%s]: Using standard TTS (single-block, no dialogue structure)",
+                        segment['id']
+                    )
                     tts_text = segment.get('text_ru_tts') or segment.get('text_ru') or segment.get('text', '')
                     
                     voice_override = None
