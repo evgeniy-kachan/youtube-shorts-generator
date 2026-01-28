@@ -137,12 +137,15 @@ class TranscriptionService:
                         spk, stats["segments"], stats["words"], stats["duration"]
                     )
                 
-                # Warn if only one speaker detected (might be diarization issue)
-                if len(speaker_stats) == 1:
+                # Warn if fewer speakers detected than expected
+                if self.num_speakers > 1 and len(speaker_stats) < self.num_speakers:
                     logger.warning(
-                        "DIARIZATION WARNING: Only 1 speaker detected! "
-                        "Expected %d speakers. Check if diarization is working correctly.",
-                        self.num_speakers
+                        "DIARIZATION WARNING: Only %d speaker(s) detected (expected %d)! "
+                        "This may indicate that voices are too similar, the segment is too short, "
+                        "or diarization failed to distinguish speakers. Detected speakers: %s",
+                        len(speaker_stats),
+                        self.num_speakers,
+                        list(speaker_stats.keys())
                     )
 
             # Format segments (speakers already assigned by WhisperX!)

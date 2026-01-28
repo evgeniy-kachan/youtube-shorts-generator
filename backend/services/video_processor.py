@@ -1475,42 +1475,74 @@ class VideoProcessor:
 
             if chunks_added == 0:
                 logger.warning(
-                    "No subtitle chunks generated for speaker %s (%.2f–%.2fs). Adding fallback line.",
+                    "No subtitle chunks generated for speaker %s (%.2f–%.2fs). Adding fallback chunks.",
                     speaker_id,
                     relative_start,
                     relative_end,
                 )
-                per_word = total_window / max(total_words, 1)
-                word_entries = []
-                for word_idx, word in enumerate(words):
-                    word_start = relative_start + word_idx * per_word
-                    word_entries.append(
+                # Create chunks even in fallback to respect max_chars_per_line
+                word_chunks: List[List[str]] = []
+                chunk: List[str] = []
+                current_chars = 0
+                for word in words:
+                    word_len = len(word) + 1  # +1 for space
+                    if current_chars + word_len > max_chars_per_line and chunk:
+                        word_chunks.append(chunk)
+                        chunk = []
+                        current_chars = 0
+                    chunk.append(word)
+                    current_chars += word_len
+                if chunk:
+                    word_chunks.append(chunk)
+                
+                # Distribute chunks evenly across the turn duration
+                elapsed = relative_start
+                for idx, chunk_words in enumerate(word_chunks):
+                    chunk_word_count = len(chunk_words)
+                    if total_words <= 0:
+                        chunk_duration = total_window / max(len(word_chunks), 1)
+                    else:
+                        chunk_duration = total_window * (chunk_word_count / total_words)
+                    
+                    if idx == len(word_chunks) - 1:
+                        chunk_duration = max(0.05, relative_end - elapsed)
+                    
+                    start_time = elapsed
+                    end_time = min(relative_end, start_time + chunk_duration)
+                    elapsed = end_time
+                    
+                    per_word = chunk_duration / chunk_word_count if chunk_word_count else 0.0
+                    word_entries = []
+                    for word_idx, word in enumerate(chunk_words):
+                        word_start = start_time + word_idx * per_word
+                        word_entries.append(
+                            {
+                                "word": word,
+                                "start": word_start,
+                                "end": min(end_time, word_start + per_word),
+                            }
+                        )
+                    
+                    lane_idx = 0  # All subtitles at same position
+                    
+                    # Prevent overlap: if this subtitle starts before previous ends, adjust
+                    if start_time < last_subtitle_end + MIN_SUBTITLE_GAP:
+                        if subtitles:
+                            old_end = subtitles[-1]["end"]
+                            subtitles[-1]["end"] = max(subtitles[-1]["start"] + 0.3, start_time - MIN_SUBTITLE_GAP)
+                    
+                    subtitles.append(
                         {
-                            "word": word,
-                            "start": word_start,
-                            "end": min(relative_end, word_start + per_word),
+                            "start": start_time,
+                            "end": end_time,
+                            "text": " ".join(chunk_words),
+                            "words": word_entries,
+                            "speaker": speaker_id,
+                            "color": speaker_palette.get(speaker_id),
+                            "lane": lane_idx,
                         }
                     )
-                lane_idx = 0  # All subtitles at same position
-                
-                # Prevent overlap for fallback subtitle too
-                actual_start = relative_start
-                if actual_start < last_subtitle_end + MIN_SUBTITLE_GAP:
-                    if subtitles:
-                        subtitles[-1]["end"] = max(subtitles[-1]["start"] + 0.3, actual_start - MIN_SUBTITLE_GAP)
-                
-                subtitles.append(
-                    {
-                        "start": actual_start,
-                        "end": relative_end,
-                        "text": " ".join(words),
-                        "words": word_entries,
-                        "speaker": speaker_id,
-                        "color": speaker_palette.get(speaker_id),
-                        "lane": lane_idx,
-                    }
-                )
-                last_subtitle_end = relative_end
+                    last_subtitle_end = end_time
 
         return subtitles
     

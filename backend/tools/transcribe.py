@@ -73,9 +73,11 @@ def main():
             # Determine speaker count mode
             if args.num_speakers > 0:
                 # Fixed number of speakers (more accurate if known)
+                # Use min_speakers=num_speakers to force detection of at least that many speakers
+                # This prevents diarization from merging speakers when voices are similar
                 min_spk = args.num_speakers
                 max_spk = args.num_speakers
-                mode_str = f"fixed={args.num_speakers}"
+                mode_str = f"fixed={args.num_speakers} (min={min_spk}, max={max_spk})"
             else:
                 # Auto-detect mode (less accurate but flexible)
                 min_spk = args.min_speakers
@@ -90,6 +92,7 @@ def main():
                     use_auth_token=hf_token,
                     device=args.device,
                 )
+                print(f"[transcribe.py] Calling DiarizationPipeline with min_speakers={min_spk}, max_speakers={max_spk}", file=sys.stderr)
                 diarize_segments = diarize_model(
                     audio,
                     min_speakers=min_spk,
@@ -99,18 +102,42 @@ def main():
                 # Log detected speakers
                 # WhisperX returns a DataFrame with columns: start, end, speaker
                 detected_speakers = set()
+                speaker_segments = {}  # Track segments per speaker
                 if hasattr(diarize_segments, 'itertracks'):
                     # pyannote Annotation object
                     for seg in diarize_segments.itertracks(yield_label=True):
-                        detected_speakers.add(seg[2])
+                        speaker = seg[2]
+                        detected_speakers.add(speaker)
+                        if speaker not in speaker_segments:
+                            speaker_segments[speaker] = []
+                        speaker_segments[speaker].append((seg[0].start, seg[0].end))
                 elif hasattr(diarize_segments, 'iterrows'):
                     # pandas DataFrame
                     for _, row in diarize_segments.iterrows():
                         if 'speaker' in row:
-                            detected_speakers.add(row['speaker'])
+                            speaker = row['speaker']
+                            detected_speakers.add(speaker)
+                            if speaker not in speaker_segments:
+                                speaker_segments[speaker] = []
+                            speaker_segments[speaker].append((row.get('start', 0), row.get('end', 0)))
                 else:
                     print(f"[transcribe.py] Unknown diarization result type: {type(diarize_segments)}", file=sys.stderr)
+                
                 print(f"[transcribe.py] Diarization detected {len(detected_speakers)} speakers: {sorted(detected_speakers)}", file=sys.stderr)
+                
+                # Log segment counts per speaker
+                for spk in sorted(detected_speakers):
+                    segs = speaker_segments.get(spk, [])
+                    total_duration = sum(end - start for start, end in segs)
+                    print(f"[transcribe.py]   {spk}: {len(segs)} segments, {total_duration:.1f}s total", file=sys.stderr)
+                
+                # Warn if fewer speakers detected than expected
+                if args.num_speakers > 0 and len(detected_speakers) < args.num_speakers:
+                    print(
+                        f"[transcribe.py] WARNING: Expected {args.num_speakers} speakers but only detected {len(detected_speakers)}! "
+                        f"This may indicate that voices are too similar or the segment is too short.",
+                        file=sys.stderr
+                    )
                 
                 # Assign speakers to words
                 result = assign_word_speakers(diarize_segments, result)
