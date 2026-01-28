@@ -1173,6 +1173,44 @@ async def get_task_status(task_id: str):
     
     return TaskStatus(task_id=task_id, status=task['status'], progress=task['progress'], message=task['message'])
 
+
+@router.get("/session/restore")
+async def restore_session():
+    """
+    Return the most recent active or completed task for session recovery.
+    Used when browser wakes from sleep and needs to restore polling.
+    """
+    # Find the most recent task that is either processing or completed
+    recent_task = None
+    recent_task_id = None
+    
+    for task_id, task in tasks.items():
+        if task.get('status') in ('processing', 'completed', 'pending'):
+            # Prefer completed tasks, then processing, then pending
+            if recent_task is None:
+                recent_task = task
+                recent_task_id = task_id
+            elif task.get('status') == 'completed' and recent_task.get('status') != 'completed':
+                recent_task = task
+                recent_task_id = task_id
+            elif task.get('status') == 'processing' and recent_task.get('status') == 'pending':
+                recent_task = task
+                recent_task_id = task_id
+    
+    if not recent_task:
+        return {"has_session": False, "task": None}
+    
+    return {
+        "has_session": True,
+        "task": {
+            "task_id": recent_task_id,
+            "status": recent_task.get('status'),
+            "progress": recent_task.get('progress', 0),
+            "message": recent_task.get('message', ''),
+            "result": recent_task.get('result') if recent_task.get('status') == 'completed' else None
+        }
+    }
+
 @router.post("/process", response_model=TaskStatus)
 async def process_segments(request: ProcessRequest, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())

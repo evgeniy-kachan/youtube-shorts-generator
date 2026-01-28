@@ -125,6 +125,11 @@ export const cleanupVideo = async (videoId) => {
   return response.data;
 };
 
+export const restoreSession = async () => {
+  const response = await api.get('/api/video/session/restore');
+  return response.data;
+};
+
 export const generateDescription = async (textEn, textRu, duration, highlightScore = 0) => {
   const response = await api.post('/api/video/generate-description', {
     text_en: textEn,

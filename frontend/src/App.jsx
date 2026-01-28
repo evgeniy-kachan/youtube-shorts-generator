@@ -10,6 +10,7 @@ import {
   processSegments,
   dubSegment,
   uploadVideoFile,
+  restoreSession,
   API_BASE_URL,
 } from './services/api';
 
@@ -26,6 +27,155 @@ function App() {
   const [isUploading, setIsUploading] = useState(false);
   // eslint-disable-next-line no-unused-vars
   const [uploadProgress, setUploadProgress] = useState({ loadedMB: 0, totalMB: 0, percent: 0 });
+  const [sessionRestored, setSessionRestored] = useState(false);
+
+  // Session recovery: save task IDs to localStorage
+  useEffect(() => {
+    if (analysisTask) {
+      localStorage.setItem('currentAnalysisTask', analysisTask);
+      localStorage.setItem('currentTaskType', 'analysis');
+    }
+  }, [analysisTask]);
+
+  useEffect(() => {
+    if (processingTask) {
+      localStorage.setItem('currentProcessingTask', processingTask);
+      localStorage.setItem('currentTaskType', 'processing');
+    }
+  }, [processingTask]);
+
+  // Clear localStorage when task completes or resets
+  useEffect(() => {
+    if (stage === 'segments' || stage === 'download' || stage === 'input') {
+      if (stage === 'input') {
+        localStorage.removeItem('currentAnalysisTask');
+        localStorage.removeItem('currentProcessingTask');
+        localStorage.removeItem('currentTaskType');
+      }
+    }
+  }, [stage]);
+
+  // Restore session on mount and when browser wakes from sleep
+  useEffect(() => {
+    const tryRestoreSession = async () => {
+      if (sessionRestored) return;
+      
+      try {
+        // First check localStorage for saved task IDs
+        const savedAnalysisTask = localStorage.getItem('currentAnalysisTask');
+        const savedProcessingTask = localStorage.getItem('currentProcessingTask');
+        const savedTaskType = localStorage.getItem('currentTaskType');
+        
+        if (savedAnalysisTask || savedProcessingTask) {
+          console.log('[Session Recovery] Found saved tasks:', { savedAnalysisTask, savedProcessingTask, savedTaskType });
+          
+          // Try to get task status from server
+          const sessionData = await restoreSession();
+          
+          if (sessionData.has_session && sessionData.task) {
+            const task = sessionData.task;
+            console.log('[Session Recovery] Server returned task:', task);
+            
+            if (task.status === 'completed' && task.result) {
+              // Task completed while we were away - restore results
+              if (savedTaskType === 'analysis') {
+                const normalizedResult = {
+                  ...task.result,
+                  thumbnail_url: task.result?.thumbnail_url
+                    ? `${API_BASE_URL}${task.result.thumbnail_url}`
+                    : null,
+                };
+                setVideoData(normalizedResult);
+                setSegments(normalizedResult.segments || []);
+                setStage('segments');
+                setStatusMessage('Сессия восстановлена! Анализ был завершён.');
+              } else if (savedTaskType === 'processing') {
+                // Need segments to build processed segments
+                // Try to restore from analysis task first
+                if (savedAnalysisTask) {
+                  try {
+                    const analysisStatus = await getTaskStatus(savedAnalysisTask);
+                    if (analysisStatus.status === 'completed' && analysisStatus.result) {
+                      const normalizedResult = {
+                        ...analysisStatus.result,
+                        thumbnail_url: analysisStatus.result?.thumbnail_url
+                          ? `${API_BASE_URL}${analysisStatus.result.thumbnail_url}`
+                          : null,
+                      };
+                      setVideoData(normalizedResult);
+                      setSegments(normalizedResult.segments || []);
+                    }
+                  } catch (e) {
+                    console.warn('[Session Recovery] Could not restore analysis data:', e);
+                  }
+                }
+                
+                // Now restore processing results
+                if (task.result?.output_videos) {
+                  setStage('download');
+                  setStatusMessage('Сессия восстановлена! Обработка была завершена.');
+                }
+              }
+            } else if (task.status === 'processing' || task.status === 'pending') {
+              // Task still running - resume polling
+              if (savedTaskType === 'analysis' && savedAnalysisTask) {
+                setAnalysisTask(savedAnalysisTask);
+                setStage('analyzing');
+                setProgress(task.progress || 0);
+                setStatusMessage(task.message || 'Восстановление сессии...');
+              } else if (savedTaskType === 'processing' && savedProcessingTask) {
+                // Need to restore videoData first
+                if (savedAnalysisTask) {
+                  try {
+                    const analysisStatus = await getTaskStatus(savedAnalysisTask);
+                    if (analysisStatus.status === 'completed' && analysisStatus.result) {
+                      const normalizedResult = {
+                        ...analysisStatus.result,
+                        thumbnail_url: analysisStatus.result?.thumbnail_url
+                          ? `${API_BASE_URL}${analysisStatus.result.thumbnail_url}`
+                          : null,
+                      };
+                      setVideoData(normalizedResult);
+                      setSegments(normalizedResult.segments || []);
+                    }
+                  } catch (e) {
+                    console.warn('[Session Recovery] Could not restore analysis data:', e);
+                  }
+                }
+                setProcessingTask(savedProcessingTask);
+                setStage('processing');
+                setProgress(task.progress || 0);
+                setStatusMessage(task.message || 'Восстановление сессии...');
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('[Session Recovery] Failed to restore session:', error);
+      } finally {
+        setSessionRestored(true);
+      }
+    };
+
+    tryRestoreSession();
+
+    // Also try to restore when browser wakes from sleep (visibility change)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[Session Recovery] Browser became visible, checking session...');
+        // If we're in a polling stage but lost connection, try to restore
+        if (stage === 'analyzing' || stage === 'processing') {
+          // The existing polling useEffect will handle this
+          console.log('[Session Recovery] Already in polling stage, continuing...');
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [sessionRestored, stage]);
 
   // Poll task status
   const buildProcessedSegments = useMemo(
@@ -92,15 +242,26 @@ function App() {
             setVideoData(normalizedResult);
             setSegments(normalizedResult.segments);
             setStage('segments');
+            // Keep analysisTask in localStorage for processing recovery
+            localStorage.removeItem('currentTaskType');
             clearInterval(interval);
           } else if (status.status === 'failed') {
             alert('Ошибка при анализе видео: ' + status.message);
             setStage('input');
+            localStorage.removeItem('currentAnalysisTask');
+            localStorage.removeItem('currentTaskType');
             clearInterval(interval);
           }
         } catch (error) {
           console.error('Error polling status:', error);
-          clearInterval(interval);
+          // Don't clear interval on network errors - browser might be waking from sleep
+          // Instead, show a recoverable message and keep trying
+          if (error?.code === 'ERR_NETWORK' || error?.message?.includes('Network Error')) {
+            setStatusMessage('Соединение потеряно. Переподключение...');
+            // Don't clear interval - keep trying
+          } else {
+            clearInterval(interval);
+          }
         }
       }, 2000);
     }
@@ -117,15 +278,25 @@ function App() {
             const processed = buildProcessedSegments(status.result);
             setProcessedSegments(processed);
             setStage('download');
+            localStorage.removeItem('currentProcessingTask');
+            localStorage.removeItem('currentTaskType');
             clearInterval(interval);
           } else if (status.status === 'failed') {
             alert('Ошибка при обработке видео: ' + status.message);
             setStage('segments');
+            localStorage.removeItem('currentProcessingTask');
+            localStorage.removeItem('currentTaskType');
             clearInterval(interval);
           }
         } catch (error) {
           console.error('Error polling status:', error);
-          clearInterval(interval);
+          // Don't clear interval on network errors - browser might be waking from sleep
+          if (error?.code === 'ERR_NETWORK' || error?.message?.includes('Network Error')) {
+            setStatusMessage('Соединение потеряно. Переподключение...');
+            // Don't clear interval - keep trying
+          } else {
+            clearInterval(interval);
+          }
         }
       }, 2000);
     }
