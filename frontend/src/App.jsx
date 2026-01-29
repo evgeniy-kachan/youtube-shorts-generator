@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Header from './components/Header';
 import VideoInput from './components/VideoInput';
 import ProgressBar from './components/ProgressBar';
@@ -28,6 +28,50 @@ function App() {
   // eslint-disable-next-line no-unused-vars
   const [uploadProgress, setUploadProgress] = useState({ loadedMB: 0, totalMB: 0, percent: 0 });
   const [sessionRestored, setSessionRestored] = useState(false);
+
+  // Build processed segments from result
+  const buildProcessedSegments = useMemo(
+    () => (result) => {
+      if (Array.isArray(result?.processed_segments)) {
+        return result.processed_segments;
+      }
+
+      if (Array.isArray(result?.output_videos)) {
+        return result.output_videos.map((item) => {
+          // New format: { path, segment_id, description }
+          // Old format: string (relativePath)
+          const isNewFormat = typeof item === 'object' && item.path;
+          const relativePath = isNewFormat ? item.path : item;
+          
+          const parts = relativePath.split('/');
+          const filename = parts[parts.length - 1] || relativePath;
+          const segmentId = isNewFormat ? item.segment_id : filename.replace('.mp4', '');
+          const originalSegment =
+            segments.find((segment) => segment.id === segmentId) || {};
+
+          const duration =
+            typeof originalSegment.start_time === 'number' &&
+            typeof originalSegment.end_time === 'number'
+              ? originalSegment.end_time - originalSegment.start_time
+              : 0;
+
+          return {
+            segment_id: segmentId,
+            filename,
+            duration,
+            start_time: originalSegment.start_time ?? null,
+            end_time: originalSegment.end_time ?? null,
+            download_path: relativePath,
+            // New: include description data
+            description: isNewFormat ? item.description : null,
+          };
+        });
+      }
+
+      return [];
+    },
+    [segments]
+  );
 
   // Session recovery: save task IDs to localStorage
   useEffect(() => {
@@ -180,113 +224,71 @@ function App() {
     };
 
     tryRestoreSession();
+  }, [sessionRestored, stage]);
 
-    // Also try to restore when browser wakes from sleep (visibility change)
-    const handleVisibilityChange = async () => {
-      if (document.visibilityState === 'visible') {
-        console.log('[Session Recovery] Browser became visible, checking session...');
+  // Handle browser wake from sleep (visibility change)
+  const handleVisibilityChange = useCallback(async () => {
+    if (document.visibilityState === 'visible') {
+      console.log('[Session Recovery] Browser became visible, checking session...');
+      
+      // If we're in a polling stage, immediately check task status
+      if (stage === 'analyzing' && analysisTask) {
+        try {
+          const status = await getTaskStatus(analysisTask);
+          if (status.status === 'completed' && status.result) {
+            const normalizedResult = {
+              ...status.result,
+              thumbnail_url: status.result?.thumbnail_url
+                ? `${API_BASE_URL}${status.result.thumbnail_url}`
+                : null,
+            };
+            setVideoData(normalizedResult);
+            setSegments(normalizedResult.segments || []);
+            setStage('segments');
+            setStatusMessage('Сессия восстановлена! Анализ был завершён.');
+          } else if (status.status === 'processing' || status.status === 'pending') {
+            setProgress(status.progress || 0);
+            setStatusMessage(status.message || 'Анализ продолжается...');
+          }
+        } catch (error) {
+          console.warn('[Session Recovery] Could not check analysis task:', error);
+        }
+      } else if (stage === 'processing' && processingTask) {
+        try {
+          const status = await getTaskStatus(processingTask);
+          if (status.status === 'completed' && status.result) {
+            const processed = buildProcessedSegments(status.result);
+            setProcessedSegments(processed);
+            setStage('download');
+            setStatusMessage('Сессия восстановлена! Обработка была завершена.');
+          } else if (status.status === 'processing' || status.status === 'pending') {
+            setProgress(status.progress || 0);
+            setStatusMessage(status.message || 'Обработка продолжается...');
+          }
+        } catch (error) {
+          console.warn('[Session Recovery] Could not check processing task:', error);
+        }
+      } else {
+        // Not in polling stage, but might have saved tasks - try full restore
+        const savedAnalysisTask = localStorage.getItem('currentAnalysisTask');
+        const savedProcessingTask = localStorage.getItem('currentProcessingTask');
         
-        // If we're in a polling stage, immediately check task status
-        if (stage === 'analyzing' && analysisTask) {
-          try {
-            const status = await getTaskStatus(analysisTask);
-            if (status.status === 'completed' && status.result) {
-              const normalizedResult = {
-                ...status.result,
-                thumbnail_url: status.result?.thumbnail_url
-                  ? `${API_BASE_URL}${status.result.thumbnail_url}`
-                  : null,
-              };
-              setVideoData(normalizedResult);
-              setSegments(normalizedResult.segments || []);
-              setStage('segments');
-              setStatusMessage('Сессия восстановлена! Анализ был завершён.');
-            } else if (status.status === 'processing' || status.status === 'pending') {
-              setProgress(status.progress || 0);
-              setStatusMessage(status.message || 'Анализ продолжается...');
-            }
-          } catch (error) {
-            console.warn('[Session Recovery] Could not check analysis task:', error);
-          }
-        } else if (stage === 'processing' && processingTask) {
-          try {
-            const status = await getTaskStatus(processingTask);
-            if (status.status === 'completed' && status.result) {
-              const processed = buildProcessedSegments(status.result);
-              setProcessedSegments(processed);
-              setStage('download');
-              setStatusMessage('Сессия восстановлена! Обработка была завершена.');
-            } else if (status.status === 'processing' || status.status === 'pending') {
-              setProgress(status.progress || 0);
-              setStatusMessage(status.message || 'Обработка продолжается...');
-            }
-          } catch (error) {
-            console.warn('[Session Recovery] Could not check processing task:', error);
-          }
-        } else {
-          // Not in polling stage, but might have saved tasks - try full restore
-          const savedAnalysisTask = localStorage.getItem('currentAnalysisTask');
-          const savedProcessingTask = localStorage.getItem('currentProcessingTask');
-          const savedTaskType = localStorage.getItem('currentTaskType');
-          
-          if (savedAnalysisTask || savedProcessingTask) {
-            console.log('[Session Recovery] Found saved tasks on wake, attempting restore...');
-            // Reset sessionRestored to allow restore
-            setSessionRestored(false);
-          }
+        if (savedAnalysisTask || savedProcessingTask) {
+          console.log('[Session Recovery] Found saved tasks on wake, attempting restore...');
+          // Reset sessionRestored to allow restore
+          setSessionRestored(false);
         }
       }
-    };
+    }
+  }, [stage, analysisTask, processingTask, buildProcessedSegments]);
 
+  // Set up visibility change listener
+  useEffect(() => {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [sessionRestored, stage]);
-
-  // Poll task status
-  const buildProcessedSegments = useMemo(
-    () => (result) => {
-      if (Array.isArray(result?.processed_segments)) {
-        return result.processed_segments;
-      }
-
-      if (Array.isArray(result?.output_videos)) {
-        return result.output_videos.map((item) => {
-          // New format: { path, segment_id, description }
-          // Old format: string (relativePath)
-          const isNewFormat = typeof item === 'object' && item.path;
-          const relativePath = isNewFormat ? item.path : item;
-          
-          const parts = relativePath.split('/');
-          const filename = parts[parts.length - 1] || relativePath;
-          const segmentId = isNewFormat ? item.segment_id : filename.replace('.mp4', '');
-          const originalSegment =
-            segments.find((segment) => segment.id === segmentId) || {};
-
-          const duration =
-            typeof originalSegment.start_time === 'number' &&
-            typeof originalSegment.end_time === 'number'
-              ? originalSegment.end_time - originalSegment.start_time
-              : 0;
-
-          return {
-            segment_id: segmentId,
-            filename,
-            duration,
-            start_time: originalSegment.start_time ?? null,
-            end_time: originalSegment.end_time ?? null,
-            download_path: relativePath,
-            // New: include description data
-            description: isNewFormat ? item.description : null,
-          };
-        });
-      }
-
-      return [];
-    },
-    [segments]
-  );
+  }, [handleVisibilityChange]);
 
   useEffect(() => {
     let interval;
