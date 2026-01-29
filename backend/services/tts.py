@@ -462,7 +462,7 @@ class BaseTTSService:
         voice: str | None,
         destination: Path,
         turn_idx: int,
-    ) -> AudioSegment | None:
+    ) -> tuple[AudioSegment | None, list[dict]]:
         """Synthesize per-chunk audio and stitch it with pauses.
         
         IMPORTANT: Speed is UNIFORM across all chunks within a turn.
@@ -478,9 +478,11 @@ class BaseTTSService:
         - Chunk B (7 words): target = 2.8s → speed = (7/2.5)/2.8 = 1.0
         """
         combined_segments: list[AudioSegment] = []
+        all_turn_words: list[dict] = []
         speech_target = sum(chunk.get("target_duration", 0.0) for chunk in plan)
         pause_target = sum(chunk.get("pause_ms", 0) for chunk in plan[:-1]) / 1000.0
         turn_target_duration = speech_target + pause_target
+        cumulative_duration = 0.0
 
         for chunk_idx, chunk in enumerate(plan):
             chunk_path = (
@@ -491,7 +493,15 @@ class BaseTTSService:
                 # Pass chunk's proportional target_duration
                 # Speed will be uniform because word_count/target_duration ratio is the same
                 chunk_target = chunk.get("target_duration", 0.0)
-                self.synthesize(chunk["text"], str(chunk_path), speaker=voice, target_duration=chunk_target)
+                _, chunk_words = self.synthesize(chunk["text"], str(chunk_path), speaker=voice, target_duration=chunk_target)
+                
+                # Adjust word timestamps for cumulative duration (previous chunks + pauses)
+                for word in chunk_words:
+                    all_turn_words.append({
+                        "word": word["word"],
+                        "start": word["start"] + cumulative_duration,
+                        "end": word["end"] + cumulative_duration,
+                    })
             except Exception as exc:
                 logger.error(
                     "Failed to synthesize chunk %s/%s for turn %s: %s",
@@ -534,15 +544,17 @@ class BaseTTSService:
                         current_duration = len(seg_audio) / 1000.0
 
                 combined_segments.append(seg_audio)
+                cumulative_duration += current_duration
 
                 pause_ms = int(chunk.get("pause_ms") or 0)
                 if pause_ms > 0 and chunk_idx != len(plan) - 1:
                     combined_segments.append(AudioSegment.silent(duration=pause_ms))
+                    cumulative_duration += pause_ms / 1000.0
             finally:
                 chunk_path.unlink(missing_ok=True)
 
         if not combined_segments:
-            return None
+            return None, []
 
         final_audio = combined_segments[0]
         for seg in combined_segments[1:]:
@@ -564,8 +576,13 @@ class BaseTTSService:
             tempo = actual_duration / turn_target_duration
             if self._retime_audio_file(temp_path, tempo):
                 final_audio = AudioSegment.from_file(str(temp_path))
+                # Adjust word timestamps for retiming
+                retime_ratio = actual_duration / turn_target_duration
+                for word in all_turn_words:
+                    word["start"] = word["start"] / retime_ratio
+                    word["end"] = word["end"] / retime_ratio
             temp_path.unlink(missing_ok=True)
-        return final_audio
+        return final_audio, all_turn_words
 
     def synthesize_dialogue(
         self,
@@ -653,7 +670,7 @@ class BaseTTSService:
                 len(plan),
             )
 
-            seg_audio = self._render_turn_chunks(plan, voice, destination, idx)
+            seg_audio, turn_words = self._render_turn_chunks(plan, voice, destination, idx)
             if seg_audio is None:
                 continue
 
@@ -675,6 +692,26 @@ class BaseTTSService:
             turn["tts_start_offset"] = start_seconds
             turn["tts_duration"] = duration_ms / 1000.0
             turn["tts_end_offset"] = start_seconds + turn["tts_duration"]
+            
+            # Add word-level timestamps if available (adjusted for turn start time)
+            if turn_words:
+                tts_words = []
+                for w in turn_words:
+                    tts_words.append({
+                        "word": w["word"],
+                        "start": w["start"] + start_seconds,
+                        "end": w["end"] + start_seconds,
+                    })
+                turn["tts_words"] = tts_words
+                logger.debug(
+                    "TTS turn %d: %d words with timestamps (first: %.2f-%.2fs, last: %.2f-%.2fs)",
+                    idx,
+                    len(tts_words),
+                    tts_words[0]["start"] if tts_words else 0,
+                    tts_words[0]["end"] if tts_words else 0,
+                    tts_words[-1]["start"] if tts_words else 0,
+                    tts_words[-1]["end"] if tts_words else 0,
+                )
 
         if not audio_segments:
             raise RuntimeError("No audio generated for dialogue")
@@ -734,7 +771,7 @@ class BaseTTSService:
                 len(plan),
             )
 
-            seg_audio = self._render_turn_chunks(plan, voice, destination, idx)
+            seg_audio, turn_words = self._render_turn_chunks(plan, voice, destination, idx)
             if seg_audio is None:
                 continue
 
@@ -753,12 +790,40 @@ class BaseTTSService:
                     max_allowed = max(self.MIN_CHUNK_DURATION, relative_end_target - relative_start)
                     if duration_seconds > max_allowed + 0.05:
                         clip_ms = int(max_allowed * 1000)
+                        # Adjust word timestamps proportionally if audio is clipped
+                        clip_ratio = max_allowed / duration_seconds
                         seg_audio = seg_audio[:clip_ms]
                         duration_seconds = len(seg_audio) / 1000.0
+                        # Clip word timestamps to match clipped audio
+                        for word in turn_words:
+                            if word["end"] > max_allowed:
+                                word["end"] = max_allowed
+                            if word["start"] > max_allowed:
+                                word["start"] = max_allowed
 
             turn["tts_start_offset"] = relative_start
             turn["tts_duration"] = duration_seconds
             turn["tts_end_offset"] = relative_start + duration_seconds
+            
+            # Add word-level timestamps if available (adjusted for turn start time)
+            if turn_words:
+                tts_words = []
+                for w in turn_words:
+                    tts_words.append({
+                        "word": w["word"],
+                        "start": w["start"] + relative_start,
+                        "end": w["end"] + relative_start,
+                    })
+                turn["tts_words"] = tts_words
+                logger.debug(
+                    "TTS turn %d (overlap): %d words with timestamps (first: %.2f-%.2fs, last: %.2f-%.2fs)",
+                    idx,
+                    len(tts_words),
+                    tts_words[0]["start"] if tts_words else 0,
+                    tts_words[0]["end"] if tts_words else 0,
+                    tts_words[-1]["start"] if tts_words else 0,
+                    tts_words[-1]["end"] if tts_words else 0,
+                )
 
             end_ms = offset_ms + len(seg_audio)
             max_duration_ms = max(max_duration_ms, end_ms)
