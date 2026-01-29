@@ -111,7 +111,29 @@ function App() {
                 }
                 
                 // Now restore processing results
-                if (task.result?.output_videos) {
+                if (task.result?.output_videos || task.result?.processed_segments) {
+                  // Need segments to build processed segments properly
+                  // If segments not restored yet, try one more time
+                  if (!segments.length && savedAnalysisTask) {
+                    try {
+                      const analysisStatus = await getTaskStatus(savedAnalysisTask);
+                      if (analysisStatus.status === 'completed' && analysisStatus.result) {
+                        const normalizedResult = {
+                          ...analysisStatus.result,
+                          thumbnail_url: analysisStatus.result?.thumbnail_url
+                            ? `${API_BASE_URL}${analysisStatus.result.thumbnail_url}`
+                            : null,
+                        };
+                        setVideoData(normalizedResult);
+                        setSegments(normalizedResult.segments || []);
+                      }
+                    } catch (e) {
+                      console.warn('[Session Recovery] Could not restore analysis data (retry):', e);
+                    }
+                  }
+                  
+                  const processed = buildProcessedSegments(task.result);
+                  setProcessedSegments(processed);
                   setStage('download');
                   setStatusMessage('Сессия восстановлена! Обработка была завершена.');
                 }
@@ -160,13 +182,58 @@ function App() {
     tryRestoreSession();
 
     // Also try to restore when browser wakes from sleep (visibility change)
-    const handleVisibilityChange = () => {
+    const handleVisibilityChange = async () => {
       if (document.visibilityState === 'visible') {
         console.log('[Session Recovery] Browser became visible, checking session...');
-        // If we're in a polling stage but lost connection, try to restore
-        if (stage === 'analyzing' || stage === 'processing') {
-          // The existing polling useEffect will handle this
-          console.log('[Session Recovery] Already in polling stage, continuing...');
+        
+        // If we're in a polling stage, immediately check task status
+        if (stage === 'analyzing' && analysisTask) {
+          try {
+            const status = await getTaskStatus(analysisTask);
+            if (status.status === 'completed' && status.result) {
+              const normalizedResult = {
+                ...status.result,
+                thumbnail_url: status.result?.thumbnail_url
+                  ? `${API_BASE_URL}${status.result.thumbnail_url}`
+                  : null,
+              };
+              setVideoData(normalizedResult);
+              setSegments(normalizedResult.segments || []);
+              setStage('segments');
+              setStatusMessage('Сессия восстановлена! Анализ был завершён.');
+            } else if (status.status === 'processing' || status.status === 'pending') {
+              setProgress(status.progress || 0);
+              setStatusMessage(status.message || 'Анализ продолжается...');
+            }
+          } catch (error) {
+            console.warn('[Session Recovery] Could not check analysis task:', error);
+          }
+        } else if (stage === 'processing' && processingTask) {
+          try {
+            const status = await getTaskStatus(processingTask);
+            if (status.status === 'completed' && status.result) {
+              const processed = buildProcessedSegments(status.result);
+              setProcessedSegments(processed);
+              setStage('download');
+              setStatusMessage('Сессия восстановлена! Обработка была завершена.');
+            } else if (status.status === 'processing' || status.status === 'pending') {
+              setProgress(status.progress || 0);
+              setStatusMessage(status.message || 'Обработка продолжается...');
+            }
+          } catch (error) {
+            console.warn('[Session Recovery] Could not check processing task:', error);
+          }
+        } else {
+          // Not in polling stage, but might have saved tasks - try full restore
+          const savedAnalysisTask = localStorage.getItem('currentAnalysisTask');
+          const savedProcessingTask = localStorage.getItem('currentProcessingTask');
+          const savedTaskType = localStorage.getItem('currentTaskType');
+          
+          if (savedAnalysisTask || savedProcessingTask) {
+            console.log('[Session Recovery] Found saved tasks on wake, attempting restore...');
+            // Reset sessionRestored to allow restore
+            setSessionRestored(false);
+          }
         }
       }
     };
@@ -259,6 +326,7 @@ function App() {
           if (error?.code === 'ERR_NETWORK' || error?.message?.includes('Network Error')) {
             setStatusMessage('Соединение потеряно. Переподключение...');
             // Don't clear interval - keep trying
+            // When connection is restored, the next poll will succeed
           } else {
             clearInterval(interval);
           }
