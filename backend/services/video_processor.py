@@ -1265,6 +1265,7 @@ class VideoProcessor:
 
             # Check if we have precise word timestamps from ElevenLabs
             tts_words = turn.get("tts_words")
+            use_fallback = False
             
             if tts_words and len(tts_words) > 0:
                 # Use precise word timestamps from ElevenLabs alignment
@@ -1334,10 +1335,10 @@ class VideoProcessor:
                         relative_start, relative_end,
                         len(filtered_tts_words) if filtered_tts_words else 0
                     )
-                    # Clear tts_words to trigger fallback logic
-                    tts_words = None
+                    # Force fallback
+                    use_fallback = True
                 
-                if has_valid_timestamps:
+                if has_valid_timestamps and not use_fallback:
                     while word_idx < len(filtered_tts_words):
                         # Take words until we hit max_chars_per_line
                         chunk_tts_words = []
@@ -1393,7 +1394,8 @@ class VideoProcessor:
                         })
                         last_subtitle_end = chunk_end_time
                         chunks_added += 1
-            else:
+            
+            if use_fallback or not (tts_words and len(tts_words) > 0):
                 # Fallback: distribute words proportionally using character-based chunking
                 word_chunks: List[List[str]] = []
                 chunk: List[str] = []
