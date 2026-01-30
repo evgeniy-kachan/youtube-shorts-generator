@@ -661,12 +661,13 @@ class BaseTTSService:
                 continue
 
             logger.info(
-                "Synthesizing dialogue turn %s/%s: speaker=%s -> voice=%s, len=%s (linear, %s chunk(s))",
+                "TTS INPUT [turn %s/%s]: speaker=%s -> voice=%s, len=%s, text='%s' (linear, %s chunk(s))",
                 idx + 1,
                 len(dialogue_turns),
                 speaker_id,
                 voice,
                 len(text),
+                text,
                 len(plan),
             )
 
@@ -761,13 +762,14 @@ class BaseTTSService:
                 continue
 
             logger.info(
-                "Synthesizing dialogue turn %s/%s: speaker=%s -> voice=%s, len=%s, offset=%.2fs (%s chunk(s))",
+                "TTS INPUT [turn %s/%s]: speaker=%s -> voice=%s, len=%s, offset=%.2fs, text='%s' (%s chunk(s))",
                 idx + 1,
                 len(dialogue_turns),
                 speaker_id,
                 voice,
                 len(text),
                 offset_ms / 1000,
+                text,
                 len(plan),
             )
 
@@ -2613,13 +2615,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             list(set(inp["voice_id"] for inp in inputs)),
         )
         
-        # Log the inputs for debugging (debug level)
+        # Log the full text that will be sent to ElevenLabs (INFO level for diagnostics)
         for idx, inp in enumerate(inputs):
             vs = inp.get("voice_settings", {})
             speed_val = vs.get("speed", 1.0) if vs else 1.0
-            logger.debug(
-                "TTD input %d: voice=%s, speed=%.2f, text=%s",
-                idx, inp["voice_id"], speed_val, inp["text"][:60]
+            text = inp["text"]
+            logger.info(
+                "TTD INPUT [turn %d]: voice=%s, speed=%.2f, text='%s'",
+                idx, inp["voice_id"], speed_val, text
             )
         
         # Retry logic: attempt up to 3 times
