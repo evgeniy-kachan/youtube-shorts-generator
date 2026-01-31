@@ -226,61 +226,73 @@ function App() {
     tryRestoreSession();
   }, [sessionRestored, stage]);
 
-  // Handle browser wake from sleep (visibility change)
+  // Handle browser wake from sleep (visibility change) with debounce
+  const lastVisibilityCheck = React.useRef(0);
   const handleVisibilityChange = useCallback(async () => {
-    if (document.visibilityState === 'visible') {
-      console.log('[Session Recovery] Browser became visible, checking session...');
+    if (document.visibilityState !== 'visible') return;
+    
+    // Debounce: ignore if last check was less than 2 seconds ago
+    const now = Date.now();
+    if (now - lastVisibilityCheck.current < 2000) {
+      return;
+    }
+    lastVisibilityCheck.current = now;
+    
+    // Skip if already in a completed stage (segments, download, upload)
+    if (['segments', 'download', 'upload'].includes(stage)) {
+      return;
+    }
+    
+    console.log('[Session Recovery] Browser became visible, checking session...');
+    
+    // If we're in a polling stage, immediately check task status
+    if (stage === 'analyzing' && analysisTask) {
+      try {
+        const status = await getTaskStatus(analysisTask);
+        if (status.status === 'completed' && status.result) {
+          const normalizedResult = {
+            ...status.result,
+            thumbnail_url: status.result?.thumbnail_url
+              ? `${API_BASE_URL}${status.result.thumbnail_url}`
+              : null,
+          };
+          setVideoData(normalizedResult);
+          setSegments(normalizedResult.segments || []);
+          setStage('segments');
+          setStatusMessage('Сессия восстановлена! Анализ был завершён.');
+        } else if (status.status === 'processing' || status.status === 'pending') {
+          setProgress(status.progress || 0);
+          setStatusMessage(status.message || 'Анализ продолжается...');
+        }
+      } catch (error) {
+        console.warn('[Session Recovery] Could not check analysis task:', error);
+      }
+    } else if (stage === 'processing' && processingTask) {
+      try {
+        const status = await getTaskStatus(processingTask);
+        if (status.status === 'completed' && status.result) {
+          const processed = buildProcessedSegments(status.result);
+          setProcessedSegments(processed);
+          setStage('download');
+          setStatusMessage('Сессия восстановлена! Обработка была завершена.');
+        } else if (status.status === 'processing' || status.status === 'pending') {
+          setProgress(status.progress || 0);
+          setStatusMessage(status.message || 'Обработка продолжается...');
+        }
+      } catch (error) {
+        console.warn('[Session Recovery] Could not check processing task:', error);
+      }
+    } else if (stage === 'upload') {
+      // On upload stage, check if there are saved tasks to restore
+      const savedAnalysisTask = localStorage.getItem('currentAnalysisTask');
+      const savedProcessingTask = localStorage.getItem('currentProcessingTask');
       
-      // If we're in a polling stage, immediately check task status
-      if (stage === 'analyzing' && analysisTask) {
-        try {
-          const status = await getTaskStatus(analysisTask);
-          if (status.status === 'completed' && status.result) {
-            const normalizedResult = {
-              ...status.result,
-              thumbnail_url: status.result?.thumbnail_url
-                ? `${API_BASE_URL}${status.result.thumbnail_url}`
-                : null,
-            };
-            setVideoData(normalizedResult);
-            setSegments(normalizedResult.segments || []);
-            setStage('segments');
-            setStatusMessage('Сессия восстановлена! Анализ был завершён.');
-          } else if (status.status === 'processing' || status.status === 'pending') {
-            setProgress(status.progress || 0);
-            setStatusMessage(status.message || 'Анализ продолжается...');
-          }
-        } catch (error) {
-          console.warn('[Session Recovery] Could not check analysis task:', error);
-        }
-      } else if (stage === 'processing' && processingTask) {
-        try {
-          const status = await getTaskStatus(processingTask);
-          if (status.status === 'completed' && status.result) {
-            const processed = buildProcessedSegments(status.result);
-            setProcessedSegments(processed);
-            setStage('download');
-            setStatusMessage('Сессия восстановлена! Обработка была завершена.');
-          } else if (status.status === 'processing' || status.status === 'pending') {
-            setProgress(status.progress || 0);
-            setStatusMessage(status.message || 'Обработка продолжается...');
-          }
-        } catch (error) {
-          console.warn('[Session Recovery] Could not check processing task:', error);
-        }
-      } else {
-        // Not in polling stage, but might have saved tasks - try full restore
-        const savedAnalysisTask = localStorage.getItem('currentAnalysisTask');
-        const savedProcessingTask = localStorage.getItem('currentProcessingTask');
-        
-        if (savedAnalysisTask || savedProcessingTask) {
-          console.log('[Session Recovery] Found saved tasks on wake, attempting restore...');
-          // Reset sessionRestored to allow restore
-          setSessionRestored(false);
-        }
+      if ((savedAnalysisTask || savedProcessingTask) && !sessionRestored) {
+        console.log('[Session Recovery] Found saved tasks on wake, attempting restore...');
+        setSessionRestored(false);
       }
     }
-  }, [stage, analysisTask, processingTask, buildProcessedSegments]);
+  }, [stage, analysisTask, processingTask, buildProcessedSegments, sessionRestored]);
 
   // Set up visibility change listener
   useEffect(() => {
