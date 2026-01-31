@@ -300,8 +300,8 @@ const SegmentsList = ({
   const [subtitleFontSize, setSubtitleFontSize] = useState(82);
   const [subtitleBackground, setSubtitleBackground] = useState(false);
   const [subtitleGlow, setSubtitleGlow] = useState(false); // Soft glow effect for readability
-  const [subtitleGradient, setSubtitleGradient] = useState(false); // Dark gradient at bottom
-  const [speakerColorMode, setSpeakerColorMode] = useState('colored'); // 'colored' or 'white'
+  const [subtitleGradient, setSubtitleGradient] = useState(true); // Dark gradient at bottom (enabled by default)
+  const speakerColorMode = 'colored'; // Always use colored mode
   
   const [ttsProvider, setTtsProvider] = useState('elevenlabs');
   const [voiceMix, setVoiceMix] = useState('male_duo');
@@ -311,38 +311,6 @@ const SegmentsList = ({
   // cropFocus is now always 'face_auto' for center_crop
   const cropFocus = verticalMethod === 'center_crop' ? 'face_auto' : 'center';
 
-  // Podcast style preset - check if currently active
-  const isPodcastStyleActive = useMemo(() => {
-    return (
-      subtitleFont === 'Montserrat Bold' &&
-      subtitleFontSize === 76 &&
-      subtitleAnimation === 'fade' &&
-      subtitlePosition === 'mid_low' &&
-      speakerColorMode === 'white' &&
-      subtitleBackground === false
-    );
-  }, [subtitleFont, subtitleFontSize, subtitleAnimation, subtitlePosition, speakerColorMode, subtitleBackground]);
-
-  // Podcast style preset - toggle on/off
-  const togglePodcastStyle = () => {
-    if (isPodcastStyleActive) {
-      // Reset to defaults
-      setSubtitleFont('Montserrat Light');
-      setSubtitleFontSize(86);
-      setSubtitleAnimation('fade');
-      setSubtitlePosition('mid_low');
-      setSpeakerColorMode('colored');
-      setSubtitleBackground(false);
-    } else {
-      // Apply podcast style
-      setSubtitleFont('Montserrat Bold');
-      setSubtitleFontSize(76);
-      setSubtitleAnimation('fade');
-      setSubtitlePosition('mid_low');
-      setSpeakerColorMode('white');
-      setSubtitleBackground(false);
-    }
-  };
 
   // Tabs: 'style', 'text', 'position'
   const [activeTab, setActiveTab] = useState('style');
@@ -886,43 +854,6 @@ const SegmentsList = ({
                 )}
               </div>
 
-              {/* Preset Button */}
-              <div className="mb-4">
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={togglePodcastStyle}
-                  className={`w-full p-4 border-2 rounded-xl text-left transition group ${
-                    isPodcastStyleActive
-                      ? 'border-purple-600 bg-purple-100 ring-2 ring-purple-400'
-                      : 'border-dashed border-purple-400 hover:border-purple-600 hover:bg-purple-50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-purple-700 text-lg flex items-center gap-2">
-                        🎙️ Подкаст стиль
-                        {isPodcastStyleActive && (
-                          <span className="text-xs bg-purple-600 text-white px-2 py-0.5 rounded-full">
-                            активен
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-sm text-gray-600 mt-1">
-                        Montserrat Bold, 76px, Fade, белые субтитры для обоих спикеров
-                      </div>
-                    </div>
-                    <div className={`transition ${
-                      isPodcastStyleActive
-                        ? 'text-purple-600'
-                        : 'text-purple-500 group-hover:text-purple-700'
-                    }`}>
-                      {isPodcastStyleActive ? '✓' : 'Применить →'}
-                    </div>
-                  </div>
-                </button>
-              </div>
-
               {/* Tabs Navigation */}
               <div className="flex border-b border-gray-200">
                 {[
@@ -1162,43 +1093,6 @@ const SegmentsList = ({
                       </p>
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Цвета спикеров
-                      </label>
-                      <div className="flex gap-3">
-                        <button
-                          type="button"
-                          disabled={loading}
-                          onClick={() => setSpeakerColorMode('colored')}
-                          className={`flex-1 px-4 py-3 rounded-lg border text-sm font-semibold transition ${
-                            speakerColorMode === 'colored'
-                              ? 'border-purple-600 bg-purple-50 text-purple-700'
-                              : 'border-gray-200 hover:border-purple-500 text-gray-700'
-                          }`}
-                        >
-                          <div className="font-semibold">🎨 Цветные</div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            Разный цвет для спикеров
-                          </div>
-                        </button>
-                        <button
-                          type="button"
-                          disabled={loading}
-                          onClick={() => setSpeakerColorMode('white')}
-                          className={`flex-1 px-4 py-3 rounded-lg border text-sm font-semibold transition ${
-                            speakerColorMode === 'white'
-                              ? 'border-purple-600 bg-purple-50 text-purple-700'
-                              : 'border-gray-200 hover:border-purple-500 text-gray-700'
-                          }`}
-                        >
-                          <div className="font-semibold">⚪ Белые</div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            Один цвет для всех
-                          </div>
-                        </button>
-                      </div>
-                    </div>
                   </div>
                 )}
 
