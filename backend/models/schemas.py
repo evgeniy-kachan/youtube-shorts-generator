@@ -95,6 +95,10 @@ class ProcessRequest(BaseModel):
         default=0,
         description="Number of speakers for diarization: 0=auto-detect, 1-3=fixed"
     )
+    speaker_change_times: str = Field(
+        default="",
+        description="Comma-separated seconds when speaker changes (e.g., '15' or '15,30')"
+    )
     
 
 class ProcessedSegment(BaseModel):

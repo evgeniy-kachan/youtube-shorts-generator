@@ -447,10 +447,11 @@ function App() {
     preserveBackgroundAudio = true,
     cropFocus = 'center',
     speakerColorMode = 'colored',
-    numSpeakers = 0
+    numSpeakers = 0,
+    speakerChangeTime = ''
   ) => {
     try {
-      console.log('[handleProcess] subtitleAnimation:', subtitleAnimation, 'numSpeakers:', numSpeakers);
+      console.log('[handleProcess] subtitleAnimation:', subtitleAnimation, 'numSpeakers:', numSpeakers, 'speakerChangeTime:', speakerChangeTime);
       setStage('processing');
       setProgress(0);
       setStatusMessage('Начинаем обработку...');
@@ -472,7 +473,8 @@ function App() {
         preserveBackgroundAudio,
         cropFocus,
         speakerColorMode,
-        numSpeakers
+        numSpeakers,
+        speakerChangeTime
       );
       setProcessingTask(response.task_id);
     } catch (error) {

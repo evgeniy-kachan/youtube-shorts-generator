@@ -307,6 +307,7 @@ const SegmentsList = ({
   const [voiceMix, setVoiceMix] = useState('male_duo');
   const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(true);
   const [numSpeakers, setNumSpeakers] = useState(0); // 0 = auto-detect, 1-3 = fixed
+  const [speakerChangeTime, setSpeakerChangeTime] = useState(''); // Time in seconds when speaker changes (e.g., "15" or "15,30")
   // cropFocus is now always 'face_auto' for center_crop
   const cropFocus = verticalMethod === 'center_crop' ? 'face_auto' : 'center';
 
@@ -396,7 +397,7 @@ const SegmentsList = ({
 
   const handleProcess = () => {
     if (selectedSegments.length > 0) {
-      console.log('[SegmentsList] Calling onProcess with subtitleAnimation:', subtitleAnimation, 'numSpeakers:', numSpeakers);
+      console.log('[SegmentsList] Calling onProcess with subtitleAnimation:', subtitleAnimation, 'numSpeakers:', numSpeakers, 'speakerChangeTime:', speakerChangeTime);
       onProcess(
         selectedSegments,
         verticalMethod,
@@ -412,7 +413,8 @@ const SegmentsList = ({
         preserveBackgroundAudio,
         cropFocus,
         speakerColorMode,
-        numSpeakers
+        numSpeakers,
+        speakerChangeTime
       );
     }
   };
@@ -859,6 +861,29 @@ const SegmentsList = ({
                 <p className="text-xs text-gray-500 mt-2">
                   Укажите количество спикеров для более точной диаризации. &quot;Авто&quot; — система определит сама.
                 </p>
+                
+                {/* Speaker Change Time - only show when numSpeakers >= 2 */}
+                {numSpeakers >= 2 && (
+                  <div className="mt-4 p-3 bg-purple-50 rounded-xl border border-purple-200">
+                    <label className="block text-xs font-bold text-purple-700 uppercase tracking-wider mb-2">
+                      ⏱️ Время смены спикера (сек)
+                    </label>
+                    <input
+                      type="text"
+                      disabled={loading}
+                      value={speakerChangeTime}
+                      onChange={(e) => setSpeakerChangeTime(e.target.value)}
+                      placeholder={numSpeakers === 2 ? "Например: 15" : "Например: 15, 30"}
+                      className="w-full p-3 border border-purple-300 rounded-lg text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    />
+                    <p className="text-xs text-purple-600 mt-2">
+                      {numSpeakers === 2 
+                        ? "Укажите секунду, когда меняется спикер. До этого времени — спикер 1, после — спикер 2."
+                        : "Укажите секунды через запятую. Например: 15, 30 — три спикера."
+                      }
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Preset Button */}

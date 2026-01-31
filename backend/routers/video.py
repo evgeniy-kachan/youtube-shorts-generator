@@ -803,6 +803,7 @@ def _process_segments_task(
     crop_focus: str = "center",
     speaker_color_mode: str = "colored",
     num_speakers: int = 0,
+    speaker_change_times: str = "",
 ):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Preparing to render..."}
@@ -852,14 +853,45 @@ def _process_segments_task(
             # If user specified num_speakers >= 2 but diarization found only 1, force multi-speaker
             detected_speakers = len(speakers_in_segment)
             if num_speakers >= 2 and detected_speakers < num_speakers and dialogue:
-                logger.info(
-                    "SPEAKER OVERRIDE [%s]: User requested %d speakers but only %d detected. Assigning alternating speakers.",
-                    segment['id'], num_speakers, detected_speakers
-                )
-                # Assign alternating speakers to turns
+                # Parse speaker change times (relative to segment start)
+                change_times = []
+                if speaker_change_times:
+                    try:
+                        change_times = [float(t.strip()) for t in speaker_change_times.split(',') if t.strip()]
+                        change_times.sort()
+                    except ValueError:
+                        logger.warning("Invalid speaker_change_times format: %s", speaker_change_times)
+                
                 speaker_names = [f"SPEAKER_{i:02d}" for i in range(num_speakers)]
-                for idx, turn in enumerate(dialogue):
-                    turn['speaker'] = speaker_names[idx % num_speakers]
+                segment_start = float(segment.get('start_time', 0))
+                
+                if change_times:
+                    # Use time-based speaker assignment
+                    logger.info(
+                        "SPEAKER OVERRIDE [%s]: Using time-based assignment. Change times: %s (relative to segment start)",
+                        segment['id'], change_times
+                    )
+                    for turn in dialogue:
+                        turn_start = float(turn.get('start', 0)) - segment_start
+                        # Find which speaker based on change times
+                        speaker_idx = 0
+                        for i, change_time in enumerate(change_times):
+                            if turn_start >= change_time:
+                                speaker_idx = min(i + 1, num_speakers - 1)
+                        turn['speaker'] = speaker_names[speaker_idx]
+                        logger.debug(
+                            "Turn at %.1fs -> %s (change_times=%s)",
+                            turn_start, turn['speaker'], change_times
+                        )
+                else:
+                    # Fallback to alternating assignment
+                    logger.info(
+                        "SPEAKER OVERRIDE [%s]: User requested %d speakers but only %d detected. Assigning alternating speakers.",
+                        segment['id'], num_speakers, detected_speakers
+                    )
+                    for idx, turn in enumerate(dialogue):
+                        turn['speaker'] = speaker_names[idx % num_speakers]
+                
                 speakers_in_segment = set(speaker_names)
             
             # Check if we have a dialogue structure for multi-speaker synthesis
@@ -1271,6 +1303,7 @@ async def process_segments(request: ProcessRequest, background_tasks: Background
         request.crop_focus,
         request.speaker_color_mode,
         request.num_speakers,
+        request.speaker_change_times,
     )
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Processing task queued")
 
