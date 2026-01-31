@@ -91,6 +91,10 @@ class ProcessRequest(BaseModel):
         default="center",
         description="Horizontal crop focus for center_crop method: center, left, right"
     )
+    num_speakers: int = Field(
+        default=0,
+        description="Number of speakers for diarization: 0=auto-detect, 1-3=fixed"
+    )
     
 
 class ProcessedSegment(BaseModel):

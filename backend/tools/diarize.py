@@ -81,15 +81,16 @@ def run_diarization(
         pipeline.to(torch.device("cuda"))
         logger.info("Pyannote pipeline moved to GPU")
     
-    # Fine-tune hyperparameters for better accuracy
+    # Fine-tune hyperparameters for MORE AGGRESSIVE speaker separation
+    # These settings help detect multiple speakers even when voices are similar
     pipeline.instantiate({
         "segmentation": {
-            "min_duration_off": 0.1,  # Min pause to consider new segment (100ms - more sensitive)
+            "min_duration_off": 0.05,  # Reduced from 0.1 - detect shorter pauses (50ms)
         },
         "clustering": {
             "method": "centroid",
-            "min_cluster_size": 6,    # Smaller clusters allowed (more sensitive)
-            "threshold": 0.5,         # Lower threshold = more aggressive speaker separation
+            "min_cluster_size": 3,     # Reduced from 6 - allow smaller speaker clusters
+            "threshold": 0.35,         # Reduced from 0.5 - more aggressive speaker separation
         },
     })
     

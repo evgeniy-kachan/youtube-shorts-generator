@@ -306,6 +306,7 @@ const SegmentsList = ({
   const [ttsProvider, setTtsProvider] = useState('elevenlabs');
   const [voiceMix, setVoiceMix] = useState('male_duo');
   const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(true);
+  const [numSpeakers, setNumSpeakers] = useState(0); // 0 = auto-detect, 1-3 = fixed
   // cropFocus is now always 'face_auto' for center_crop
   const cropFocus = verticalMethod === 'center_crop' ? 'face_auto' : 'center';
 
@@ -395,7 +396,7 @@ const SegmentsList = ({
 
   const handleProcess = () => {
     if (selectedSegments.length > 0) {
-      console.log('[SegmentsList] Calling onProcess with subtitleAnimation:', subtitleAnimation);
+      console.log('[SegmentsList] Calling onProcess with subtitleAnimation:', subtitleAnimation, 'numSpeakers:', numSpeakers);
       onProcess(
         selectedSegments,
         verticalMethod,
@@ -410,7 +411,8 @@ const SegmentsList = ({
         voiceMix,
         preserveBackgroundAudio,
         cropFocus,
-        speakerColorMode
+        speakerColorMode,
+        numSpeakers
       );
     }
   };
@@ -820,6 +822,43 @@ const SegmentsList = ({
                     чтобы оставить атмосферу площадки.
                   </div>
                 </button>
+              </div>
+
+              {/* Number of Speakers */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                  Количество спикеров
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { id: 0, label: 'Авто', description: 'Определить автоматически' },
+                    { id: 1, label: '1', description: 'Монолог' },
+                    { id: 2, label: '2', description: 'Диалог' },
+                    { id: 3, label: '3', description: 'Три спикера' },
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => setNumSpeakers(option.id)}
+                      className={`p-3 border rounded-xl text-center transition ${
+                        numSpeakers === option.id
+                          ? 'border-purple-600 bg-purple-50 ring-1 ring-purple-300'
+                          : 'border-gray-200 hover:border-purple-400'
+                      }`}
+                    >
+                      <div className="font-semibold text-gray-900">
+                        {option.label}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {option.description}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Укажите количество спикеров для более точной диаризации. &quot;Авто&quot; — система определит сама.
+                </p>
               </div>
 
               {/* Preset Button */}

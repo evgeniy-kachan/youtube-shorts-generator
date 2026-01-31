@@ -446,10 +446,11 @@ function App() {
     voiceMix = 'male_duo',
     preserveBackgroundAudio = true,
     cropFocus = 'center',
-    speakerColorMode = 'colored'
+    speakerColorMode = 'colored',
+    numSpeakers = 0
   ) => {
     try {
-      console.log('[handleProcess] subtitleAnimation:', subtitleAnimation);
+      console.log('[handleProcess] subtitleAnimation:', subtitleAnimation, 'numSpeakers:', numSpeakers);
       setStage('processing');
       setProgress(0);
       setStatusMessage('Начинаем обработку...');
@@ -470,7 +471,8 @@ function App() {
         subtitleGradient,
         preserveBackgroundAudio,
         cropFocus,
-        speakerColorMode
+        speakerColorMode,
+        numSpeakers
       );
       setProcessingTask(response.task_id);
     } catch (error) {

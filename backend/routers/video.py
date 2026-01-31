@@ -128,7 +128,7 @@ def _extract_unique_speakers(segments: list[dict]) -> list[str]:
     return order
 
 
-def _build_voice_plan(segments: list[dict], mix: str) -> dict[str, str]:
+def _build_voice_plan(segments: list[dict], mix: str, num_speakers: int = 0) -> dict[str, str]:
     pattern = VOICE_MIX_PRESETS.get(mix, VOICE_MIX_PRESETS["male_duo"])
     male_pool = config.ELEVENLABS_VOICE_IDS_MALE or [config.ELEVENLABS_VOICE_ID]
     female_pool = config.ELEVENLABS_VOICE_IDS_FEMALE or [config.ELEVENLABS_VOICE_ID]
@@ -137,6 +137,14 @@ def _build_voice_plan(segments: list[dict], mix: str) -> dict[str, str]:
 
     plan: dict[str, str] = {}
     speakers = _extract_unique_speakers(segments)
+    
+    # If user specified num_speakers, ensure we have voice mappings for all potential speakers
+    if num_speakers >= 2:
+        # Add speaker names that might be assigned during processing
+        for i in range(num_speakers):
+            speaker_name = f"SPEAKER_{i:02d}"
+            if speaker_name not in speakers:
+                speakers.append(speaker_name)
 
     for idx, speaker_id in enumerate(speakers):
         desired_gender = pattern[min(idx, len(pattern) - 1)]
@@ -145,7 +153,7 @@ def _build_voice_plan(segments: list[dict], mix: str) -> dict[str, str]:
         else:
             plan[speaker_id] = next(male_iter)
 
-    plan["__default__"] = plan.get(speakers[0], config.ELEVENLABS_VOICE_ID)
+    plan["__default__"] = plan.get(speakers[0], config.ELEVENLABS_VOICE_ID) if speakers else config.ELEVENLABS_VOICE_ID
     return plan
 
 def _calculate_iou(segment1: dict, segment2: dict) -> float:
@@ -794,6 +802,7 @@ def _process_segments_task(
     preserve_background_audio: bool = True,
     crop_focus: str = "center",
     speaker_color_mode: str = "colored",
+    num_speakers: int = 0,
 ):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Preparing to render..."}
@@ -817,7 +826,7 @@ def _process_segments_task(
         tts_service = get_tts_service(tts_provider)
         voice_plan = None
         if (tts_provider or "").lower() == "elevenlabs":
-            voice_plan = _build_voice_plan(segments_to_process, voice_mix)
+            voice_plan = _build_voice_plan(segments_to_process, voice_mix, num_speakers)
         output_dir = get_output_dir(video_id)
         
         for segment in segments_to_process:
@@ -832,18 +841,26 @@ def _process_segments_task(
                     speakers_in_segment.add(spk)
             
             # Always log speaker info (was only logging multi-speaker before)
-            if dialogue:
+            logger.info(
+                "DIARIZATION [%s]: %d turns, %d speaker(s): %s | TTS Provider: %s | User num_speakers: %s",
+                segment['id'], len(dialogue), len(speakers_in_segment), 
+                list(speakers_in_segment) if speakers_in_segment else ['NO_SPEAKERS'],
+                tts_provider,
+                num_speakers if num_speakers > 0 else 'auto'
+            )
+            
+            # If user specified num_speakers >= 2 but diarization found only 1, force multi-speaker
+            detected_speakers = len(speakers_in_segment)
+            if num_speakers >= 2 and detected_speakers < num_speakers and dialogue:
                 logger.info(
-                    "DIARIZATION [%s]: %d turns, %d speaker(s): %s | TTS Provider: %s",
-                    segment['id'], len(dialogue), len(speakers_in_segment), 
-                    list(speakers_in_segment) if speakers_in_segment else ['NO_SPEAKERS'],
-                    tts_provider
+                    "SPEAKER OVERRIDE [%s]: User requested %d speakers but only %d detected. Assigning alternating speakers.",
+                    segment['id'], num_speakers, detected_speakers
                 )
-            else:
-                logger.warning(
-                    "DIARIZATION [%s]: No dialogue structure found! Segment may be single-speaker without turns. | TTS Provider: %s",
-                    segment['id'], tts_provider
-                )
+                # Assign alternating speakers to turns
+                speaker_names = [f"SPEAKER_{i:02d}" for i in range(num_speakers)]
+                for idx, turn in enumerate(dialogue):
+                    turn['speaker'] = speaker_names[idx % num_speakers]
+                speakers_in_segment = set(speaker_names)
             
             # Check if we have a dialogue structure for multi-speaker synthesis
             has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
@@ -1253,6 +1270,7 @@ async def process_segments(request: ProcessRequest, background_tasks: Background
         request.preserve_background_audio,
         request.crop_focus,
         request.speaker_color_mode,
+        request.num_speakers,
     )
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Processing task queued")
 
