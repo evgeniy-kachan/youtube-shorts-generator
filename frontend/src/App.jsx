@@ -4,6 +4,7 @@ import VideoInput from './components/VideoInput';
 import ProgressBar from './components/ProgressBar';
 import SegmentsList from './components/SegmentsList';
 import DownloadList from './components/DownloadList';
+import AudioTranscriber from './components/AudioTranscriber';
 import {
   analyzeLocalVideo,
   getTaskStatus,
@@ -631,6 +632,9 @@ function App() {
           </p>
         </div>
       </footer>
+
+      {/* Audio Transcriber - floating widget for analyzing reference translations */}
+      <AudioTranscriber />
     </div>
   );
 }

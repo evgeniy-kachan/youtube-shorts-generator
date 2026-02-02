@@ -1000,14 +1000,18 @@ def _process_segments_task(
         for segment in segments_to_process:
             audio_path = os.path.join(output_dir, f"{segment['id']}.wav")
             
-            # Optional: Rediarize segment for better accuracy
-            if rediarize_segments and num_speakers >= 2:
-                logger.info("REDIARIZATION [%s]: User requested rediarization", segment['id'])
+            # Optional: Rediarize segment for better accuracy (only in AUTO mode)
+            # In manual mode (num_speakers >= 2), user controls speaker assignment via phrases/times
+            if rediarize_segments and num_speakers == 0:
+                logger.info(
+                    "REDIARIZATION [%s]: Running in AUTO mode - pyannote will detect speakers",
+                    segment['id']
+                )
                 hf_token = os.getenv("HUGGINGFACE_TOKEN")
                 rediar_segments = _rediarize_segment(
                     video_path=video_path,
                     segment=segment,
-                    num_speakers=num_speakers,
+                    num_speakers=0,  # Let pyannote auto-detect
                     hf_token=hf_token,
                 )
                 if rediar_segments:
@@ -1799,6 +1803,134 @@ async def generate_description(request: GenerateDescriptionRequest):
     except Exception as e:
         logger.error("Error generating description: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# AUDIO TRANSCRIPTION ENDPOINT (for analyzing reference translations)
+# ============================================================================
+
+class TranscribeResponse(BaseModel):
+    """Response model for audio transcription."""
+    text: str
+    words: list
+    duration: float
+    language: str
+
+
+@router.post("/transcribe-audio", response_model=TranscribeResponse)
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    language: str = "ru",
+):
+    """
+    Transcribe audio file with word-level timestamps.
+    
+    Useful for analyzing reference translations (e.g., Yandex sync).
+    Returns text and word timings for comparison with DeepSeek translations.
+    """
+    import tempfile
+    import json
+    
+    # Validate file type
+    allowed_types = [".mp3", ".wav", ".m4a", ".ogg", ".webm", ".mp4"]
+    file_ext = Path(file.filename).suffix.lower() if file.filename else ".mp3"
+    if file_ext not in allowed_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {file_ext}. Allowed: {allowed_types}"
+        )
+    
+    try:
+        # Save uploaded file to temp location
+        with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+        
+        logger.info("Transcribing uploaded audio: %s (%d bytes)", file.filename, len(content))
+        
+        # Convert to WAV if needed (WhisperX works best with WAV)
+        wav_path = tmp_path
+        if file_ext != ".wav":
+            wav_path = tmp_path.replace(file_ext, ".wav")
+            try:
+                (
+                    ffmpeg
+                    .input(tmp_path)
+                    .output(wav_path, ac=1, ar=16000)
+                    .overwrite_output()
+                    .run(quiet=True)
+                )
+            except Exception as e:
+                logger.warning("FFmpeg conversion failed, using original: %s", e)
+                wav_path = tmp_path
+        
+        # Run WhisperX transcription with word timestamps
+        from backend.services.transcription_runner import TranscriptionRunner
+        
+        runner = TranscriptionRunner(
+            enable_diarization=False,  # Don't need diarization for reference
+        )
+        
+        result = runner.transcribe(
+            audio_path=wav_path,
+            model="large-v3",
+            language=language,
+            device="cuda" if config.WHISPER_DEVICE == "cuda" else "cpu",
+            compute_type=config.WHISPER_COMPUTE_TYPE,
+        )
+        
+        # Extract words with timestamps
+        words = []
+        full_text_parts = []
+        
+        for segment in result.get("segments", []):
+            segment_words = segment.get("words", [])
+            for word_info in segment_words:
+                words.append({
+                    "word": word_info.get("word", "").strip(),
+                    "start": round(word_info.get("start", 0), 3),
+                    "end": round(word_info.get("end", 0), 3),
+                })
+            # Also collect segment text
+            if segment.get("text"):
+                full_text_parts.append(segment["text"].strip())
+        
+        full_text = " ".join(full_text_parts)
+        
+        # Calculate duration from last word
+        duration = words[-1]["end"] if words else 0.0
+        
+        logger.info(
+            "Transcription complete: %d words, %.2fs duration, language=%s",
+            len(words), duration, language
+        )
+        
+        # Log word-level details for analysis
+        logger.info("TRANSCRIPTION RESULT: '%s'", full_text)
+        for i, w in enumerate(words[:10]):  # Log first 10 words
+            logger.debug("  Word %d: %.2f-%.2f '%s'", i, w["start"], w["end"], w["word"])
+        if len(words) > 10:
+            logger.debug("  ... and %d more words", len(words) - 10)
+        
+        # Cleanup temp files
+        try:
+            os.unlink(tmp_path)
+            if wav_path != tmp_path and os.path.exists(wav_path):
+                os.unlink(wav_path)
+        except:
+            pass
+        
+        return TranscribeResponse(
+            text=full_text,
+            words=words,
+            duration=duration,
+            language=language,
+        )
+        
+    except Exception as e:
+        logger.error("Transcription failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 
 @router.on_event("startup")

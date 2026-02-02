@@ -876,24 +876,26 @@ const SegmentsList = ({
                       </p>
                     </div>
                     
-                    {/* Rediarization option */}
-                    <div className="p-3 bg-blue-50 rounded-xl border border-blue-200">
-                      <label className="flex items-center space-x-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          disabled={loading}
-                          checked={rediarizeSegments}
-                          onChange={(e) => setRediarizeSegments(e.target.checked)}
-                          className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
-                        />
-                        <span className="text-sm font-semibold text-blue-700">
-                          🔄 Повторная диаризация сегментов
-                        </span>
-                      </label>
-                      <p className="text-xs text-blue-600 mt-2 ml-7">
-                        Запустить диаризацию заново на выбранных сегментах для более точного определения спикеров (медленнее, но точнее).
-                      </p>
-                    </div>
+                    {/* Rediarization option - only show in AUTO mode (numSpeakers = 0) */}
+                    {numSpeakers === 0 && (
+                      <div className="p-3 bg-blue-50 rounded-xl border border-blue-200">
+                        <label className="flex items-center space-x-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            disabled={loading}
+                            checked={rediarizeSegments}
+                            onChange={(e) => setRediarizeSegments(e.target.checked)}
+                            className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
+                          />
+                          <span className="text-sm font-semibold text-blue-700">
+                            🔄 Повторная диаризация сегментов
+                          </span>
+                        </label>
+                        <p className="text-xs text-blue-600 mt-2 ml-7">
+                          Запустить диаризацию заново на выбранных сегментах для более точного определения спикеров (медленнее, но точнее).
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -1912,6 +1912,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             text_ru = turn.get("text_ru")
             text_en = turn.get("text", "")
             
+            # Log both EN and RU for debugging
+            logger.info(
+                "TTD TURN %d: EN='%s' → RU='%s'",
+                idx,
+                text_en[:100] + ("..." if len(text_en) > 100 else ""),
+                (text_ru[:100] + ("..." if len(text_ru) > 100 else "")) if text_ru else "<MISSING>"
+            )
+            
             # CRITICAL: Use translated text, warn if missing
             if text_ru and text_ru.strip():
                 text = text_ru

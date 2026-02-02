@@ -94,8 +94,10 @@ def run_diarization(
         },
     })
     
-    logger.info("Running diarization with num_speakers=%d", num_speakers)
-    diarization = pipeline(wav_path, num_speakers=num_speakers)
+    # num_speakers=0 means auto-detect (pass None to pyannote)
+    actual_num_speakers = num_speakers if num_speakers > 0 else None
+    logger.info("Running diarization with num_speakers=%s", actual_num_speakers if actual_num_speakers else "auto")
+    diarization = pipeline(wav_path, num_speakers=actual_num_speakers)
 
     segments: List[Dict] = []
     for turn, _, speaker in diarization.itertracks(yield_label=True):
