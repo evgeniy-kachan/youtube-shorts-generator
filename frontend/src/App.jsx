@@ -71,6 +71,7 @@ function App() {
       return [];
     },
     [segments]
+    [segments]
   );
 
   // Session recovery: save task IDs to localStorage
@@ -224,7 +225,7 @@ function App() {
     };
 
     tryRestoreSession();
-  }, [sessionRestored, stage]);
+  }, [sessionRestored, stage, buildProcessedSegments]);
 
   // Handle browser wake from sleep (visibility change) with debounce
   const lastVisibilityCheck = React.useRef(0);

@@ -145,7 +145,7 @@ export const getUploadedVideos = async () => {
 };
 
 // Development helper: Use cached video instead of uploading
-export const useCachedVideo = async (videoId) => {
+export const getCachedVideo = async (videoId) => {
   const response = await api.post(`/api/video/use-cached-video/${videoId}`);
   return response.data;
 };

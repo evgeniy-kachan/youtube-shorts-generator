@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getUploadedVideos, useCachedVideo } from '../services/api';
+import { getUploadedVideos, getCachedVideo } from '../services/api';
 
 const VideoInput = ({ onSubmit, loading }) => {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -24,7 +24,7 @@ const VideoInput = ({ onSubmit, loading }) => {
   const handleUseCachedVideo = async (videoId, filename) => {
     try {
       setError('');
-      const data = await useCachedVideo(videoId);
+      const data = await getCachedVideo(videoId);
       // Create a fake file object for compatibility
       const fakeFile = {
         name: data.filename,
