@@ -97,7 +97,15 @@ class ProcessRequest(BaseModel):
     )
     speaker_change_times: str = Field(
         default="",
-        description="Comma-separated seconds when speaker changes (e.g., '15' or '15,30')"
+        description="Comma-separated seconds when speaker changes (e.g., '15' or '15,30'). Alternative: use speaker_change_phrases."
+    )
+    speaker_change_phrases: str = Field(
+        default="",
+        description="Comma-separated phrases when speaker changes (e.g., 'Он узнаёт о музыке' or 'фраза1, фраза2'). Takes precedence over speaker_change_times."
+    )
+    rediarize_segments: bool = Field(
+        default=False,
+        description="Run diarization again on selected segments for better accuracy (slower but more precise)"
     )
     
 

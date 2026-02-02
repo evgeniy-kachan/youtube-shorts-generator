@@ -417,6 +417,167 @@ def _create_pseudo_dialogue_from_words(
     return dialogue
 
 
+def _find_phrase_in_segment(segment: dict, phrase: str) -> float | None:
+    """
+    Find a phrase in segment transcription and return its start time (relative to segment start).
+    
+    Args:
+        segment: Segment dict with 'words', 'text_ru', 'dialogue', etc.
+        phrase: Phrase to search for (case-insensitive, partial match)
+        
+    Returns:
+        Start time in seconds (relative to segment start) or None if not found
+    """
+    if not phrase or not phrase.strip():
+        return None
+    
+    phrase_lower = phrase.strip().lower()
+    segment_start = float(segment.get('start_time', 0))
+    
+    # Try to find in dialogue turns first (most accurate)
+    # Prefer text_ru (translated) as user will input Russian phrases
+    dialogue = segment.get('dialogue') or []
+    for turn in dialogue:
+        # Check both Russian and English text
+        turn_text_ru = (turn.get('text_ru') or '').lower()
+        turn_text_en = (turn.get('text') or '').lower()
+        if phrase_lower in turn_text_ru or phrase_lower in turn_text_en:
+            turn_start = float(turn.get('start', 0)) - segment_start
+            logger.info(
+                "Found phrase '%s' in dialogue turn at %.2fs (segment %s)",
+                phrase, turn_start, segment.get('id')
+            )
+            return max(0.0, turn_start)
+    
+    # Fallback: search in words
+    words = segment.get('words') or []
+    if words:
+        # Build text from words and find position
+        full_text = ' '.join(w.get('word', '') for w in words).lower()
+        if phrase_lower in full_text:
+            # Find the word index where phrase starts
+            words_text = ''
+            for idx, word in enumerate(words):
+                words_text += word.get('word', '') + ' '
+                if phrase_lower in words_text.lower():
+                    word_start = float(word.get('start', 0)) - segment_start
+                    logger.info(
+                        "Found phrase '%s' in words at %.2fs (segment %s)",
+                        phrase, word_start, segment.get('id')
+                    )
+                    return max(0.0, word_start)
+    
+    # Last resort: search in text_ru (full segment text)
+    text_ru = (segment.get('text_ru') or segment.get('text_en') or '').lower()
+    if phrase_lower in text_ru:
+        # Approximate: use segment start (not very accurate)
+        logger.warning(
+            "Found phrase '%s' in segment text but no word timestamps (segment %s). Using segment start.",
+            phrase, segment.get('id')
+        )
+        return 0.0
+    
+    logger.warning("Phrase '%s' not found in segment %s", phrase, segment.get('id'))
+    return None
+
+
+def _rediarize_segment(
+    video_path: str,
+    segment: dict,
+    num_speakers: int = 2,
+    hf_token: str | None = None,
+) -> list[dict] | None:
+    """
+    Run diarization on a specific segment (more accurate for short fragments).
+    
+    Args:
+        video_path: Path to source video
+        segment: Segment dict with 'start_time', 'end_time'
+        num_speakers: Expected number of speakers
+        hf_token: HuggingFace token (if None, uses env var)
+        
+    Returns:
+        List of diarization segments or None if failed
+    """
+    try:
+        from backend.services.diarization_runner import get_diarization_runner
+        import tempfile
+        import subprocess
+        from pathlib import Path
+        
+        segment_start = float(segment.get('start_time', 0))
+        segment_end = float(segment.get('end_time', 0))
+        segment_duration = segment_end - segment_start
+        
+        if segment_duration < 1.0:
+            logger.warning("Segment too short for rediarization: %.2fs", segment_duration)
+            return None
+        
+        logger.info(
+            "REDIARIZATION [%s]: Running diarization on segment %.2f-%.2fs (%.2fs duration, %d speakers)",
+            segment.get('id'), segment_start, segment_end, segment_duration, num_speakers
+        )
+        
+        # Extract audio segment
+        with tempfile.TemporaryDirectory() as tmpdir:
+            segment_audio = Path(tmpdir) / "segment_audio.wav"
+            
+            # Extract audio segment using ffmpeg
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-ss", str(segment_start),
+                "-t", str(segment_duration),
+                "-ac", "1",
+                "-ar", "16000",
+                "-vn",
+                str(segment_audio),
+            ]
+            
+            logger.debug("Extracting segment audio: %s", " ".join(cmd))
+            result = subprocess.run(
+                cmd,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            
+            if not segment_audio.exists():
+                logger.error("Failed to extract segment audio")
+                return None
+            
+            # Run diarization on extracted segment
+            runner = get_diarization_runner()
+            if hf_token:
+                runner.hf_token = hf_token
+            runner.num_speakers = num_speakers
+            
+            diar_segments = runner.run(str(segment_audio))
+            
+            if not diar_segments:
+                logger.warning("Rediarization returned no segments")
+                return None
+            
+            # Adjust timestamps to be relative to segment start
+            adjusted_segments = []
+            for seg in diar_segments:
+                adjusted_segments.append({
+                    "start": float(seg.get("start", 0)) + segment_start,
+                    "end": float(seg.get("end", 0)) + segment_start,
+                    "speaker": seg.get("speaker", "SPEAKER_00"),
+                })
+            
+            logger.info(
+                "REDIARIZATION [%s]: Successfully rediarized, found %d segments",
+                segment.get('id'), len(adjusted_segments)
+            )
+            return adjusted_segments
+            
+    except Exception as e:
+        logger.error("Rediarization failed: %s", e, exc_info=True)
+        return None
+
+
 def _refine_turn_boundaries(dialogue: list[dict] | None) -> None:
     """
     Refine turn start/end times using word-level timestamps from WhisperX.
@@ -808,6 +969,8 @@ def _process_segments_task(
     speaker_color_mode: str = "colored",
     num_speakers: int = 0,
     speaker_change_times: str = "",
+    speaker_change_phrases: str = "",
+    rediarize_segments: bool = False,
 ):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Preparing to render..."}
@@ -837,6 +1000,39 @@ def _process_segments_task(
         for segment in segments_to_process:
             audio_path = os.path.join(output_dir, f"{segment['id']}.wav")
             
+            # Optional: Rediarize segment for better accuracy
+            if rediarize_segments and num_speakers >= 2:
+                logger.info("REDIARIZATION [%s]: User requested rediarization", segment['id'])
+                hf_token = os.getenv("HUGGINGFACE_TOKEN")
+                rediar_segments = _rediarize_segment(
+                    video_path=video_path,
+                    segment=segment,
+                    num_speakers=num_speakers,
+                    hf_token=hf_token,
+                )
+                if rediar_segments:
+                    # Rebuild dialogue from rediarization results
+                    # Match rediarization segments with existing dialogue turns
+                    segment_start = float(segment.get('start_time', 0))
+                    dialogue = segment.get('dialogue') or []
+                    
+                    # Create mapping: time -> speaker from rediarization
+                    time_speaker_map = {}
+                    for rediar_seg in rediar_segments:
+                        rediar_start = float(rediar_seg.get('start', 0)) - segment_start
+                        rediar_end = float(rediar_seg.get('end', 0)) - segment_start
+                        rediar_speaker = rediar_seg.get('speaker', 'SPEAKER_00')
+                        # Map all times in this range to this speaker
+                        for turn in dialogue:
+                            turn_start = float(turn.get('start', 0)) - segment_start
+                            if rediar_start <= turn_start < rediar_end:
+                                turn['speaker'] = rediar_speaker
+                    
+                    logger.info(
+                        "REDIARIZATION [%s]: Updated %d turns with new speaker assignments",
+                        segment['id'], len([t for t in dialogue if 'speaker' in t])
+                    )
+            
             # DIARIZATION DIAGNOSTIC: Log speaker info for this segment
             dialogue = segment.get('dialogue') or []
             speakers_in_segment = set()
@@ -857,9 +1053,29 @@ def _process_segments_task(
             # If user specified num_speakers >= 2 but diarization found only 1, force multi-speaker
             detected_speakers = len(speakers_in_segment)
             if num_speakers >= 2 and detected_speakers < num_speakers and dialogue:
-                # Parse speaker change times (relative to segment start)
+                # Parse speaker change times/phrases (relative to segment start)
                 change_times = []
-                if speaker_change_times:
+                
+                # Priority: phrases > times
+                if speaker_change_phrases:
+                    # Find phrases in segment and get their start times
+                    phrases = [p.strip() for p in speaker_change_phrases.split(',') if p.strip()]
+                    for phrase in phrases:
+                        phrase_time = _find_phrase_in_segment(segment, phrase)
+                        if phrase_time is not None:
+                            change_times.append(phrase_time)
+                        else:
+                            logger.warning(
+                                "Phrase '%s' not found in segment %s, skipping",
+                                phrase, segment.get('id')
+                            )
+                    change_times.sort()
+                    logger.info(
+                        "SPEAKER CHANGE [%s]: Found %d phrases, times: %s",
+                        segment['id'], len(change_times), change_times
+                    )
+                elif speaker_change_times:
+                    # Fallback to time-based
                     try:
                         change_times = [float(t.strip()) for t in speaker_change_times.split(',') if t.strip()]
                         change_times.sort()
@@ -1352,6 +1568,8 @@ async def process_segments(request: ProcessRequest, background_tasks: Background
         request.speaker_color_mode,
         request.num_speakers,
         request.speaker_change_times,
+        request.speaker_change_phrases,
+        request.rediarize_segments,
     )
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Processing task queued")
 

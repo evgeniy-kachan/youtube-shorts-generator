@@ -38,7 +38,9 @@ export const processSegments = async (
   cropFocus = 'center',
   speakerColorMode = 'colored',
   numSpeakers = 0,
-  speakerChangeTime = ''
+  speakerChangeTime = '',
+  speakerChangePhrase = '',
+  rediarizeSegments = false
 ) => {
   const response = await api.post('/api/video/process', {
     video_id: videoId,
@@ -58,6 +60,8 @@ export const processSegments = async (
     speaker_color_mode: speakerColorMode,
     num_speakers: numSpeakers,
     speaker_change_times: speakerChangeTime,
+    speaker_change_phrases: speakerChangePhrase,
+    rediarize_segments: rediarizeSegments,
   });
   return response.data;
 };

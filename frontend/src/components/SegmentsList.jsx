@@ -308,6 +308,8 @@ const SegmentsList = ({
   const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(true);
   const [numSpeakers, setNumSpeakers] = useState(0); // 0 = auto-detect, 1-3 = fixed
   const [speakerChangeTime, setSpeakerChangeTime] = useState(''); // Time in seconds when speaker changes (e.g., "15" or "15,30")
+  const [speakerChangePhrase, setSpeakerChangePhrase] = useState(''); // Phrase when speaker changes (e.g., "Он узнаёт о музыке")
+  const [rediarizeSegments, setRediarizeSegments] = useState(false); // Run diarization again on segments for better accuracy
   // cropFocus is now always 'face_auto' for center_crop
   const cropFocus = verticalMethod === 'center_crop' ? 'face_auto' : 'center';
 
@@ -365,7 +367,7 @@ const SegmentsList = ({
 
   const handleProcess = () => {
     if (selectedSegments.length > 0) {
-      console.log('[SegmentsList] Calling onProcess with subtitleAnimation:', subtitleAnimation, 'numSpeakers:', numSpeakers, 'speakerChangeTime:', speakerChangeTime);
+      console.log('[SegmentsList] Calling onProcess with subtitleAnimation:', subtitleAnimation, 'numSpeakers:', numSpeakers, 'speakerChangePhrase:', speakerChangePhrase, 'rediarizeSegments:', rediarizeSegments);
       onProcess(
         selectedSegments,
         verticalMethod,
@@ -382,7 +384,9 @@ const SegmentsList = ({
         cropFocus,
         speakerColorMode,
         numSpeakers,
-        speakerChangeTime
+        speakerChangeTime,
+        speakerChangePhrase,
+        rediarizeSegments
       );
     }
   };
@@ -830,26 +834,66 @@ const SegmentsList = ({
                   Укажите количество спикеров для более точной диаризации. &quot;Авто&quot; — система определит сама.
                 </p>
                 
-                {/* Speaker Change Time - only show when numSpeakers >= 2 */}
+                {/* Speaker Change Settings - only show when numSpeakers >= 2 */}
                 {numSpeakers >= 2 && (
-                  <div className="mt-4 p-3 bg-purple-50 rounded-xl border border-purple-200">
-                    <label className="block text-xs font-bold text-purple-700 uppercase tracking-wider mb-2">
-                      ⏱️ Время смены спикера (сек)
-                    </label>
-                    <input
-                      type="text"
-                      disabled={loading}
-                      value={speakerChangeTime}
-                      onChange={(e) => setSpeakerChangeTime(e.target.value)}
-                      placeholder={numSpeakers === 2 ? "Например: 15" : "Например: 15, 30"}
-                      className="w-full p-3 border border-purple-300 rounded-lg text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                    />
-                    <p className="text-xs text-purple-600 mt-2">
-                      {numSpeakers === 2 
-                        ? "Укажите секунду, когда меняется спикер. До этого времени — спикер 1, после — спикер 2."
-                        : "Укажите секунды через запятую. Например: 15, 30 — три спикера."
-                      }
-                    </p>
+                  <div className="mt-4 space-y-3">
+                    {/* Phrase-based speaker change (preferred) */}
+                    <div className="p-3 bg-purple-50 rounded-xl border border-purple-200">
+                      <label className="block text-xs font-bold text-purple-700 uppercase tracking-wider mb-2">
+                        💬 Фраза для смены спикера
+                      </label>
+                      <input
+                        type="text"
+                        disabled={loading}
+                        value={speakerChangePhrase}
+                        onChange={(e) => setSpeakerChangePhrase(e.target.value)}
+                        placeholder={numSpeakers === 2 ? "Например: Он узнаёт о музыке" : "Например: фраза1, фраза2"}
+                        className="w-full p-3 border border-purple-300 rounded-lg text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                      />
+                      <p className="text-xs text-purple-600 mt-2">
+                        {numSpeakers === 2 
+                          ? "Укажите фразу, с которой начинается второй спикер. Система найдёт её в тексте и определит время автоматически."
+                          : "Укажите фразы через запятую. Система найдёт их в тексте и определит время автоматически."
+                        }
+                      </p>
+                    </div>
+                    
+                    {/* Time-based speaker change (fallback) */}
+                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-200">
+                      <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">
+                        ⏱️ Время смены спикера (сек) — альтернатива
+                      </label>
+                      <input
+                        type="text"
+                        disabled={loading}
+                        value={speakerChangeTime}
+                        onChange={(e) => setSpeakerChangeTime(e.target.value)}
+                        placeholder={numSpeakers === 2 ? "Например: 15" : "Например: 15, 30"}
+                        className="w-full p-3 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-gray-500 focus:border-gray-500"
+                      />
+                      <p className="text-xs text-gray-600 mt-2">
+                        Используйте, если фраза не найдена. Укажите секунды, когда меняется спикер.
+                      </p>
+                    </div>
+                    
+                    {/* Rediarization option */}
+                    <div className="p-3 bg-blue-50 rounded-xl border border-blue-200">
+                      <label className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          disabled={loading}
+                          checked={rediarizeSegments}
+                          onChange={(e) => setRediarizeSegments(e.target.checked)}
+                          className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
+                        />
+                        <span className="text-sm font-semibold text-blue-700">
+                          🔄 Повторная диаризация сегментов
+                        </span>
+                      </label>
+                      <p className="text-xs text-blue-600 mt-2 ml-7">
+                        Запустить диаризацию заново на выбранных сегментах для более точного определения спикеров (медленнее, но точнее).
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>

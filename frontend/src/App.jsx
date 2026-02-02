@@ -457,10 +457,12 @@ function App() {
     cropFocus = 'center',
     speakerColorMode = 'colored',
     numSpeakers = 0,
-    speakerChangeTime = ''
+    speakerChangeTime = '',
+    speakerChangePhrase = '',
+    rediarizeSegments = false
   ) => {
     try {
-      console.log('[handleProcess] subtitleAnimation:', subtitleAnimation, 'numSpeakers:', numSpeakers, 'speakerChangeTime:', speakerChangeTime);
+      console.log('[handleProcess] subtitleAnimation:', subtitleAnimation, 'numSpeakers:', numSpeakers, 'speakerChangePhrase:', speakerChangePhrase, 'rediarizeSegments:', rediarizeSegments);
       setStage('processing');
       setProgress(0);
       setStatusMessage('Начинаем обработку...');
@@ -483,7 +485,9 @@ function App() {
         cropFocus,
         speakerColorMode,
         numSpeakers,
-        speakerChangeTime
+        speakerChangeTime,
+        speakerChangePhrase,
+        rediarizeSegments
       );
       setProcessingTask(response.task_id);
     } catch (error) {
