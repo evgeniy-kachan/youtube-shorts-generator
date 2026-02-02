@@ -72,7 +72,6 @@ function App() {
       return [];
     },
     [segments]
-    [segments]
   );
 
   // Session recovery: save task IDs to localStorage
