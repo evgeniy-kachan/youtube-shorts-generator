@@ -1398,16 +1398,25 @@ async def analyze_local_video(
 async def upload_video(file: UploadFile = File(...)):
     task_id = str(uuid.uuid4())
     temp_dir = get_temp_dir()
-    file_path = os.path.join(temp_dir, file.filename)
+    # Use temporary filename during upload to avoid leaving incomplete files
+    temp_file_path = os.path.join(temp_dir, f"{file.filename}.tmp.{task_id}")
+    final_file_path = os.path.join(temp_dir, file.filename)
     
     try:
         # Stream file in chunks for better memory efficiency
         # Progress is tracked on client side via axios onUploadProgress
         total_size = 0
-        with open(file_path, "wb") as buffer:
+        with open(temp_file_path, "wb") as buffer:
             while chunk := await file.read(8192):  # 8KB chunks
                 buffer.write(chunk)
                 total_size += len(chunk)
+        
+        # Only rename to final name after successful upload
+        if os.path.exists(temp_file_path):
+            # If final file exists, remove it first (overwrite)
+            if os.path.exists(final_file_path):
+                os.remove(final_file_path)
+            os.rename(temp_file_path, final_file_path)
         
         file_size_mb = total_size / (1024 * 1024)
         logger.info(f"File '{file.filename}' uploaded successfully. Size: {file_size_mb:.2f} MB")
@@ -1416,7 +1425,7 @@ async def upload_video(file: UploadFile = File(...)):
         video_id = str(uuid.uuid4())
         uploaded_videos_cache[video_id] = {
             "filename": file.filename,
-            "path": file_path,
+            "path": final_file_path,
             "uploaded_at": datetime.now().isoformat(),
             "size_mb": file_size_mb
         }
@@ -1429,6 +1438,13 @@ async def upload_video(file: UploadFile = File(...)):
             result={"filename": file.filename, "video_id": video_id}
         )
     except Exception as e:
+        # Clean up incomplete file on error
+        if os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+                logger.info(f"Removed incomplete upload: {temp_file_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to remove incomplete file {temp_file_path}: {cleanup_error}")
         logger.error(f"Error uploading file: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {e}")
 
@@ -1789,7 +1805,24 @@ async def generate_description(request: GenerateDescriptionRequest):
 async def startup_event():
     # Clean up temp and output directories on startup
     logger.info("Clearing temp and output directories...")
-    # clear_temp_dir() # Optional: decide if you want to clear on startup
+    
+    # Clean up incomplete uploads (files with .tmp.* extension)
+    temp_dir = get_temp_dir()
+    if os.path.exists(temp_dir):
+        cleaned_count = 0
+        for file_path in Path(temp_dir).glob("*.tmp.*"):
+            try:
+                file_path.unlink()
+                cleaned_count += 1
+                logger.debug(f"Removed incomplete upload: {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to remove incomplete file {file_path}: {e}")
+        if cleaned_count > 0:
+            logger.info(f"Cleaned up {cleaned_count} incomplete upload(s) on startup")
+    
+    # Optional: uncomment to clear all temp files on startup
+    # clear_temp_dir()
+    
     if not os.path.exists(get_temp_dir()):
         os.makedirs(get_temp_dir())
     if not os.path.exists(config.OUTPUT_DIR):
