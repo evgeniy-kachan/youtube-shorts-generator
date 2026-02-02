@@ -2,6 +2,7 @@ import os
 import uuid
 import logging
 import subprocess
+from datetime import datetime
 from itertools import cycle
 from pathlib import Path
 from typing import List, Optional
@@ -33,6 +34,9 @@ logger = logging.getLogger(__name__)
 # In-memory storage for tasks and results
 tasks = {}
 analysis_results_cache = {}
+
+# Cache for uploaded videos (for development - can be easily removed)
+uploaded_videos_cache = {}  # {video_id: {"filename": str, "path": str, "uploaded_at": str}}
 
 # Lazy-loaded services
 _services = {}
@@ -1192,16 +1196,60 @@ async def upload_video(file: UploadFile = File(...)):
         file_size_mb = total_size / (1024 * 1024)
         logger.info(f"File '{file.filename}' uploaded successfully. Size: {file_size_mb:.2f} MB")
         
+        # Cache uploaded video metadata (for development - can be easily removed)
+        video_id = str(uuid.uuid4())
+        uploaded_videos_cache[video_id] = {
+            "filename": file.filename,
+            "path": file_path,
+            "uploaded_at": datetime.now().isoformat(),
+            "size_mb": file_size_mb
+        }
+        
         return TaskStatus(
             task_id=task_id,
             status="completed",
             progress=1.0,
             message=f"File '{file.filename}' uploaded successfully ({file_size_mb:.2f} MB).",
-            result={"filename": file.filename}
+            result={"filename": file.filename, "video_id": video_id}
         )
     except Exception as e:
         logger.error(f"Error uploading file: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {e}")
+
+@router.get("/uploaded-videos")
+async def get_uploaded_videos():
+    """Get list of cached uploaded videos (for development - can be easily removed)."""
+    videos = []
+    for video_id, metadata in uploaded_videos_cache.items():
+        # Check if file still exists
+        if os.path.exists(metadata["path"]):
+            videos.append({
+                "video_id": video_id,
+                "filename": metadata["filename"],
+                "uploaded_at": metadata["uploaded_at"],
+                "size_mb": metadata["size_mb"]
+            })
+        else:
+            # Remove from cache if file doesn't exist
+            del uploaded_videos_cache[video_id]
+    return {"videos": videos}
+
+@router.post("/use-cached-video/{video_id}")
+async def use_cached_video(video_id: str):
+    """Use cached video file instead of uploading (for development - can be easily removed)."""
+    if video_id not in uploaded_videos_cache:
+        raise HTTPException(status_code=404, detail="Cached video not found")
+    
+    metadata = uploaded_videos_cache[video_id]
+    if not os.path.exists(metadata["path"]):
+        del uploaded_videos_cache[video_id]
+        raise HTTPException(status_code=404, detail="Cached video file not found")
+    
+    return {
+        "filename": metadata["filename"],
+        "path": metadata["path"],
+        "video_id": video_id
+    }
 
 @router.get("/download/{video_id}/{segment_id}")
 async def download_segment(video_id: str, segment_id: str):

@@ -1,9 +1,43 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { getUploadedVideos, useCachedVideo } from '../services/api';
 
 const VideoInput = ({ onSubmit, loading }) => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [error, setError] = useState('');
   const [analysisMode, setAnalysisMode] = useState('fast'); // 'fast' or 'deep'
+  const [cachedVideos, setCachedVideos] = useState([]);
+  const [showCachedList, setShowCachedList] = useState(false);
+
+  // Load cached videos on mount
+  useEffect(() => {
+    const loadCachedVideos = async () => {
+      try {
+        const data = await getUploadedVideos();
+        setCachedVideos(data.videos || []);
+      } catch (error) {
+        console.error('Failed to load cached videos:', error);
+      }
+    };
+    loadCachedVideos();
+  }, []);
+
+  const handleUseCachedVideo = async (videoId, filename) => {
+    try {
+      setError('');
+      const data = await useCachedVideo(videoId);
+      // Create a fake file object for compatibility
+      const fakeFile = {
+        name: data.filename,
+        size: data.size_mb * 1024 * 1024,
+        cached: true,
+        cachedPath: data.path,
+        cachedVideoId: videoId
+      };
+      onSubmit(fakeFile, analysisMode);
+    } catch (error) {
+      setError('Ошибка при использовании кэшированного видео: ' + error.message);
+    }
+  };
 
   const handleFileChange = (event) => {
     setError('');
@@ -55,6 +89,42 @@ const VideoInput = ({ onSubmit, loading }) => {
           найдём самые интересные моменты автоматически.
         </p>
       </div>
+
+      {/* Development: Cached videos list */}
+      {cachedVideos.length > 0 && (
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-blue-900">
+              💾 Загруженные ранее (для разработки)
+            </h3>
+            <button
+              type="button"
+              onClick={() => setShowCachedList(!showCachedList)}
+              className="text-xs text-blue-600 hover:text-blue-800"
+            >
+              {showCachedList ? 'Скрыть' : 'Показать'}
+            </button>
+          </div>
+          {showCachedList && (
+            <div className="space-y-2">
+              {cachedVideos.map((video) => (
+                <button
+                  key={video.video_id}
+                  type="button"
+                  onClick={() => handleUseCachedVideo(video.video_id, video.filename)}
+                  disabled={loading}
+                  className="w-full text-left p-3 bg-white border border-blue-200 rounded-lg hover:bg-blue-50 transition disabled:opacity-50"
+                >
+                  <div className="font-medium text-gray-900">{video.filename}</div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    {video.size_mb.toFixed(2)} MB • {new Date(video.uploaded_at).toLocaleString('ru-RU')}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>

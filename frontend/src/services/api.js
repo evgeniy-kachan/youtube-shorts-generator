@@ -134,6 +134,18 @@ export const restoreSession = async () => {
   return response.data;
 };
 
+// Development helper: Get list of cached uploaded videos
+export const getUploadedVideos = async () => {
+  const response = await api.get('/api/video/uploaded-videos');
+  return response.data;
+};
+
+// Development helper: Use cached video instead of uploading
+export const useCachedVideo = async (videoId) => {
+  const response = await api.post(`/api/video/use-cached-video/${videoId}`);
+  return response.data;
+};
+
 export const generateDescription = async (textEn, textRu, duration, highlightScore = 0) => {
   const response = await api.post('/api/video/generate-description', {
     text_en: textEn,

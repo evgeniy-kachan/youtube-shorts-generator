@@ -402,24 +402,33 @@ function App() {
       setTaskStatus('pending');
       setUploadProgress({ loadedMB: 0, totalMB: 0, percent: 0 });
 
-      const uploadResponse = await uploadVideoFile(file, (progressData) => {
-        setUploadProgress(progressData);
-        const percent = progressData.percent * 0.95; // Upload takes up to 95% of initial progress
-        setProgress(0.02 + percent);
-        setStatusMessage(
-          `Загружаем файл: ${progressData.loadedMB.toFixed(1)} / ${progressData.totalMB.toFixed(1)} МБ (${(progressData.percent * 100).toFixed(1)}%)`
-        );
-      });
-      const uploadedFilename = uploadResponse?.result?.filename;
+      let uploadedFilename;
 
-      if (!uploadedFilename) {
-        throw new Error('Сервер не вернул имя загруженного файла');
+      // Development: Skip upload if using cached video
+      if (file.cached) {
+        uploadedFilename = file.name;
+        setProgress(0.05);
+        setStatusMessage('Используем кэшированный файл. Начинаем анализ...');
+      } else {
+        const uploadResponse = await uploadVideoFile(file, (progressData) => {
+          setUploadProgress(progressData);
+          const percent = progressData.percent * 0.95; // Upload takes up to 95% of initial progress
+          setProgress(0.02 + percent);
+          setStatusMessage(
+            `Загружаем файл: ${progressData.loadedMB.toFixed(1)} / ${progressData.totalMB.toFixed(1)} МБ (${(progressData.percent * 100).toFixed(1)}%)`
+          );
+        });
+        uploadedFilename = uploadResponse?.result?.filename;
+
+        if (!uploadedFilename) {
+          throw new Error('Сервер не вернул имя загруженного файла');
+        }
+
+        setProgress(0.05);
+        setStatusMessage(analysisMode === 'deep' 
+          ? 'Файл загружен. Запускаем глубокий анализ (3-4 мин)...' 
+          : 'Файл загружен. Начинаем анализ...');
       }
-
-      setProgress(0.05);
-      setStatusMessage(analysisMode === 'deep' 
-        ? 'Файл загружен. Запускаем глубокий анализ (3-4 мин)...' 
-        : 'Файл загружен. Начинаем анализ...');
 
       const response = await analyzeLocalVideo(uploadedFilename, analysisMode);
       setAnalysisTask(response.task_id);
