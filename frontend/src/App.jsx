@@ -225,6 +225,7 @@ function App() {
     };
 
     tryRestoreSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionRestored, stage, buildProcessedSegments]);
 
   // Handle browser wake from sleep (visibility change) with debounce
