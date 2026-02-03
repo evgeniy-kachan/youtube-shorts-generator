@@ -1938,8 +1938,9 @@ async def startup_event():
     # Clean up temp and output directories on startup
     logger.info("Clearing temp and output directories...")
     
-    # Clean up incomplete uploads (files with .tmp.* extension)
     temp_dir = get_temp_dir()
+    
+    # Clean up incomplete uploads (files with .tmp.* extension)
     if os.path.exists(temp_dir):
         cleaned_count = 0
         for file_path in Path(temp_dir).glob("*.tmp.*"):
@@ -1951,6 +1952,34 @@ async def startup_event():
                 logger.warning(f"Failed to remove incomplete file {file_path}: {e}")
         if cleaned_count > 0:
             logger.info(f"Cleaned up {cleaned_count} incomplete upload(s) on startup")
+    
+    # Restore uploaded videos cache from existing files in temp_dir
+    if os.path.exists(temp_dir):
+        restored_count = 0
+        video_extensions = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv'}
+        
+        for file_path in Path(temp_dir).iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in video_extensions:
+                # Skip incomplete uploads
+                if '.tmp.' in file_path.name:
+                    continue
+                
+                # Generate video_id from filename or use existing
+                video_id = str(uuid.uuid4())
+                file_stat = file_path.stat()
+                file_size_mb = file_stat.st_size / (1024 * 1024)
+                
+                uploaded_videos_cache[video_id] = {
+                    "filename": file_path.name,
+                    "path": str(file_path),
+                    "uploaded_at": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
+                    "size_mb": round(file_size_mb, 2)
+                }
+                restored_count += 1
+                logger.debug(f"Restored cached video: {file_path.name} ({file_size_mb:.2f} MB)")
+        
+        if restored_count > 0:
+            logger.info(f"Restored {restored_count} cached video(s) from temp directory")
     
     # Optional: uncomment to clear all temp files on startup
     # clear_temp_dir()

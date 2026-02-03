@@ -1911,11 +1911,15 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         for idx, turn in enumerate(dialogue_turns):
             text_ru = turn.get("text_ru")
             text_en = turn.get("text", "")
+            turn_start = turn.get("start", 0)
+            turn_end = turn.get("end", 0)
+            turn_duration = turn_end - turn_start if turn_end > turn_start else 0
             
-            # Log both EN and RU for debugging
+            # Log both EN and RU with timings for debugging
             logger.info(
-                "TTD TURN %d: EN='%s' → RU='%s'",
+                "TTD TURN %d [%.1f-%.1fs, %.1fs]: EN='%s' → RU='%s'",
                 idx,
+                turn_start, turn_end, turn_duration,
                 text_en[:100] + ("..." if len(text_en) > 100 else ""),
                 (text_ru[:100] + ("..." if len(text_ru) > 100 else "")) if text_ru else "<MISSING>"
             )
