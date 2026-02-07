@@ -1,6 +1,7 @@
 """Text-to-Speech services."""
 import base64
 import io
+import json
 import logging
 import os
 import time
@@ -3053,6 +3054,22 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         tts_words[-1]["start"] if tts_words else 0,
                         tts_words[-1]["end"] if tts_words else 0,
                     )
+                    
+                    # Log in Yandex transcription format (JSON) for easy comparison
+                    turn_text_ru = turn.get("text_ru") or turn.get("text", "")
+                    # Remove emotion tags for clean text
+                    clean_text = re.sub(r'\[[\w]+\]\s*', '', turn_text_ru)
+                    yandex_format = {
+                        "text": clean_text,
+                        "words": tts_words,
+                        "duration": turn.get("tts_end_offset", 0) - turn.get("tts_start_offset", 0),
+                        "language": "ru"
+                    }
+                    logger.info(
+                        "TTD TURN %d JSON (Yandex format):\n%s",
+                        idx,
+                        json.dumps(yandex_format, ensure_ascii=False, indent=2)
+                    )
                 else:
                     # Generate estimated word timestamps for turns without API timing
                     text = inputs[idx]["text"] if idx < len(inputs) else ""
@@ -3075,6 +3092,19 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             "TTD turn %d: generated %d estimated word timestamps (%.2f-%.2fs)",
                             idx, len(tts_words), start_time, end_time
                         )
+                        
+                        # Log in Yandex transcription format (JSON) for easy comparison
+                        yandex_format = {
+                            "text": clean_text,
+                            "words": tts_words,
+                            "duration": turn_duration,
+                            "language": "ru"
+                        }
+                        logger.info(
+                            "TTD TURN %d JSON (Yandex format, estimated):\n%s",
+                            idx,
+                            json.dumps(yandex_format, ensure_ascii=False, indent=2)
+                        )
                 
                 logger.debug(
                     "TTD subtitle turn %d: %.2f-%.2fs (%.2fs, %d words) [from API]",
@@ -3084,6 +3114,21 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     turn["tts_duration"],
                     len(turn.get("tts_words", [])),
                 )
+                
+                # Log word-level timestamps (like Yandex format) for comparison
+                tts_words = turn.get("tts_words", [])
+                if tts_words:
+                    # Format: word [start-end] (like Yandex JSON)
+                    words_str = ", ".join([
+                        f'"{w["word"]}" [{w["start"]:.3f}-{w["end"]:.3f}]'
+                        for w in tts_words[:20]  # First 20 words to avoid log spam
+                    ])
+                    if len(tts_words) > 20:
+                        words_str += f" ... (+{len(tts_words) - 20} more)"
+                    logger.info(
+                        "TTD TURN %d WORDS [%d total]: %s",
+                        idx, len(tts_words), words_str
+                    )
             
             # POST-PROCESSING: Fix bunched/overlapping turns
             # ElevenLabs TTD sometimes returns multiple turns ending at the same time

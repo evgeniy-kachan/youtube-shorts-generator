@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import logging
 import subprocess
@@ -950,6 +951,77 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysi
         "result": response_result
     }
 
+def _save_transcription_json(segments: list, output_dir: Path, video_id: str) -> Path:
+    """
+    Collect word-level timestamps from all segments and save in Yandex transcription format.
+    
+    Args:
+        segments: List of processed segments with dialogue and tts_words
+        output_dir: Directory where to save the JSON file (Path object)
+        video_id: Video ID for filename
+    
+    Returns:
+        Path to saved JSON file
+    """
+    import json
+    from datetime import datetime
+    
+    transcription_data = {
+        "video_id": video_id,
+        "timestamp": datetime.now().isoformat(),
+        "segments": []
+    }
+    
+    for segment in segments:
+        segment_id = segment.get('id', 'unknown')
+        dialogue = segment.get('dialogue', [])
+        
+        # Collect all words from all turns in this segment
+        all_words = []
+        full_text_parts = []
+        
+        for turn in dialogue:
+            turn_text = turn.get('text_ru') or turn.get('text', '')
+            # Remove emotion tags
+            clean_text = re.sub(r'\[[\w]+\]\s*', '', turn_text)
+            full_text_parts.append(clean_text)
+            
+            tts_words = turn.get('tts_words', [])
+            if tts_words:
+                all_words.extend(tts_words)
+        
+        if all_words:
+            full_text = " ".join(full_text_parts)
+            segment_duration = all_words[-1]['end'] - all_words[0]['start'] if all_words else 0
+            
+            segment_data = {
+                "segment_id": segment_id,
+                "text": full_text,
+                "words": all_words,
+                "duration": segment_duration,
+                "language": "ru",
+                "start_time": segment.get('start_time', 0),
+                "end_time": segment.get('end_time', 0),
+            }
+            transcription_data["segments"].append(segment_data)
+    
+    # Save to JSON file
+    json_filename = f"transcription_{video_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    json_path = output_dir / json_filename
+    
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(transcription_data, f, ensure_ascii=False, indent=2)
+    
+    logger.info(
+        "Saved transcription JSON: %s (%d segments, %d total words)",
+        json_path,
+        len(transcription_data["segments"]),
+        sum(len(seg.get('words', [])) for seg in transcription_data["segments"])
+    )
+    
+    return json_path
+
+
 def _process_segments_task(
     task_id: str,
     video_id: str,
@@ -1368,11 +1440,24 @@ def _process_segments_task(
                 "description": description_data
             })
         
+        # Save transcription JSON with word timestamps (Yandex format)
+        json_relative_path = None
+        try:
+            json_path = _save_transcription_json(segments_to_process, output_dir, video_id)
+            logger.info("Transcription JSON saved: %s", json_path)
+            # Save relative path for API response
+            json_relative_path = f"{video_id}/{json_path.name}"
+        except Exception as json_exc:
+            logger.warning("Failed to save transcription JSON: %s", json_exc)
+        
         tasks[task_id] = {
             "status": "completed",
             "progress": 1.0,
             "message": "Processing complete",
-            "result": {"output_videos": output_files}
+            "result": {
+                "output_videos": output_files,
+                "transcription_json": json_relative_path  # Path to JSON file for download
+            }
         }
         
     except Exception as e:
@@ -1500,6 +1585,25 @@ async def download_segment(video_id: str, segment_id: str):
         path=file_path,
         media_type="video/mp4",
         filename=file_path.name
+    )
+
+@router.get("/download-transcription/{video_id}")
+async def download_transcription(video_id: str):
+    """Download transcription JSON file with word timestamps (Yandex format)."""
+    output_dir = get_output_dir(video_id)
+    
+    # Find the most recent transcription JSON file for this video
+    json_files = list(output_dir.glob("transcription_*.json"))
+    if not json_files:
+        raise HTTPException(status_code=404, detail="Transcription JSON not found")
+    
+    # Get the most recent file (by modification time)
+    json_file = max(json_files, key=lambda p: p.stat().st_mtime)
+    
+    return FileResponse(
+        path=json_file,
+        media_type="application/json",
+        filename=json_file.name
     )
 
 @router.get("/thumbnail/{video_id}")

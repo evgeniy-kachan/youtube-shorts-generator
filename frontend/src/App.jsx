@@ -267,7 +267,15 @@ function App() {
           setStatusMessage(status.message || 'Анализ продолжается...');
         }
       } catch (error) {
-        console.warn('[Session Recovery] Could not check analysis task:', error);
+        // Handle 404 - task not found (server restarted)
+        if (error?.response?.status === 404 || error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404')) {
+          console.warn('[Session Recovery] Analysis task not found (404), resetting state.');
+          setStage('upload');
+          setAnalysisTask(null);
+          localStorage.removeItem('currentAnalysisTask');
+        } else {
+          console.warn('[Session Recovery] Could not check analysis task:', error);
+        }
       }
     } else if (stage === 'processing' && processingTask) {
       try {
@@ -282,7 +290,16 @@ function App() {
           setStatusMessage(status.message || 'Обработка продолжается...');
         }
       } catch (error) {
-        console.warn('[Session Recovery] Could not check processing task:', error);
+        // Handle 404 - task not found (server restarted)
+        if (error?.response?.status === 404 || error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404')) {
+          console.warn('[Session Recovery] Processing task not found (404), resetting state.');
+          setStage('upload');
+          setProcessingTask(null);
+          localStorage.removeItem('currentProcessingTask');
+          localStorage.removeItem('currentTaskType');
+        } else {
+          console.warn('[Session Recovery] Could not check processing task:', error);
+        }
       }
     } else if (stage === 'upload') {
       // On upload stage, check if there are saved tasks to restore
@@ -337,9 +354,16 @@ function App() {
           }
         } catch (error) {
           console.error('Error polling status:', error);
-          // Don't clear interval on network errors - browser might be waking from sleep
-          // Instead, show a recoverable message and keep trying
-          if (error?.code === 'ERR_NETWORK' || error?.message?.includes('Network Error')) {
+          // Handle 404 - task not found (server restarted, task lost)
+          if (error?.response?.status === 404 || error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404')) {
+            console.warn('[Session Recovery] Analysis task not found (404), server may have restarted. Resetting state.');
+            setStatusMessage('Задача не найдена. Возможно, сервер был перезапущен. Пожалуйста, начните заново.');
+            setStage('upload'); // Reset to upload stage
+            setAnalysisTask(null);
+            localStorage.removeItem('currentAnalysisTask');
+            localStorage.removeItem('currentTaskType');
+            clearInterval(interval);
+          } else if (error?.code === 'ERR_NETWORK' || error?.message?.includes('Network Error')) {
             setStatusMessage('Соединение потеряно. Переподключение...');
             // Don't clear interval - keep trying
             // When connection is restored, the next poll will succeed
@@ -374,8 +398,18 @@ function App() {
           }
         } catch (error) {
           console.error('Error polling status:', error);
-          // Don't clear interval on network errors - browser might be waking from sleep
-          if (error?.code === 'ERR_NETWORK' || error?.message?.includes('Network Error')) {
+          // Handle 404 - task not found (server restarted, task lost)
+          if (error?.response?.status === 404 || error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404')) {
+            console.warn('[Session Recovery] Task not found (404), server may have restarted. Resetting state.');
+            setStatusMessage('Задача не найдена. Возможно, сервер был перезапущен. Пожалуйста, начните заново.');
+            setStage('upload'); // Reset to upload stage
+            setProcessingTask(null);
+            setAnalysisTask(null);
+            localStorage.removeItem('currentProcessingTask');
+            localStorage.removeItem('currentAnalysisTask');
+            localStorage.removeItem('currentTaskType');
+            clearInterval(interval);
+          } else if (error?.code === 'ERR_NETWORK' || error?.message?.includes('Network Error')) {
             setStatusMessage('Соединение потеряно. Переподключение...');
             // Don't clear interval - keep trying
           } else {

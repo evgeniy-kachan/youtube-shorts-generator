@@ -70,6 +70,10 @@ export const getDownloadUrl = (videoId, segmentId) => {
   return `${API_BASE_URL}/api/video/download/${videoId}/${segmentId}`;
 };
 
+export const getTranscriptionDownloadUrl = (videoId) => {
+  return `${API_BASE_URL}/api/video/download-transcription/${videoId}`;
+};
+
 export const dubSegment = async (
   videoId,
   segmentId,
