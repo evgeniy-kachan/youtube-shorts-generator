@@ -1439,6 +1439,22 @@ def _process_segments_task(
                 "segment_id": segment['id'],
                 "description": description_data
             })
+            
+            # Clean up memory after each segment to prevent OOM
+            # Especially important when processing multiple segments
+            import gc
+            gc.collect()
+            
+            # Clear CUDA cache if available
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+            except Exception:
+                pass
+            
+            logger.debug("Memory cleaned after segment %s", segment['id'])
         
         # Save transcription JSON with word timestamps (Yandex format)
         json_relative_path = None

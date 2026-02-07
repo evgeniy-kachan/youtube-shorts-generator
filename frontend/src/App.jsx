@@ -268,7 +268,7 @@ function App() {
         }
       } catch (error) {
         // Handle 404 - task not found (server restarted)
-        if (error?.response?.status === 404 || error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404')) {
+        if ((error?.response?.status === 404) || (error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404'))) {
           console.warn('[Session Recovery] Analysis task not found (404), resetting state.');
           setStage('upload');
           setAnalysisTask(null);
@@ -291,7 +291,7 @@ function App() {
         }
       } catch (error) {
         // Handle 404 - task not found (server restarted)
-        if (error?.response?.status === 404 || error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404')) {
+        if ((error?.response?.status === 404) || (error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404'))) {
           console.warn('[Session Recovery] Processing task not found (404), resetting state.');
           setStage('upload');
           setProcessingTask(null);
@@ -355,7 +355,7 @@ function App() {
         } catch (error) {
           console.error('Error polling status:', error);
           // Handle 404 - task not found (server restarted, task lost)
-          if (error?.response?.status === 404 || error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404')) {
+          if ((error?.response?.status === 404) || (error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404'))) {
             console.warn('[Session Recovery] Analysis task not found (404), server may have restarted. Resetting state.');
             setStatusMessage('Задача не найдена. Возможно, сервер был перезапущен. Пожалуйста, начните заново.');
             setStage('upload'); // Reset to upload stage
@@ -399,7 +399,7 @@ function App() {
         } catch (error) {
           console.error('Error polling status:', error);
           // Handle 404 - task not found (server restarted, task lost)
-          if (error?.response?.status === 404 || error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404')) {
+          if ((error?.response?.status === 404) || (error?.code === 'ERR_BAD_REQUEST' && error?.message?.includes('404'))) {
             console.warn('[Session Recovery] Task not found (404), server may have restarted. Resetting state.');
             setStatusMessage('Задача не найдена. Возможно, сервер был перезапущен. Пожалуйста, начните заново.');
             setStage('upload'); // Reset to upload stage
