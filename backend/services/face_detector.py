@@ -1132,8 +1132,15 @@ class FaceDetector:
                 "end": scene_end_t,
                 "focus": scene_focus,
             })
+            
+            # Clear accumulated data to prevent memory buildup
+            all_faces.clear()
         
         capture.release()
+        
+        # Force garbage collection after processing all scenes
+        import gc
+        gc.collect()
         
         logger.info("Built focus timeline: %d segments", len(segments))
         return segments

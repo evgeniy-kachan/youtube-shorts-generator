@@ -520,6 +520,10 @@ class TransNetV2Detector:
                 if actual_count > skip:
                     all_predictions.extend(predictions[skip:actual_count].tolist())
         
+        # Free memory from frames list (can be several GB for long segments)
+        frames.clear()
+        del frames
+        
         # Find scene changes (peaks above threshold)
         scene_changes = []
         predictions_arr = np.array(all_predictions)
@@ -541,6 +545,14 @@ class TransNetV2Detector:
             "TransNetV2: detected %d scene changes in [%.1f, %.1f]s",
             len(scene_changes), segment_start, segment_end
         )
+        
+        # Force garbage collection to free memory
+        import gc
+        gc.collect()
+        
+        # Clear CUDA cache if available
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
         
         return scene_changes
 
