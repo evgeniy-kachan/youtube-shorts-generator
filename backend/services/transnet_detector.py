@@ -439,7 +439,11 @@ class TransNetV2Detector:
         segment_end: Optional[float] = None,
     ) -> list[float]:
         """
-        Detect scene changes in video.
+        Detect scene changes in video using STREAMING approach.
+        
+        MEMORY OPTIMIZATION: Instead of loading all frames into memory at once
+        (which can use 20+ GB for long segments), we read frames in batches
+        and process them immediately, keeping memory usage under ~1GB.
         
         Args:
             video_path: Path to video file
@@ -449,6 +453,8 @@ class TransNetV2Detector:
         Returns:
             List of timestamps (relative to segment_start) where scene changes occur
         """
+        import gc
+        
         self._ensure_model()
         
         cap = cv2.VideoCapture(video_path)
@@ -466,36 +472,52 @@ class TransNetV2Detector:
         # Calculate frame range
         start_frame = int(segment_start * fps)
         end_frame = int(segment_end * fps)
+        total_frames = end_frame - start_frame
         
-        # Read frames
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-        frames = []
-        for _ in range(end_frame - start_frame):
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frames.append(frame)
-        cap.release()
-        
-        if len(frames) < 2:
+        if total_frames < 2:
+            cap.release()
             logger.warning("TransNetV2: not enough frames for detection")
             return []
         
-        logger.info("TransNetV2: processing %d frames from [%.1f, %.1f]s", 
-                   len(frames), segment_start, segment_end)
+        logger.info("TransNetV2: processing %d frames from [%.1f, %.1f]s (streaming mode)", 
+                   total_frames, segment_start, segment_end)
         
         # Process in batches of 100 frames (model expects batches of ~100)
+        # STREAMING: read frames directly into batch, don't accumulate all frames
         batch_size = 100
+        overlap = 10  # Frames to overlap between batches for continuity
         all_predictions = []
         
-        for start_idx in range(0, len(frames), batch_size - 10):  # Overlap of 10 frames
-            end_idx = min(start_idx + batch_size, len(frames))
-            batch_frames = frames[start_idx:end_idx]
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        
+        # Keep last 'overlap' frames for next batch
+        overlap_frames = []
+        frames_read = 0
+        batch_num = 0
+        
+        while frames_read < total_frames:
+            # Build current batch: start with overlap frames from previous batch
+            batch_frames = list(overlap_frames)
+            
+            # Read new frames for this batch
+            frames_to_read = batch_size - len(batch_frames)
+            for _ in range(frames_to_read):
+                if frames_read >= total_frames:
+                    break
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                batch_frames.append(frame)
+                frames_read += 1
             
             if len(batch_frames) < 10:
                 break
             
+            # Save overlap frames for next batch (last 'overlap' frames)
+            overlap_frames = batch_frames[-overlap:] if len(batch_frames) >= overlap else batch_frames[:]
+            
             # Pad to at least 100 frames if needed (model expects 100)
+            original_batch_len = len(batch_frames)
             while len(batch_frames) < 100:
                 batch_frames.append(batch_frames[-1])  # Repeat last frame
             
@@ -510,19 +532,33 @@ class TransNetV2Detector:
             
             predictions = single_pred.squeeze(0).cpu().numpy()
             
-            # Handle overlap - only take predictions for actual frames
-            actual_count = min(end_idx - start_idx, len(predictions))
-            if start_idx == 0:
-                all_predictions.extend(predictions[:actual_count].tolist())
+            # Clear GPU memory immediately after inference
+            del input_tensor
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+            
+            # Handle overlap - only take predictions for actual NEW frames
+            if batch_num == 0:
+                # First batch: take all predictions up to original_batch_len
+                all_predictions.extend(predictions[:original_batch_len].tolist())
             else:
-                # Skip overlapping 10 frames
-                skip = 10
-                if actual_count > skip:
-                    all_predictions.extend(predictions[skip:actual_count].tolist())
+                # Subsequent batches: skip overlap frames (already processed)
+                new_frames_count = original_batch_len - overlap
+                if new_frames_count > 0:
+                    all_predictions.extend(predictions[overlap:overlap + new_frames_count].tolist())
+            
+            # Clear batch frames to free memory
+            batch_frames.clear()
+            del batch_frames
+            
+            batch_num += 1
+            
+            # Periodic garbage collection every 5 batches
+            if batch_num % 5 == 0:
+                gc.collect()
         
-        # Free memory from frames list (can be several GB for long segments)
-        frames.clear()
-        del frames
+        cap.release()
+        overlap_frames.clear()
         
         # Find scene changes (peaks above threshold)
         scene_changes = []
@@ -546,11 +582,8 @@ class TransNetV2Detector:
             len(scene_changes), segment_start, segment_end
         )
         
-        # Force garbage collection to free memory
-        import gc
+        # Final cleanup
         gc.collect()
-        
-        # Clear CUDA cache if available
         if self.device == "cuda":
             torch.cuda.empty_cache()
         
