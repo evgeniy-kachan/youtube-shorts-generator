@@ -18,210 +18,127 @@ from backend.services.deepseek_client import DeepSeekClient
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# ISOCHRONIC TRANSLATION PROMPTS v2.1
+# ISOCHRONIC TRANSLATION PROMPTS v3.0 (with dynamic timing)
 # ============================================================================
 
 ISOCHRONIC_SYSTEM_MESSAGE = (
     "You are an expert isochronic translator for professional podcast dubbing. "
-    "You produce natural Russian that matches the original spoken duration precisely. "
+    "You produce natural Russian that fits precisely into given time constraints. "
     "You understand technical, business, and scientific terminology. "
-    "You clean speech artifacts but never distort meaning. "
-    "You treat punctuation as a timing tool for TTS, not just grammar."
+    "You prioritize meaning over literal translation, but never distort facts."
 )
 
 STAGE1_PROMPT = """You are an expert ISOCHRONIC TRANSLATOR for professional podcast dubbing.
 
 === GOAL ===
 Translate English dialogue to Russian that:
-1. MATCHES the original spoken duration (see TIMING TARGET below)
+1. FITS into the specified TARGET WORD COUNT for each turn
 2. PRESERVES exact meaning (especially technical/business terms)
 3. Sounds natural when spoken aloud by TTS
 
-=== TIMING HEURISTIC (CRITICAL) ===
+=== TIMING RULE (CRITICAL) ===
 
-Russian words take LONGER to pronounce than English words.
-To match original timing, use FEWER Russian words than English.
+Each turn has a TARGET WORD COUNT calculated from its duration.
+Your translation MUST stay within ±15% of the target.
 
-• Short phrases (EN < 10 words):
-  RU range = 0.65–0.80× EN word count
-  TARGET: aim for 0.70× 
-  Use abbreviations, compact phrasing.
+WHY: Russian TTS speaks ~30% slower than English.
+To fit the same duration, Russian text must be SHORTER.
 
-• Medium phrases (EN 10–25 words):
-  RU range = 0.70–0.85× EN word count
-  TARGET: aim for 0.75×
-  Be concise, avoid filler words.
+Formula used: target_ru_words = duration_seconds × 2.3
 
-• Long phrases (EN > 25 words):
-  RU range = 0.75–0.90× EN word count
-  TARGET: aim for 0.80×
-  Condense without losing meaning.
+Example:
+• Turn duration: 5.2 sec → target: ~12 RU words
+• Acceptable range: 10-14 words
+• Too long (>14 words): audio will be rushed or cut off
 
-CRITICAL: Russian TTS speaks ~30% slower than English.
-Same word count = Russian audio 30-50% LONGER!
+=== TEMPO CORRECTION BUFFER ===
 
-Examples:
-• EN: 8 words → TARGET: 6 RU words (0.75×), acceptable: 5–7
-• EN: 15 words → TARGET: 11 RU words (0.75×), acceptable: 10–13
-• EN: 30 words → TARGET: 24 RU words (0.80×), acceptable: 22–27
+After translation, the system can adjust audio speed by ±20%:
+• Translation 10-20% SHORT → audio slows down slightly (OK)
+• Translation 10-20% LONG → audio speeds up slightly (OK)  
+• Translation 30%+ LONG → audio quality suffers (AVOID!)
 
-=== PUNCTUATION FOR TIMING (USE ACTIVELY) ===
+PRIORITY: Slightly SHORT is better than TOO LONG!
+When in doubt — use fewer words.
 
-Use punctuation to control rhythm and TTS breathing without adding words:
+=== SHORTENING STRATEGIES ===
 
-• Dash (—) for spoken pause:
-  "Это важно — особенно в данном контексте"
-  
-• Comma for light pause:
-  "Мы видим рост, и это стоит учитывать"
-  
-• Sentence split for longer pause:
-  "Это важно. Особенно сейчас."
+1. REMOVE speech artifacts (fillers):
+   - 'well', 'um', 'uh', 'like', 'you know', 'kind of' → remove
+   - 'I mean', 'so', 'actually' → keep only if critical for meaning
 
-Note: Punctuation is a TIMING TOOL for TTS, not just grammar.
-Long sentences without dashes cause TTS to rush unnaturally.
+2. USE compact phrasing:
+   - 'there is a possibility that' → 'возможно'
+   - 'in order to' → 'чтобы'
+   - 'it is important to note that' → 'важно'
+   - 'the fact that' → remove or 'то, что'
+
+3. MERGE short sentences:
+   - 'He came. He saw. He conquered.' → 'Он пришёл, увидел и победил.'
+
+4. USE dashes for pauses (instead of adding words):
+   - 'which is, in fact, the main reason' → '— вот причина'
+
+5. PREFER short synonyms:
+   - 'в настоящее время' → 'сейчас'
+   - 'осуществлять' → 'делать'
+   - 'является' → 'это'
+
+=== PUNCTUATION FOR RHYTHM ===
+
+Use punctuation to control TTS pacing without adding words:
+• Dash (—) — medium pause, use for emphasis
+• Comma (,) — light pause
+• Period (.) — sentence end, natural pause
 
 === TERMINOLOGY ===
 
-• Use ESTABLISHED Russian abbreviations: ИИ, ИТ, ВВП, API, ML
-• Keep full form for terms WITHOUT common abbreviation
-• Examples:
-  - 'artificial intelligence' → 'ИИ'
-  - 'machine learning' → 'машинное обучение' or 'ML'
-  - 'quantum computing' → 'квантовые вычисления'
-  - 'venture capital' → 'венчурный капитал'
-  - 'blockchain' → 'блокчейн'
-  - 'startup' → 'стартап'
-
-=== NAMES & REALIA ===
-
-• COMPANY NAMES: 
-  - Use established official translation if widely known in RU media:
-    'Apple' → 'Эппл', 'Microsoft' → 'Майкрософт', 'Google' → 'Гугл'
-  - Otherwise, transliterate or keep original if commonly used as-is:
-    'OpenAI' → 'OpenAI', 'Tesla' → 'Тесла'
-
-• PRODUCT NAMES: Keep in English unless established RU name exists:
-  'iPhone' → 'iPhone', 'ChatGPT' → 'ChatGPT'
-
-• PERSON NAMES: Transliterate to Russian phonetics:
-  'Elon Musk' → 'Илон Маск', 'Sam Altman' → 'Сэм Альтман'
-
-• PLACES: Use established Russian names:
-  'Silicon Valley' → 'Кремниевая долина', 'Wall Street' → 'Уолл-стрит'
+• Abbreviations: 'AI' → 'ИИ', 'ML' → 'ML', 'API' → 'API'
+• Tech terms: use established Russian equivalents
+• Companies: 'Apple' → 'Эппл', 'Google' → 'Гугл', 'OpenAI' → 'OpenAI'
+• People: transliterate — 'Elon Musk' → 'Илон Маск'
+• Places: 'Silicon Valley' → 'Кремниевая долина'
 
 === TERM CONSISTENCY ===
 
-Within a single dialogue, use CONSISTENT translations for key terms:
-• If you translate 'efficiency' as 'эффективность' in turn 1, 
-  use 'эффективность' (not 'производительность') in all subsequent turns.
-• If a technical term appears multiple times, keep the same Russian equivalent.
-
-This prevents "patchwork" style across turns.
-
-=== SPEECH CLEANUP ===
-
-Remove ONLY meaningless speech artifacts:
-
-• False starts: 
-  'Well, first, the part, I will say...' → 'Скажу так...'
-  
-• Fillers: 
-  'um', 'uh', 'like', 'you know', 'I mean' → remove
-  
-• Self-corrections: 
-  'What I wanted, I mean, what I want to say...' → 'Хочу сказать...'
-  
-• Repetitions: 
-  'We need to, we need to focus...' → 'Нам нужно сосредоточиться...'
-
-BUT KEEP all meaningful content, even if speaker hesitates.
-
-=== TIMING FILLERS (USE SPARINGLY) ===
-
-If cleanup removes significant time, you MAY compensate 
-WITHOUT adding artificial filler words.
-
-=== FILLER WORDS — ONLY WITH SOURCE MATCH ===
-
-Fillers are ALLOWED only when translating a corresponding English phrase:
-
-ALLOWED (source match required):
-• "Well," → "Ну," (at start of reply)
-• "I mean," / "you know," → "то есть" (actual clarification)
-• "So," (beginning conclusion) → "Итак,"
-• "Let me say," / "I'll say" → "Скажу так:"
-
-FORBIDDEN (no source = no filler):
-• Adding 'так', 'собственно', 'в общем-то' for timing
-• Adding 'то есть' without actual clarification in original
-• Any filler in the MIDDLE of a sentence after conjunctions (И, А, Но)
-
-WRONG: "Мы в гонке" → "И, так, мы в гонке" (no source for 'так')
-WRONG: "Мы участвуем" → "Мы, собственно, участвуем" (no source)
-CORRECT: "Well, we're in a race" → "Ну, мы в гонке" (source match)
-CORRECT: "I mean, it's important" → "То есть, это важно" (source match)
-
-=== PRIORITY ORDER ===
-
-1st: Technical terms, facts, numbers — NEVER change
-2nd: Core meaning and speaker's arguments — PRESERVE exactly  
-3rd: Natural spoken Russian flow
-4th: Duration matching — via:
-     • SYNONYMS from the SAME register (no meaning shift)
-     • Punctuation (—) for spoken pauses
-     • Syntactic expansion (add verb, pronoun if natural)
-     • If still short — ACCEPT IT (tempo adjustment will handle)
-     
-CLARIFICATION on "word choice":
-You may choose between synonyms ONLY if they:
-• Have the SAME meaning
-• Belong to the SAME register (formal/informal)
-• Do NOT change connotation or emphasis
-
-Example:
-✓ "важный" ↔ "значимый" (same meaning, same register)
-✗ "важный" → "критический" (adds emphasis — FORBIDDEN)
+Within a dialogue, use CONSISTENT translations:
+• If 'efficiency' → 'эффективность' in turn 1, keep it in all turns
+• Don't switch between synonyms for the same term
 
 === FORBIDDEN ===
 
-Never add what's not in original:
+Never ADD what's not in original:
 • Quantifiers: 'многие', 'большинство'
 • Modality: 'должен', 'нужно', 'следует'
 • Certainty: 'точно', 'очевидно', 'безусловно'
 • Scope: 'фундаментально', 'радикально'
-• Temporal: 'в будущем', 'уже' (as "already")
 • Evaluation: 'серьёзный', 'критический' (unless in original)
 
-=== WORD COUNTING RULE ===
+=== SELF-CHECK ===
 
-Count words as space-separated tokens:
-• Hyphenated forms (какой-либо) = ONE word
-• Abbreviations (ИИ, API) = ONE word
-• Numbers (2024) = ONE word
+Before output, verify:
+1. Each turn is within ±15% of target word count
+2. No meaning is lost or distorted
+3. No claims are stronger than original
+4. Terminology is consistent across turns
 
-=== SELF-CHECK (before output) ===
+=== INPUT FORMAT ===
 
-Ask yourself:
+You will receive turns with timing info:
 
-1. "Does the Russian text make any claim STRONGER, BROADER, 
-    MORE CERTAIN, or MORE GENERAL than the original?"
+Turn 0 [duration: 5.2s, target: ~12 words]:
+"English text here"
 
-2. "Does the Russian text introduce any NEW claim, assumption, 
-    implication, or conclusion NOT explicitly stated in the original?"
-
-3. "Did I use consistent terminology across all turns?"
-
-If YES to #1 or #2 — revise to more literal translation.
-If NO to #3 — harmonize terminology.
+Turn 1 [duration: 8.1s, target: ~19 words]:
+"More English text"
 
 === OUTPUT FORMAT ===
 
 Respond ONLY with valid JSON:
 {
   "translations": [
-    {"turn": 0, "text_ru": "..."},
-    {"turn": 1, "text_ru": "..."},
+    {"turn": 0, "text_ru": "...", "word_count": 11},
+    {"turn": 1, "text_ru": "...", "word_count": 18},
     ...
   ]
 }
@@ -598,21 +515,32 @@ class Translator:
         self, dialogue_turns: list[dict], segment_context: str = ""
     ) -> list[dict]:
         """
-        Stage 1: Isochronic translation with timing heuristics.
-        Uses STAGE1_PROMPT (v2.1) for professional podcast dubbing.
+        Stage 1: Isochronic translation with dynamic timing targets.
+        Uses STAGE1_PROMPT (v3.0) with per-turn duration and target word count.
         """
-        # Build dialogue representation with word counts for timing heuristic
+        # Build dialogue representation with timing info for each turn
         dialogue_parts = []
         for i, turn in enumerate(dialogue_turns):
             text = turn.get("text", "")
             speaker = turn.get("speaker", f"Speaker_{i}")
             en_words = len(text.split())
             
-            # Store EN word count for later timing check
+            # Calculate turn duration from timestamps
+            start_time = turn.get("start", 0)
+            end_time = turn.get("end", 0)
+            duration = end_time - start_time if end_time > start_time else len(text.split()) / 2.5
+            
+            # Calculate target RU word count based on duration
+            # Russian TTS speaks ~2.3 words/second on average
+            target_ru_words = max(3, int(duration * 2.3))
+            
+            # Store for later validation
             turn["_en_words"] = en_words
+            turn["_duration"] = duration
+            turn["_target_ru_words"] = target_ru_words
             
             dialogue_parts.append(
-                f"Turn {i} [{speaker}] ({en_words} EN words):\n  EN: {text}"
+                f"Turn {i} [{speaker}, duration: {duration:.1f}s, target: ~{target_ru_words} words]:\n\"{text}\""
             )
         
         dialogue_str = "\n\n".join(dialogue_parts)
@@ -642,38 +570,39 @@ class Translator:
             parsed = DeepSeekClient.extract_json(response_text)
             translations = parsed.get("translations", [])
             
-            # Apply translations and check timing ratios
+            # Apply translations and check against target word counts
             for item in translations:
                 turn_idx = item.get("turn")
                 text_ru = item.get("text_ru", "")
                 if turn_idx is not None and 0 <= turn_idx < len(dialogue_turns):
                     dialogue_turns[turn_idx]["text_ru"] = text_ru
                     
-                    # Calculate timing ratio
-                    en_words = dialogue_turns[turn_idx].get("_en_words", 1)
+                    # Get timing info
+                    turn = dialogue_turns[turn_idx]
+                    en_words = turn.get("_en_words", 1)
+                    duration = turn.get("_duration", 5.0)
+                    target_ru = turn.get("_target_ru_words", int(en_words * 0.7))
                     ru_words = len(text_ru.split())
-                    ratio = ru_words / en_words if en_words > 0 else 1.0
                     
-                    # Determine expected range based on EN length
-                    # Russian TTS is ~30% slower, so we need FEWER words
-                    if en_words < 10:
-                        target_ratio = 0.70
-                        range_str = "0.65-0.80"
-                        in_range = 0.65 <= ratio <= 0.80
-                    elif en_words <= 25:
-                        target_ratio = 0.75
-                        range_str = "0.70-0.85"
-                        in_range = 0.70 <= ratio <= 0.85
+                    # Check if within ±15% of target
+                    lower_bound = int(target_ru * 0.85)
+                    upper_bound = int(target_ru * 1.15)
+                    
+                    if ru_words < lower_bound:
+                        status = "⚠ SHORT"
+                    elif ru_words > upper_bound:
+                        status = "⚠ LONG"
                     else:
-                        target_ratio = 0.80
-                        range_str = "0.75-0.90"
-                        in_range = 0.75 <= ratio <= 0.90
+                        status = "✓"
                     
-                    status = "✓" if in_range else ("⚠ SHORT" if ratio < target_ratio else "⚠ LONG")
+                    # Calculate how much tempo adjustment would be needed
+                    # Assuming 2.3 words/sec for Russian TTS
+                    estimated_duration = ru_words / 2.3
+                    tempo_ratio = estimated_duration / duration if duration > 0 else 1.0
                     
                     logger.info(
-                        "Stage 1 Turn %d: %d EN → %d RU words (ratio=%.2f, target=%s) %s",
-                        turn_idx, en_words, ru_words, ratio, range_str, status
+                        "Stage 1 Turn %d [%.1fs]: %d EN → %d RU words (target: %d±15%%, tempo: %.2fx) %s",
+                        turn_idx, duration, en_words, ru_words, target_ru, tempo_ratio, status
                     )
             
             # CRITICAL: Check for missing translations and retry individually
