@@ -643,7 +643,7 @@ def _speed_match_audio_duration(
         audio_path: Path to audio file to modify
         current_duration: Current audio duration in seconds
         target_duration: Target duration to match
-        max_tempo: Maximum tempo (speed up limit, default 1.25 - reduced from 1.4 to minimize artifacts)
+        max_tempo: Maximum tempo (speed up limit, default 1.35 - balance between timing and quality)
         min_tempo: Minimum tempo (slow down limit, default 0.7)
     """
     if not audio_path or current_duration <= 0 or target_duration <= 0:
@@ -978,30 +978,50 @@ def _save_transcription_json(segments: list, output_dir: Path, video_id: str) ->
         
         # Collect all words from all turns in this segment
         all_words = []
-        full_text_parts = []
+        full_text_parts_ru = []
+        full_text_parts_en = []
         
         for turn in dialogue:
-            turn_text = turn.get('text_ru') or turn.get('text', '')
+            # Russian text
+            turn_text_ru = turn.get('text_ru') or ''
             # Remove emotion tags
-            clean_text = re.sub(r'\[[\w]+\]\s*', '', turn_text)
-            full_text_parts.append(clean_text)
+            clean_text_ru = re.sub(r'\[[\w]+\]\s*', '', turn_text_ru)
+            if clean_text_ru:
+                full_text_parts_ru.append(clean_text_ru)
+            
+            # English original text
+            turn_text_en = turn.get('text') or ''
+            clean_text_en = re.sub(r'\[[\w]+\]\s*', '', turn_text_en)
+            if clean_text_en:
+                full_text_parts_en.append(clean_text_en)
             
             tts_words = turn.get('tts_words', [])
             if tts_words:
                 all_words.extend(tts_words)
         
         if all_words:
-            full_text = " ".join(full_text_parts)
+            full_text_ru = " ".join(full_text_parts_ru)
+            full_text_en = " ".join(full_text_parts_en)
+            
+            # Fallback to segment-level text if dialogue didn't have English
+            if not full_text_en:
+                full_text_en = segment.get('text_en') or segment.get('text') or ''
+            
             segment_duration = all_words[-1]['end'] - all_words[0]['start'] if all_words else 0
+            original_duration = segment.get('end_time', 0) - segment.get('start_time', 0)
             
             segment_data = {
                 "segment_id": segment_id,
-                "text": full_text,
+                "text": full_text_ru,
+                "text_en": full_text_en,  # English original for comparison
                 "words": all_words,
                 "duration": segment_duration,
+                "original_duration": original_duration,  # Original video segment duration
                 "language": "ru",
                 "start_time": segment.get('start_time', 0),
                 "end_time": segment.get('end_time', 0),
+                "word_count_ru": len(full_text_ru.split()),
+                "word_count_en": len(full_text_en.split()) if full_text_en else 0,
             }
             transcription_data["segments"].append(segment_data)
     
@@ -1312,21 +1332,21 @@ def _process_segments_task(
 
             original_duration = max(0.1, float(segment.get('end_time', 0)) - float(segment.get('start_time', 0)))
 
-            # Tempo adjustment: keep audio within 0.7x-1.25x of original duration
-            # Reduced from 1.4x to 1.25x to minimize audio artifacts (stuttering/cutting)
+            # Tempo adjustment: keep audio within 0.7x-1.35x of original duration
+            # Increased from 1.25x to 1.35x to better fit longer translations
             duration_diff = abs(audio_duration - original_duration)
             if duration_diff > 0.2:  # More than 200ms difference
                 before_duration = audio_duration
                 
                 logger.info(
-                    "Applying tempo adjustment for %s: %.2fs -> %.2fs (range: 0.7x-1.25x)%s",
+                    "Applying tempo adjustment for %s: %.2fs -> %.2fs (range: 0.7x-1.35x)%s",
                     segment['id'],
                     audio_duration,
                     original_duration,
                     " [multi-speaker]" if has_dialogue else "",
                 )
                 
-                if _speed_match_audio_duration(audio_path, audio_duration, original_duration, max_tempo=1.25, min_tempo=0.7):
+                if _speed_match_audio_duration(audio_path, audio_duration, original_duration, max_tempo=1.35, min_tempo=0.7):
                     try:
                         audio_segment = AudioSegment.from_file(audio_path)
                         audio_duration = audio_segment.duration_seconds or original_duration
