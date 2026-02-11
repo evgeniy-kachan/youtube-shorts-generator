@@ -92,6 +92,24 @@ def main():
                     use_auth_token=hf_token,
                     device=args.device,
                 )
+                
+                # Apply fine-tuned hyperparameters for better speaker separation
+                # These match the settings in diarize.py for consistency
+                try:
+                    diarize_model.model.instantiate({
+                        "segmentation": {
+                            "min_duration_off": 0.05,  # Detect shorter pauses (50ms vs default 0.1s)
+                        },
+                        "clustering": {
+                            "method": "centroid",
+                            "min_cluster_size": 3,     # Allow smaller speaker clusters (vs default 6)
+                            "threshold": 0.35,         # More aggressive speaker separation (vs default 0.5)
+                        },
+                    })
+                    print("[transcribe.py] Applied fine-tuned diarization parameters (threshold=0.35, min_cluster=3)", file=sys.stderr)
+                except Exception as tune_err:
+                    print(f"[transcribe.py] Warning: Could not apply fine-tuned parameters: {tune_err}", file=sys.stderr)
+                
                 print(f"[transcribe.py] Calling DiarizationPipeline with min_speakers={min_spk}, max_speakers={max_spk}", file=sys.stderr)
                 diarize_segments = diarize_model(
                     audio,
