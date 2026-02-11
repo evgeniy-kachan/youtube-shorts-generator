@@ -85,6 +85,11 @@ class NemoDiarizationRunner:
             
             logger.info("Running NeMo diarization: %s", " ".join(cmd[:6]) + " ...")
             
+            # Set environment variables to avoid CUDA context conflicts
+            env = os.environ.copy()
+            env["CUDA_LAUNCH_BLOCKING"] = "1"  # Synchronous CUDA execution
+            env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # Better memory management
+            
             try:
                 result = subprocess.run(
                     cmd,
@@ -92,6 +97,7 @@ class NemoDiarizationRunner:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     timeout=1800,  # 30 min max
+                    env=env,
                 )
                 
                 if result.stdout:
