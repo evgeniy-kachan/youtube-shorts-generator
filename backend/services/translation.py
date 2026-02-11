@@ -99,6 +99,17 @@ Use punctuation to control TTS pacing without adding words:
 • People: transliterate — 'Elon Musk' → 'Илон Маск'
 • Places: 'Silicon Valley' → 'Кремниевая долина'
 
+=== IDIOMATIC EXPRESSIONS ===
+
+Translate idioms naturally, not literally. Preserve meaning, not words:
+
+• 'Clouded by who you want to be' → 'Мешает образ того, кем хочешь быть'
+  (NOT: 'затуманено тем, кем хочешь стать кем-то другим')
+• 'at the end of the day' → 'в итоге' or 'в конечном счёте'
+• 'it's a no-brainer' → 'это очевидно'
+• 'to be on the same page' → 'быть на одной волне'
+• 'to think outside the box' → 'мыслить нестандартно'
+
 === TERM CONSISTENCY ===
 
 Within a dialogue, use CONSISTENT translations:
