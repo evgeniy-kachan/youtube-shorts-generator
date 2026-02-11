@@ -90,6 +90,18 @@ def run_nemo_diarization(
         logger.warning("CUDA requested but not available. Falling back to CPU.")
         device = "cpu"
     
+    # Clear CUDA cache before starting NeMo to avoid CUBLAS conflicts
+    if device == "cuda":
+        try:
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            # Initialize CUDA context explicitly
+            _ = torch.zeros(1, device="cuda")
+            logger.info("CUDA context initialized successfully")
+        except Exception as e:
+            logger.warning("CUDA initialization failed: %s. Falling back to CPU.", e)
+            device = "cpu"
+    
     logger.info("Loading NeMo diarization model on device: %s", device)
     
     try:
