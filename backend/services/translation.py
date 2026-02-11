@@ -507,7 +507,14 @@ class Translator:
         dialogue_turns = self._translate_quality_first(dialogue_turns, segment_context)
         
         # ===== STAGE 2: Expand short turns =====
-        dialogue_turns = self._expand_short_turns(dialogue_turns, segment_context)
+        # DISABLED: With new STAGE1_PROMPT v3.0 that includes per-turn timing targets,
+        # Stage 2 expansion is counterproductive - it makes translations LONGER
+        # when we actually need them SHORTER to fit the timing.
+        # The old ratio-based logic (0.65x, 0.70x, 0.75x) conflicts with the new
+        # duration-based target_ru_words calculation.
+        # TODO: Remove completely after testing confirms v3.0 works well.
+        # dialogue_turns = self._expand_short_turns(dialogue_turns, segment_context)
+        logger.info("Stage 2: DISABLED (using v3.0 timing targets instead)")
         
         return dialogue_turns
     
