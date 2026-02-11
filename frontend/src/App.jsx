@@ -12,6 +12,8 @@ import {
   dubSegment,
   uploadVideoFile,
   restoreSession,
+  getNemoStatus,
+  runNemoDiarization,
   API_BASE_URL,
 } from './services/api';
 
@@ -29,6 +31,11 @@ function App() {
   // eslint-disable-next-line no-unused-vars
   const [uploadProgress, setUploadProgress] = useState({ loadedMB: 0, totalMB: 0, percent: 0 });
   const [sessionRestored, setSessionRestored] = useState(false);
+  
+  // NeMo MSDD state
+  const [nemoAvailable, setNemoAvailable] = useState(false);
+  const [nemoLoading, setNemoLoading] = useState(false);
+  const [nemoTask, setNemoTask] = useState(null);
 
   // Build processed segments from result
   const buildProcessedSegments = useMemo(
@@ -591,6 +598,75 @@ function App() {
     setIsUploading(false);
   };
 
+  // Check NeMo availability on mount and when video changes
+  useEffect(() => {
+    const checkNemoStatus = async () => {
+      try {
+        const status = await getNemoStatus();
+        setNemoAvailable(status.available);
+        console.log('[NeMo] Status:', status);
+      } catch (error) {
+        console.log('[NeMo] Not available:', error.message);
+        setNemoAvailable(false);
+      }
+    };
+    
+    checkNemoStatus();
+  }, [videoData?.video_id]);
+
+  // Poll NeMo task status
+  useEffect(() => {
+    if (!nemoTask) return;
+    
+    const pollInterval = setInterval(async () => {
+      try {
+        const status = await getTaskStatus(nemoTask);
+        console.log('[NeMo] Task status:', status);
+        
+        if (status.status === 'completed') {
+          clearInterval(pollInterval);
+          setNemoLoading(false);
+          setNemoTask(null);
+          
+          // Show success message
+          const result = status.result || {};
+          alert(`NeMo диаризация завершена!\n\nОбнаружено спикеров: ${result.num_speakers_detected || 0}\nСегментов: ${result.segments?.length || 0}\n\nРезультаты сохранены. Перезапустите анализ для применения.`);
+        } else if (status.status === 'failed') {
+          clearInterval(pollInterval);
+          setNemoLoading(false);
+          setNemoTask(null);
+          alert(`NeMo диаризация не удалась: ${status.message}`);
+        }
+      } catch (error) {
+        console.error('[NeMo] Poll error:', error);
+      }
+    }, 2000);
+    
+    return () => clearInterval(pollInterval);
+  }, [nemoTask]);
+
+  const handleNemoDiarization = async (numSpeakers = 0) => {
+    if (!videoData?.video_id) {
+      alert('Сначала загрузите видео');
+      return;
+    }
+    
+    try {
+      setNemoLoading(true);
+      console.log('[NeMo] Starting diarization for video:', videoData.video_id);
+      
+      const response = await runNemoDiarization(videoData.video_id, numSpeakers, 8);
+      console.log('[NeMo] Task started:', response);
+      
+      setNemoTask(response.task_id);
+      alert('NeMo MSDD диаризация запущена. Это может занять несколько минут...');
+    } catch (error) {
+      console.error('[NeMo] Error:', error);
+      setNemoLoading(false);
+      alert(`Ошибка запуска NeMo: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
   const handleNewVideoRequest = () => {
     if (isBusyStage) {
       alert('Дождитесь завершения текущей операции, затем начните заново.');
@@ -636,6 +712,9 @@ function App() {
             videoTitle={videoData?.title}
             onProcess={handleProcess}
             onDubbing={handleDubbing}
+            onNemoDiarization={handleNemoDiarization}
+            nemoAvailable={nemoAvailable}
+            nemoLoading={nemoLoading}
             loading={stage === 'processing'}
             videoThumbnail={videoData?.thumbnail_url}
           />

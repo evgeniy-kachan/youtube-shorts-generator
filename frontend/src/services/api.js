@@ -164,4 +164,19 @@ export const generateDescription = async (textEn, textRu, duration, highlightSco
   return response.data;
 };
 
+// NeMo MSDD Diarization
+export const getNemoStatus = async () => {
+  const response = await api.get('/api/video/nemo/status');
+  return response.data;
+};
+
+export const runNemoDiarization = async (videoId, numSpeakers = 0, maxSpeakers = 8) => {
+  const response = await api.post('/api/video/nemo/diarize', {
+    video_id: videoId,
+    num_speakers: numSpeakers,
+    max_speakers: maxSpeakers,
+  });
+  return response.data;
+};
+
 export default api;

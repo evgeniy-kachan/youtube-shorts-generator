@@ -2073,6 +2073,164 @@ async def transcribe_audio(
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 
+# ============================================================================
+# NeMo MSDD Diarization Endpoint
+# ============================================================================
+
+class NemoDiarizationRequest(BaseModel):
+    """Request for NeMo MSDD diarization."""
+    video_id: str
+    num_speakers: int = 0  # 0 = auto-detect
+    max_speakers: int = 8
+
+
+class NemoDiarizationResponse(BaseModel):
+    """Response from NeMo diarization."""
+    success: bool
+    segments: list = []
+    num_speakers_detected: int = 0
+    message: str = ""
+
+
+@router.get("/nemo/status")
+async def get_nemo_status():
+    """Check if NeMo MSDD diarization is available."""
+    try:
+        from backend.services.nemo_diarization_runner import is_nemo_available
+        available = is_nemo_available()
+        return {
+            "available": available,
+            "message": "NeMo MSDD is ready" if available else "NeMo MSDD not installed (venv-nemo not found)"
+        }
+    except Exception as e:
+        return {
+            "available": False,
+            "message": f"Error checking NeMo status: {str(e)}"
+        }
+
+
+@router.post("/nemo/diarize", response_model=TaskStatus)
+async def run_nemo_diarization(request: NemoDiarizationRequest, background_tasks: BackgroundTasks):
+    """
+    Run NeMo MSDD diarization on the entire video.
+    
+    NeMo MSDD provides state-of-the-art speaker diarization for:
+    - Similar voices
+    - Overlapping speech
+    - Long recordings
+    """
+    # Check if video exists
+    if request.video_id not in analysis_results_cache:
+        raise HTTPException(status_code=404, detail=f"Video {request.video_id} not found in cache")
+    
+    cached = analysis_results_cache[request.video_id]
+    video_path = cached.get("video_path")
+    
+    if not video_path or not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Source video file not found")
+    
+    # Check if NeMo is available
+    try:
+        from backend.services.nemo_diarization_runner import is_nemo_available
+        if not is_nemo_available():
+            raise HTTPException(
+                status_code=503, 
+                detail="NeMo MSDD not available. Please install venv-nemo with nemo_toolkit[asr]"
+            )
+    except ImportError:
+        raise HTTPException(status_code=503, detail="NeMo diarization runner not found")
+    
+    task_id = str(uuid.uuid4())
+    tasks[task_id] = {"status": "pending", "progress": 0.0, "message": "NeMo diarization queued"}
+    
+    background_tasks.add_task(
+        _nemo_diarization_task,
+        task_id,
+        request.video_id,
+        video_path,
+        request.num_speakers,
+        request.max_speakers,
+    )
+    
+    return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="NeMo diarization started")
+
+
+def _nemo_diarization_task(
+    task_id: str,
+    video_id: str,
+    video_path: str,
+    num_speakers: int,
+    max_speakers: int,
+):
+    """Background task for NeMo MSDD diarization."""
+    try:
+        from backend.services.nemo_diarization_runner import get_nemo_diarization_runner
+        
+        tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Initializing NeMo MSDD..."}
+        
+        runner = get_nemo_diarization_runner()
+        runner.num_speakers = num_speakers
+        runner.max_speakers = max_speakers
+        
+        tasks[task_id] = {"status": "processing", "progress": 0.2, "message": "Running NeMo diarization (this may take a while)..."}
+        
+        # Run diarization
+        diar_segments = runner.run(video_path)
+        
+        if not diar_segments:
+            tasks[task_id] = {
+                "status": "failed",
+                "progress": 1.0,
+                "message": "NeMo diarization returned no segments",
+                "result": {"success": False, "segments": [], "num_speakers_detected": 0}
+            }
+            return
+        
+        tasks[task_id] = {"status": "processing", "progress": 0.8, "message": "Processing diarization results..."}
+        
+        # Count unique speakers
+        speakers = set(seg.get("speaker", "") for seg in diar_segments)
+        num_speakers_detected = len(speakers)
+        
+        logger.info(
+            "NeMo diarization completed: %d segments, %d speakers detected",
+            len(diar_segments), num_speakers_detected
+        )
+        
+        # Update analysis cache with new diarization
+        if video_id in analysis_results_cache:
+            cached = analysis_results_cache[video_id]
+            cached["nemo_diarization"] = {
+                "segments": diar_segments,
+                "num_speakers": num_speakers_detected,
+                "timestamp": datetime.now().isoformat(),
+            }
+            
+            # Optionally: Update segment dialogue with NeMo diarization
+            # This would require re-aligning transcription with new speaker labels
+            # For now, we just store the raw diarization results
+        
+        tasks[task_id] = {
+            "status": "completed",
+            "progress": 1.0,
+            "message": f"NeMo diarization completed: {num_speakers_detected} speakers, {len(diar_segments)} segments",
+            "result": {
+                "success": True,
+                "segments": diar_segments,
+                "num_speakers_detected": num_speakers_detected,
+            }
+        }
+        
+    except Exception as e:
+        logger.error("NeMo diarization failed: %s", e, exc_info=True)
+        tasks[task_id] = {
+            "status": "failed",
+            "progress": 1.0,
+            "message": f"NeMo diarization failed: {str(e)}",
+            "result": {"success": False, "error": str(e)}
+        }
+
+
 @router.on_event("startup")
 async def startup_event():
     # Clean up temp and output directories on startup
