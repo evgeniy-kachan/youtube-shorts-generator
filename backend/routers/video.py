@@ -2166,7 +2166,27 @@ def _nemo_diarization_task(
     try:
         from backend.services.nemo_diarization_runner import get_nemo_diarization_runner
         
-        tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Initializing NeMo MSDD..."}
+        tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Freeing GPU for NeMo..."}
+        
+        # CRITICAL: Free GPU memory before NeMo subprocess to avoid CUBLAS conflicts
+        # NeMo runs in a separate process and needs exclusive GPU access
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                # Unload any cached models that might hold GPU memory
+                global _services
+                _services.clear()
+                gc.collect()
+                torch.cuda.empty_cache()
+                logger.info("GPU memory cleared for NeMo diarization")
+        except Exception as e:
+            logger.warning("Could not clear GPU memory: %s", e)
+        
+        tasks[task_id] = {"status": "processing", "progress": 0.15, "message": "Initializing NeMo MSDD..."}
         
         runner = get_nemo_diarization_runner()
         runner.num_speakers = num_speakers
