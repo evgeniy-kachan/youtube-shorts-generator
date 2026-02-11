@@ -133,6 +133,10 @@ def run_nemo_diarization(
         # NeMo diarization config
         # Using neural diarizer with MSDD (Multi-Scale Diarization Decoder)
         config = OmegaConf.create({
+            "device": device,  # Required at root level for NeMo 2.x
+            "num_workers": 1,
+            "sample_rate": 16000,
+            "batch_size": 64,
             "diarizer": {
                 "manifest_filepath": str(manifest_path),
                 "out_dir": str(output_dir),
