@@ -28,7 +28,7 @@ class NemoDiarizationRunner:
         self,
         nemo_python: str | None = None,
         nemo_script: str | None = None,
-        device: str = "cuda",
+        device: str = "cpu",  # Use CPU to avoid CUDA context conflicts with main service
         num_speakers: int = 0,
         max_speakers: int = 8,
     ):
