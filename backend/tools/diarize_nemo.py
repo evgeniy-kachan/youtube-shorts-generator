@@ -134,6 +134,7 @@ def run_nemo_diarization(
         # Using neural diarizer with MSDD (Multi-Scale Diarization Decoder)
         config = OmegaConf.create({
             "device": device,  # Required at root level for NeMo 2.x
+            "verbose": True,   # Required for NeMo 2.6.x ClusteringDiarizer
             "num_workers": 1,
             "sample_rate": 16000,
             "batch_size": 64,
