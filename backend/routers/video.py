@@ -2078,10 +2078,27 @@ async def transcribe_audio(
 # ============================================================================
 
 class NemoDiarizationRequest(BaseModel):
-    """Request for NeMo MSDD diarization."""
+    """Request for NeMo MSDD diarization with optional auto-render."""
     video_id: str
     num_speakers: int = 0  # 0 = auto-detect
     max_speakers: int = 8
+    # Auto-render after diarization
+    auto_render: bool = False
+    segment_ids: list[str] = []  # Segments to render (empty = all strict/extended)
+    # Render settings (used if auto_render=True)
+    tts_provider: str = "elevenlabs"
+    voice_mix: str = "male_duo"
+    vertical_method: str = "center_crop"
+    subtitle_animation: str = "highlight"
+    subtitle_position: str = "mid_low"
+    subtitle_font: str = "Montserrat Light"
+    subtitle_font_size: int = 86
+    subtitle_background: bool = False
+    subtitle_glow: bool = True
+    subtitle_gradient: bool = False
+    speaker_color_mode: str = "colored"
+    preserve_background_audio: bool = True
+    crop_focus: str = "center"
 
 
 class NemoDiarizationResponse(BaseModel):
@@ -2150,9 +2167,83 @@ async def run_nemo_diarization(request: NemoDiarizationRequest, background_tasks
         video_path,
         request.num_speakers,
         request.max_speakers,
+        request.auto_render,
+        request.segment_ids,
+        request.tts_provider,
+        request.voice_mix,
+        request.vertical_method,
+        request.subtitle_animation,
+        request.subtitle_position,
+        request.subtitle_font,
+        request.subtitle_font_size,
+        request.subtitle_background,
+        request.subtitle_glow,
+        request.subtitle_gradient,
+        request.speaker_color_mode,
+        request.preserve_background_audio,
+        request.crop_focus,
     )
     
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="NeMo diarization started")
+
+
+def _apply_nemo_diarization_to_segments(segments: list, nemo_segments: list) -> None:
+    """
+    Apply NeMo diarization results to segment dialogues.
+    
+    NeMo provides speaker labels for the entire video. This function maps
+    those labels to individual segment dialogue turns based on time overlap.
+    """
+    if not nemo_segments:
+        return
+    
+    for segment in segments:
+        dialogue = segment.get('dialogue') or []
+        if not dialogue:
+            continue
+        
+        segment_start = float(segment.get('start_time', 0))
+        segment_end = float(segment.get('end_time', 0))
+        
+        # Find NeMo segments that overlap with this segment
+        relevant_nemo = [
+            ns for ns in nemo_segments
+            if float(ns.get('start', 0)) < segment_end and float(ns.get('end', 0)) > segment_start
+        ]
+        
+        if not relevant_nemo:
+            continue
+        
+        # Update dialogue turns with NeMo speaker labels
+        for turn in dialogue:
+            turn_start = float(turn.get('start', 0))
+            turn_end = float(turn.get('end', turn_start + 0.1))
+            turn_mid = (turn_start + turn_end) / 2
+            
+            # Find best matching NeMo segment (by midpoint overlap)
+            best_match = None
+            best_overlap = 0
+            
+            for ns in relevant_nemo:
+                ns_start = float(ns.get('start', 0))
+                ns_end = float(ns.get('end', 0))
+                
+                # Check if turn midpoint falls within NeMo segment
+                if ns_start <= turn_mid <= ns_end:
+                    overlap = min(turn_end, ns_end) - max(turn_start, ns_start)
+                    if overlap > best_overlap:
+                        best_overlap = overlap
+                        best_match = ns
+            
+            if best_match:
+                turn['speaker'] = best_match.get('speaker', 'SPEAKER_00')
+        
+        # Log update
+        speakers_in_segment = set(t.get('speaker') for t in dialogue if t.get('speaker'))
+        logger.debug(
+            "Applied NeMo diarization to segment %s: %d turns, speakers: %s",
+            segment.get('id'), len(dialogue), list(speakers_in_segment)
+        )
 
 
 def _nemo_diarization_task(
@@ -2161,8 +2252,23 @@ def _nemo_diarization_task(
     video_path: str,
     num_speakers: int,
     max_speakers: int,
+    auto_render: bool = False,
+    segment_ids: list[str] = None,
+    tts_provider: str = "elevenlabs",
+    voice_mix: str = "male_duo",
+    vertical_method: str = "center_crop",
+    subtitle_animation: str = "highlight",
+    subtitle_position: str = "mid_low",
+    subtitle_font: str = "Montserrat Light",
+    subtitle_font_size: int = 86,
+    subtitle_background: bool = False,
+    subtitle_glow: bool = True,
+    subtitle_gradient: bool = False,
+    speaker_color_mode: str = "colored",
+    preserve_background_audio: bool = True,
+    crop_focus: str = "center",
 ):
-    """Background task for NeMo MSDD diarization."""
+    """Background task for NeMo MSDD diarization with optional auto-render."""
     try:
         from backend.services.nemo_diarization_runner import get_nemo_diarization_runner
         
@@ -2252,9 +2358,80 @@ def _nemo_diarization_task(
                 "timestamp": datetime.now().isoformat(),
             }
             
-            # Optionally: Update segment dialogue with NeMo diarization
-            # This would require re-aligning transcription with new speaker labels
-            # For now, we just store the raw diarization results
+            # Apply NeMo diarization to segment dialogues
+            if "segments" in cached:
+                _apply_nemo_diarization_to_segments(cached["segments"], diar_segments)
+                logger.info("Applied NeMo diarization to %d segments", len(cached["segments"]))
+        
+        # Auto-render if requested
+        if auto_render and video_id in analysis_results_cache:
+            tasks[task_id] = {
+                "status": "processing",
+                "progress": 0.85,
+                "message": "NeMo diarization done. Starting render...",
+            }
+            
+            # Get segments to render
+            cached = analysis_results_cache[video_id]
+            all_segments = cached.get("segments", [])
+            
+            # Filter segments by IDs or use strict/extended
+            if segment_ids:
+                ids_to_render = segment_ids
+            else:
+                # Use strict and extended selection by default
+                ids_to_render = [
+                    s.get("id") for s in all_segments 
+                    if s.get("highlight_score", 0) >= 0.5  # strict + extended
+                ]
+            
+            if ids_to_render:
+                logger.info("Auto-rendering %d segments after NeMo diarization", len(ids_to_render))
+                
+                # Call the existing _process_segments_task directly
+                # This reuses all the complex rendering logic
+                try:
+                    _process_segments_task(
+                        task_id=task_id,
+                        video_id=video_id,
+                        segment_ids=ids_to_render,
+                        tts_provider=tts_provider,
+                        voice_mix=voice_mix,
+                        vertical_method=vertical_method,
+                        subtitle_animation=subtitle_animation,
+                        subtitle_position=subtitle_position,
+                        subtitle_font=subtitle_font,
+                        subtitle_font_size=subtitle_font_size,
+                        subtitle_background=subtitle_background,
+                        subtitle_glow=subtitle_glow,
+                        subtitle_gradient=subtitle_gradient,
+                        preserve_background_audio=preserve_background_audio,
+                        crop_focus=crop_focus,
+                        speaker_color_mode=speaker_color_mode,
+                        num_speakers=num_speakers_detected,  # Use detected speakers
+                        speaker_change_times="",
+                        speaker_change_phrases="",
+                        rediarize_segments=False,  # Already diarized by NeMo
+                    )
+                    # _process_segments_task updates tasks[task_id] itself
+                    return
+                    
+                except Exception as render_error:
+                    logger.error("Auto-render failed: %s", render_error, exc_info=True)
+                    tasks[task_id] = {
+                        "status": "completed",
+                        "progress": 1.0,
+                        "message": f"NeMo done but render failed: {str(render_error)}",
+                        "result": {
+                            "success": True,
+                            "nemo_speakers": num_speakers_detected,
+                            "nemo_segments": len(diar_segments),
+                            "render_error": str(render_error),
+                        }
+                    }
+                    return
+            else:
+                logger.warning("No segments to render after NeMo diarization")
         
         tasks[task_id] = {
             "status": "completed",

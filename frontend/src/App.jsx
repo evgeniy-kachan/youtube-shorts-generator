@@ -623,18 +623,42 @@ function App() {
         const status = await getTaskStatus(nemoTask);
         console.log('[NeMo] Task status:', status);
         
+        // Update progress if in processing stage
+        if (status.progress !== undefined) {
+          setProgress(Math.round(status.progress * 100));
+        }
+        if (status.message) {
+          setStatusMessage(status.message);
+        }
+        
         if (status.status === 'completed') {
           clearInterval(pollInterval);
           setNemoLoading(false);
           setNemoTask(null);
           
-          // Show success message
           const result = status.result || {};
-          alert(`NeMo диаризация завершена!\n\nОбнаружено спикеров: ${result.num_speakers_detected || 0}\nСегментов: ${result.segments?.length || 0}\n\nРезультаты сохранены. Перезапустите анализ для применения.`);
+          
+          // Check if this was auto-render (has rendered_segments)
+          if (result.rendered_segments && result.rendered_segments.length > 0) {
+            // Render completed - show download page
+            setProcessedSegments(result.rendered_segments);
+            setStage('download');
+            setProgress(100);
+            setStatusMessage('Готово!');
+          } else if (result.render_error) {
+            // Render failed but diarization succeeded
+            setStage('segments');
+            alert(`NeMo диаризация завершена, но рендер не удался:\n${result.render_error}\n\nСпикеров: ${result.nemo_speakers || 0}`);
+          } else {
+            // Just diarization (no auto-render)
+            setStage('segments');
+            alert(`NeMo диаризация завершена!\n\nОбнаружено спикеров: ${result.num_speakers_detected || result.nemo_speakers || 0}\nСегментов: ${result.segments?.length || result.nemo_segments || 0}\n\nРезультаты применены к сегментам.`);
+          }
         } else if (status.status === 'failed') {
           clearInterval(pollInterval);
           setNemoLoading(false);
           setNemoTask(null);
+          setStage('segments');
           alert(`NeMo диаризация не удалась: ${status.message}`);
         }
       } catch (error) {
@@ -645,24 +669,76 @@ function App() {
     return () => clearInterval(pollInterval);
   }, [nemoTask]);
 
-  const handleNemoDiarization = async (numSpeakers = 0) => {
+  const handleNemoDiarization = async (options = {}) => {
     if (!videoData?.video_id) {
       alert('Сначала загрузите видео');
       return;
     }
     
+    const {
+      numSpeakers = 0,
+      autoRender = false,
+      segmentIds = [],
+      ttsProvider = 'elevenlabs',
+      voiceMix = 'male_duo',
+      verticalMethod = 'center_crop',
+      subtitleAnimation = 'highlight',
+      subtitlePosition = 'mid_low',
+      subtitleFont = 'Montserrat Light',
+      subtitleFontSize = 86,
+      subtitleBackground = false,
+      subtitleGlow = true,
+      subtitleGradient = false,
+      speakerColorMode = 'colored',
+      preserveBackgroundAudio = true,
+      cropFocus = 'center',
+    } = options;
+    
     try {
       setNemoLoading(true);
-      console.log('[NeMo] Starting diarization for video:', videoData.video_id);
+      if (autoRender) {
+        setStage('processing');
+        setProgress(0);
+        setStatusMessage('NeMo MSDD диаризация + рендер...');
+      }
       
-      const response = await runNemoDiarization(videoData.video_id, numSpeakers, 8);
+      console.log('[NeMo] Starting diarization for video:', videoData.video_id, 'autoRender:', autoRender);
+      
+      const response = await runNemoDiarization(videoData.video_id, {
+        numSpeakers,
+        maxSpeakers: 8,
+        autoRender,
+        segmentIds,
+        ttsProvider,
+        voiceMix,
+        verticalMethod,
+        subtitleAnimation,
+        subtitlePosition,
+        subtitleFont,
+        subtitleFontSize,
+        subtitleBackground,
+        subtitleGlow,
+        subtitleGradient,
+        speakerColorMode,
+        preserveBackgroundAudio,
+        cropFocus,
+      });
       console.log('[NeMo] Task started:', response);
       
       setNemoTask(response.task_id);
-      alert('NeMo MSDD диаризация запущена. Это может занять несколько минут...');
+      
+      if (autoRender) {
+        // Will be handled by polling
+        setStatusMessage('NeMo MSDD диаризация запущена...');
+      } else {
+        alert('NeMo MSDD диаризация запущена. Это может занять несколько минут...');
+      }
     } catch (error) {
       console.error('[NeMo] Error:', error);
       setNemoLoading(false);
+      if (autoRender) {
+        setStage('segments');
+      }
       alert(`Ошибка запуска NeMo: ${error.response?.data?.detail || error.message}`);
     }
   };

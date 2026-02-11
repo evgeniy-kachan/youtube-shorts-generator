@@ -1211,19 +1211,38 @@ const SegmentsList = ({
                 </span>
               </p>
               
-              {/* NeMo MSDD Diarization Button */}
+              {/* NeMo MSDD Diarization + Render Button */}
               {onNemoDiarization && (
                 <button
-                  onClick={() => onNemoDiarization(numSpeakers)}
-                  disabled={nemoLoading || loading || !nemoAvailable}
+                  onClick={() => onNemoDiarization({
+                    numSpeakers,
+                    autoRender: true,  // Auto-render after diarization
+                    segmentIds: selectedSegments,
+                    ttsProvider,
+                    voiceMix,
+                    verticalMethod,
+                    subtitleAnimation,
+                    subtitlePosition,
+                    subtitleFont,
+                    subtitleFontSize,
+                    subtitleBackground,
+                    subtitleGlow,
+                    subtitleGradient,
+                    speakerColorMode,
+                    preserveBackgroundAudio,
+                    cropFocus,
+                  })}
+                  disabled={nemoLoading || loading || !nemoAvailable || selectedSegments.length === 0}
                   className={`px-5 py-3 text-base rounded-xl font-semibold transition shadow-lg ${
-                    nemoLoading || loading || !nemoAvailable
+                    nemoLoading || loading || !nemoAvailable || selectedSegments.length === 0
                       ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600'
                   }`}
-                  title={nemoAvailable 
-                    ? "NeMo MSDD - точная диаризация от NVIDIA (анализирует всё видео)" 
-                    : "NeMo MSDD не установлен (требуется venv-nemo)"
+                  title={!nemoAvailable 
+                    ? "NeMo MSDD не установлен (требуется venv-nemo)"
+                    : selectedSegments.length === 0
+                    ? "Выберите сегменты для рендера"
+                    : "NeMo MSDD диаризация + рендер выбранных сегментов"
                   }
                 >
                   {nemoLoading ? (
@@ -1235,7 +1254,7 @@ const SegmentsList = ({
                       NeMo...
                     </span>
                   ) : (
-                    <>🧠 NeMo MSDD</>
+                    <>🧠 NeMo + Рендер</>
                   )}
                 </button>
               )}

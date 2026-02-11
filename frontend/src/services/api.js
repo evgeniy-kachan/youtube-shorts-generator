@@ -170,11 +170,46 @@ export const getNemoStatus = async () => {
   return response.data;
 };
 
-export const runNemoDiarization = async (videoId, numSpeakers = 0, maxSpeakers = 8) => {
+export const runNemoDiarization = async (videoId, options = {}) => {
+  const {
+    numSpeakers = 0,
+    maxSpeakers = 8,
+    autoRender = false,
+    segmentIds = [],
+    ttsProvider = 'elevenlabs',
+    voiceMix = 'male_duo',
+    verticalMethod = 'center_crop',
+    subtitleAnimation = 'highlight',
+    subtitlePosition = 'mid_low',
+    subtitleFont = 'Montserrat Light',
+    subtitleFontSize = 86,
+    subtitleBackground = false,
+    subtitleGlow = true,
+    subtitleGradient = false,
+    speakerColorMode = 'colored',
+    preserveBackgroundAudio = true,
+    cropFocus = 'center',
+  } = options;
+  
   const response = await api.post('/api/video/nemo/diarize', {
     video_id: videoId,
     num_speakers: numSpeakers,
     max_speakers: maxSpeakers,
+    auto_render: autoRender,
+    segment_ids: segmentIds,
+    tts_provider: ttsProvider,
+    voice_mix: voiceMix,
+    vertical_method: verticalMethod,
+    subtitle_animation: subtitleAnimation,
+    subtitle_position: subtitlePosition,
+    subtitle_font: subtitleFont,
+    subtitle_font_size: subtitleFontSize,
+    subtitle_background: subtitleBackground,
+    subtitle_glow: subtitleGlow,
+    subtitle_gradient: subtitleGradient,
+    speaker_color_mode: speakerColorMode,
+    preserve_background_audio: preserveBackgroundAudio,
+    crop_focus: cropFocus,
   });
   return response.data;
 };
