@@ -2188,14 +2188,38 @@ def _nemo_diarization_task(
         
         tasks[task_id] = {"status": "processing", "progress": 0.8, "message": "Processing diarization results..."}
         
-        # Count unique speakers
-        speakers = set(seg.get("speaker", "") for seg in diar_segments)
-        num_speakers_detected = len(speakers)
+        # Count unique speakers and calculate stats
+        speaker_stats = {}
+        for seg in diar_segments:
+            speaker = seg.get("speaker", "unknown")
+            duration = seg.get("end", 0) - seg.get("start", 0)
+            if speaker not in speaker_stats:
+                speaker_stats[speaker] = {"count": 0, "duration": 0.0}
+            speaker_stats[speaker]["count"] += 1
+            speaker_stats[speaker]["duration"] += duration
         
-        logger.info(
-            "NeMo diarization completed: %d segments, %d speakers detected",
-            len(diar_segments), num_speakers_detected
-        )
+        num_speakers_detected = len(speaker_stats)
+        total_speech = sum(s["duration"] for s in speaker_stats.values())
+        
+        # Log detailed results
+        logger.info("=" * 60)
+        logger.info("NEMO DIARIZATION RESULTS for %s", video_id)
+        logger.info("=" * 60)
+        logger.info("Speakers detected: %d", num_speakers_detected)
+        logger.info("Total segments: %d", len(diar_segments))
+        logger.info("Total speech duration: %.1f seconds", total_speech)
+        logger.info("-" * 60)
+        
+        for speaker in sorted(speaker_stats.keys()):
+            stats = speaker_stats[speaker]
+            pct = (stats["duration"] / total_speech * 100) if total_speech > 0 else 0
+            avg_seg = stats["duration"] / stats["count"] if stats["count"] > 0 else 0
+            logger.info(
+                "  %s: %d segments, %.1fs total (%.1f%%), avg segment: %.2fs",
+                speaker, stats["count"], stats["duration"], pct, avg_seg
+            )
+        
+        logger.info("=" * 60)
         
         # Update analysis cache with new diarization
         if video_id in analysis_results_cache:
@@ -2203,6 +2227,8 @@ def _nemo_diarization_task(
             cached["nemo_diarization"] = {
                 "segments": diar_segments,
                 "num_speakers": num_speakers_detected,
+                "speaker_stats": speaker_stats,
+                "total_speech_duration": total_speech,
                 "timestamp": datetime.now().isoformat(),
             }
             

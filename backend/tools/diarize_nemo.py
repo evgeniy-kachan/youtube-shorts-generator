@@ -225,7 +225,9 @@ def run_nemo_diarization(
             rttm_path = rttm_files[0]
             segments = parse_rttm(str(rttm_path))
             
-            logger.info("NeMo diarization produced %d segments", len(segments))
+            # Log detailed quality metrics
+            log_diarization_quality(segments, duration)
+            
             return segments
             
         except Exception as e:
@@ -246,6 +248,126 @@ def run_nemo_diarization(
                 logger.error("Fallback also failed: %s", fallback_e)
             
             return []
+
+
+def log_diarization_quality(segments: List[Dict], total_duration: float) -> None:
+    """
+    Log detailed quality metrics for diarization results.
+    
+    Metrics:
+    - Number of speakers detected
+    - Total speech duration per speaker
+    - Average segment duration
+    - Speaker turn frequency
+    - Potential issues (very short segments, unbalanced speakers)
+    """
+    if not segments:
+        logger.warning("QUALITY: No segments to analyze")
+        return
+    
+    # Group segments by speaker
+    speaker_stats = {}
+    for seg in segments:
+        speaker = seg.get("speaker", "unknown")
+        duration = seg.get("end", 0) - seg.get("start", 0)
+        
+        if speaker not in speaker_stats:
+            speaker_stats[speaker] = {
+                "segments": 0,
+                "total_duration": 0.0,
+                "min_duration": float("inf"),
+                "max_duration": 0.0,
+                "durations": [],
+            }
+        
+        speaker_stats[speaker]["segments"] += 1
+        speaker_stats[speaker]["total_duration"] += duration
+        speaker_stats[speaker]["min_duration"] = min(speaker_stats[speaker]["min_duration"], duration)
+        speaker_stats[speaker]["max_duration"] = max(speaker_stats[speaker]["max_duration"], duration)
+        speaker_stats[speaker]["durations"].append(duration)
+    
+    num_speakers = len(speaker_stats)
+    total_speech = sum(s["total_duration"] for s in speaker_stats.values())
+    speech_ratio = (total_speech / total_duration * 100) if total_duration > 0 else 0
+    
+    # Log summary
+    logger.info("=" * 60)
+    logger.info("NEMO DIARIZATION QUALITY REPORT")
+    logger.info("=" * 60)
+    logger.info("Audio duration: %.2f sec", total_duration)
+    logger.info("Total speech: %.2f sec (%.1f%% of audio)", total_speech, speech_ratio)
+    logger.info("Speakers detected: %d", num_speakers)
+    logger.info("Total segments: %d", len(segments))
+    logger.info("-" * 60)
+    
+    # Log per-speaker stats
+    for speaker in sorted(speaker_stats.keys()):
+        stats = speaker_stats[speaker]
+        avg_duration = stats["total_duration"] / stats["segments"] if stats["segments"] > 0 else 0
+        speaker_ratio = (stats["total_duration"] / total_speech * 100) if total_speech > 0 else 0
+        
+        logger.info(
+            "  %s: %d segments, %.1fs total (%.1f%%), avg=%.2fs, min=%.2fs, max=%.2fs",
+            speaker,
+            stats["segments"],
+            stats["total_duration"],
+            speaker_ratio,
+            avg_duration,
+            stats["min_duration"] if stats["min_duration"] != float("inf") else 0,
+            stats["max_duration"],
+        )
+    
+    logger.info("-" * 60)
+    
+    # Quality warnings
+    warnings = []
+    
+    # Check for very short segments (< 0.3s)
+    short_segments = [s for s in segments if (s.get("end", 0) - s.get("start", 0)) < 0.3]
+    if short_segments:
+        warnings.append(f"⚠ {len(short_segments)} very short segments (<0.3s) - may indicate noise or errors")
+    
+    # Check for unbalanced speakers (one speaker > 90% of speech)
+    for speaker, stats in speaker_stats.items():
+        if total_speech > 0 and stats["total_duration"] / total_speech > 0.9 and num_speakers > 1:
+            warnings.append(f"⚠ Speaker {speaker} dominates ({stats['total_duration']/total_speech*100:.1f}%) - check if diarization missed other speakers")
+    
+    # Check for too many speakers (> 5 usually indicates errors)
+    if num_speakers > 5:
+        warnings.append(f"⚠ {num_speakers} speakers detected - unusually high, may indicate diarization errors")
+    
+    # Check for low speech ratio (< 50%)
+    if speech_ratio < 50:
+        warnings.append(f"⚠ Low speech ratio ({speech_ratio:.1f}%) - check VAD settings or audio quality")
+    
+    # Check for frequent speaker changes (> 1 per second on average)
+    if total_duration > 0 and len(segments) / total_duration > 1:
+        warnings.append(f"⚠ Very frequent speaker changes ({len(segments)/total_duration:.2f}/sec) - may indicate overlapping speech or errors")
+    
+    # Log warnings
+    if warnings:
+        logger.info("QUALITY WARNINGS:")
+        for w in warnings:
+            logger.warning(w)
+    else:
+        logger.info("✓ No quality issues detected")
+    
+    logger.info("=" * 60)
+    
+    # Log first 10 segments for debugging
+    logger.info("First 10 segments:")
+    for i, seg in enumerate(segments[:10]):
+        logger.info(
+            "  [%d] %.2f-%.2fs (%s) duration=%.2fs",
+            i,
+            seg.get("start", 0),
+            seg.get("end", 0),
+            seg.get("speaker", "?"),
+            seg.get("end", 0) - seg.get("start", 0),
+        )
+    
+    if len(segments) > 10:
+        logger.info("  ... and %d more segments", len(segments) - 10)
 
 
 def parse_rttm(rttm_path: str) -> List[Dict]:
