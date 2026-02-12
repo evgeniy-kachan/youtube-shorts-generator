@@ -97,26 +97,36 @@ class PyAnnoteDiarizationRunner:
             )
             
             try:
+                # Timeout: 60 min for long videos (2+ hours)
+                # GPU diarization: ~10-15 min for 2-hour video
+                # CPU diarization: can take 30+ min
+                import time
+                start_time = time.time()
+                
                 result = subprocess.run(
                     cmd,
                     check=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=1800,  # 30 min max
+                    timeout=3600,  # 60 min max (increased from 30)
                 )
+                
+                elapsed = time.time() - start_time
+                logger.info("Pyannote diarization completed in %.1f seconds", elapsed)
                 
                 if result.stdout:
                     logger.debug("Pyannote stdout: %s", result.stdout.decode(errors="ignore"))
                 if result.stderr:
                     # Pyannote logs to stderr
                     stderr_text = result.stderr.decode(errors="ignore")
-                    # Log important lines
+                    # Log important lines (device info, GPU, speakers, errors)
                     for line in stderr_text.split("\n"):
-                        if "speaker" in line.lower() or "segment" in line.lower() or "error" in line.lower():
+                        line_lower = line.lower()
+                        if any(kw in line_lower for kw in ["speaker", "segment", "error", "cuda", "gpu", "device", "pipeline", "diarization"]):
                             logger.info("Pyannote: %s", line.strip())
                     
             except subprocess.TimeoutExpired:
-                logger.error("Pyannote diarization timed out (30 min)")
+                logger.error("Pyannote diarization timed out (60 min)")
                 return []
             except subprocess.CalledProcessError as exc:
                 logger.error(
