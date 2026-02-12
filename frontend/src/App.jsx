@@ -638,10 +638,11 @@ function App() {
           
           const result = status.result || {};
           
-          // Check if this was auto-render (has rendered_segments)
-          if (result.rendered_segments && result.rendered_segments.length > 0) {
+          // Check if this was auto-render (has rendered_segments or output_videos)
+          const renderedVideos = result.rendered_segments || result.output_videos || [];
+          if (renderedVideos.length > 0) {
             // Render completed - show download page
-            setProcessedSegments(result.rendered_segments);
+            setProcessedSegments(renderedVideos);
             setStage('download');
             setProgress(100);
             setStatusMessage('Готово!');
