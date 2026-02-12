@@ -1,4 +1,10 @@
-"""Video transcription service using external WhisperX runner (venv-asr) with BUILT-IN diarization."""
+"""
+Video transcription service using:
+- WhisperX (venv-asr) for transcription + word alignment
+- Pyannote (venv-diar) for speaker diarization
+
+Diarization is now handled SEPARATELY by Pyannote for better control and quality.
+"""
 import logging
 import os
 from pathlib import Path
@@ -16,13 +22,27 @@ from backend.config import (
     DIARIZATION_MIN_SPEAKERS,
     DIARIZATION_MAX_SPEAKERS,
 )
-from backend.services.transcription_runner import TranscriptionRunner
+from backend.services.transcription_runner import (
+    TranscriptionRunner,
+    merge_transcription_with_diarization,
+)
+from backend.services.pyannote_diarization_runner import (
+    PyAnnoteDiarizationRunner,
+    is_pyannote_available,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class TranscriptionService:
-    """Transcribe audio using WhisperX with BUILT-IN diarization (much more accurate than separate Pyannote)."""
+    """
+    Transcribe audio using WhisperX + Pyannote diarization.
+    
+    Pipeline:
+    1. WhisperX: transcription + word alignment (NO diarization)
+    2. Pyannote: speaker diarization (separate, full control)
+    3. Merge: assign speakers to words/segments
+    """
 
     def __init__(
         self,
@@ -37,17 +57,17 @@ class TranscriptionService:
         hf_token: Optional[str] = None,
     ):
         """
-        Initialize TranscriptionService using external WhisperX runner with built-in diarization.
+        Initialize TranscriptionService.
 
         Args:
             model_name: Whisper model size (tiny, base, small, medium, large-v2, large-v3)
             device: Preferred device (cuda, cpu)
             compute_type: Computation type (float16, int8, float32)
             batch_size: Transcription batch size (unused in external runner)
-            enable_diarization: Enable speaker diarization (built into WhisperX)
+            enable_diarization: Enable speaker diarization via Pyannote
             num_speakers: Expected number of speakers (0 for auto-detect)
-            min_speakers: Min speakers for auto-detect mode
-            max_speakers: Max speakers for auto-detect mode
+            min_speakers: Min speakers for auto-detect mode (unused, kept for compatibility)
+            max_speakers: Max speakers for auto-detect mode (unused, kept for compatibility)
             hf_token: Hugging Face token for diarization model access
         """
         requested_device = device
@@ -69,38 +89,44 @@ class TranscriptionService:
         self.max_speakers = max_speakers
         self.hf_token = hf_token or HUGGINGFACE_TOKEN
 
-        # Use WhisperX built-in diarization (assigns speakers at word level!)
-        self.transcription_runner = TranscriptionRunner(
-            enable_diarization=enable_diarization,
+        # WhisperX for transcription only (no diarization)
+        self.transcription_runner = TranscriptionRunner()
+
+        # Pyannote for diarization (separate, full control)
+        self.diarization_runner = PyAnnoteDiarizationRunner(
             num_speakers=num_speakers,
-            min_speakers=min_speakers,
-            max_speakers=max_speakers,
+            device=device,  # GPU for speed
         )
 
-        # Log diarization mode
-        diar_mode = f"fixed={num_speakers}" if num_speakers > 0 else f"auto [{min_speakers}-{max_speakers}]"
+        # Log configuration
+        diar_mode = f"fixed={num_speakers}" if num_speakers > 0 else "auto-detect"
+        pyannote_status = "available" if is_pyannote_available() else "NOT AVAILABLE"
         logger.info(
             "TranscriptionService initialized: model=%s, device=%s (requested=%s), compute=%s, "
-            "diarization=%s (BUILT-IN WhisperX), speakers=%s",
+            "diarization=%s via Pyannote (%s), speakers=%s",
             model_name,
             self.device,
             requested_device,
             compute_type,
             enable_diarization,
+            pyannote_status,
             diar_mode,
         )
 
     def transcribe(self, audio_path: str, language: str = "en") -> List[Dict]:
         """
-        Transcribe audio file using WhisperX with BUILT-IN diarization.
+        Transcribe audio file using WhisperX + Pyannote diarization.
         
-        WhisperX now does diarization internally, assigning speakers at the WORD level,
-        which is much more accurate than running Pyannote separately.
+        Pipeline:
+        1. WhisperX: transcription + word alignment
+        2. Pyannote: speaker diarization (if enabled)
+        3. Merge: assign speakers to segments/words
         """
         try:
-            logger.info("Transcribing audio via WhisperX (built-in diarization): %s", audio_path)
+            logger.info("=== TRANSCRIPTION PIPELINE START ===")
+            logger.info("Step 1: WhisperX transcription (no diarization): %s", audio_path)
             
-            # WhisperX now handles both transcription AND diarization in one pass
+            # Step 1: WhisperX transcription only (no diarization)
             transcription_result = self.transcription_runner.transcribe(
                 audio_path=audio_path,
                 model=self.model_name,
@@ -111,51 +137,78 @@ class TranscriptionService:
             
             segments = transcription_result.get("segments", [])
             detected_language = transcription_result.get("language", language)
-            diarization_enabled = transcription_result.get("diarization_enabled", False)
             
             logger.info(
-                "WhisperX returned %d segments (diarization=%s)",
+                "WhisperX returned %d segments (transcription only, no speakers yet)",
                 len(segments),
-                diarization_enabled,
             )
             
+            # Step 2: Pyannote diarization (if enabled)
+            diarization_segments = []
+            if self.enable_diarization and is_pyannote_available():
+                logger.info("Step 2: Pyannote diarization (speakers=%s)", 
+                           self.num_speakers if self.num_speakers > 0 else "auto")
+                
+                # Update num_speakers in runner
+                self.diarization_runner.num_speakers = self.num_speakers
+                
+                diarization_segments = self.diarization_runner.diarize(audio_path)
+                
+                if diarization_segments:
+                    logger.info("Pyannote returned %d diarization segments", len(diarization_segments))
+                else:
+                    logger.warning("Pyannote returned no segments!")
+            elif self.enable_diarization:
+                logger.warning("Diarization enabled but Pyannote not available!")
+            else:
+                logger.info("Step 2: Diarization DISABLED, skipping")
+            
+            # Step 3: Merge transcription + diarization
+            if diarization_segments:
+                logger.info("Step 3: Merging transcription with diarization")
+                transcription_result = merge_transcription_with_diarization(
+                    transcription_result,
+                    diarization_segments,
+                )
+                segments = transcription_result.get("segments", [])
+            
             # DIARIZATION DIAGNOSTIC: Analyze speaker distribution
-            if diarization_enabled:
-                speaker_stats: dict[str, dict] = {}
-                for seg in segments:
-                    speaker = seg.get("speaker") or "UNKNOWN"
-                    if speaker not in speaker_stats:
-                        speaker_stats[speaker] = {"segments": 0, "words": 0, "duration": 0.0}
-                    speaker_stats[speaker]["segments"] += 1
-                    speaker_stats[speaker]["words"] += len(seg.get("words", []))
-                    speaker_stats[speaker]["duration"] += seg.get("end", 0) - seg.get("start", 0)
-                
-                logger.info("DIARIZATION STATS: %d unique speakers detected", len(speaker_stats))
-                for spk, stats in sorted(speaker_stats.items()):
-                    logger.info(
-                        "  %s: %d segments, %d words, %.1fs total",
-                        spk, stats["segments"], stats["words"], stats["duration"]
-                    )
-                
-                # Warn if fewer speakers detected than expected
-                if self.num_speakers > 1 and len(speaker_stats) < self.num_speakers:
+            speaker_stats: dict[str, dict] = {}
+            for seg in segments:
+                speaker = seg.get("speaker") or "UNKNOWN"
+                if speaker not in speaker_stats:
+                    speaker_stats[speaker] = {"segments": 0, "words": 0, "duration": 0.0}
+                speaker_stats[speaker]["segments"] += 1
+                speaker_stats[speaker]["words"] += len(seg.get("words", []))
+                speaker_stats[speaker]["duration"] += seg.get("end", 0) - seg.get("start", 0)
+            
+            logger.info("DIARIZATION STATS: %d unique speakers detected", len(speaker_stats))
+            for spk, stats in sorted(speaker_stats.items()):
+                logger.info(
+                    "  %s: %d segments, %d words, %.1fs total",
+                    spk, stats["segments"], stats["words"], stats["duration"]
+                )
+            
+            # Warn if fewer speakers detected than expected
+            if self.num_speakers > 1 and len(speaker_stats) < self.num_speakers:
+                # Filter out UNKNOWN
+                real_speakers = [s for s in speaker_stats.keys() if s != "UNKNOWN" and s != "SPEAKER_UNKNOWN"]
+                if len(real_speakers) < self.num_speakers:
                     logger.warning(
                         "DIARIZATION WARNING: Only %d speaker(s) detected (expected %d)! "
-                        "This may indicate that voices are too similar, the segment is too short, "
-                        "or diarization failed to distinguish speakers. Detected speakers: %s",
-                        len(speaker_stats),
+                        "This may indicate that voices are too similar or Pyannote needs tuning. "
+                        "Detected speakers: %s",
+                        len(real_speakers),
                         self.num_speakers,
-                        list(speaker_stats.keys())
+                        real_speakers,
                     )
 
-            # Format segments (speakers already assigned by WhisperX!)
+            # Format segments
             formatted_segments = []
             for idx, segment in enumerate(segments):
                 start = float(segment.get("start", 0.0))
                 end = float(segment.get("end", start))
                 text = (segment.get("text") or "").strip()
-                
-                # Speaker is now assigned by WhisperX at segment and word level
                 speaker = segment.get("speaker")
                 words = segment.get("words", [])
 
@@ -170,11 +223,11 @@ class TranscriptionService:
                     "end": end,
                     "text": text,
                     "speaker": speaker,
-                    "words": words,  # Words now have speaker info too!
+                    "words": words,
                 })
 
             logger.info(
-                "Transcription completed: %d segments (language=%s)",
+                "=== TRANSCRIPTION PIPELINE COMPLETE: %d segments (language=%s) ===",
                 len(formatted_segments),
                 detected_language,
             )
