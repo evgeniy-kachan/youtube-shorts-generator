@@ -84,20 +84,40 @@ def run_nemo_diarization(
         List of diarization segments
     """
     import torch
+    import gc
     
     # Check CUDA availability
     if device == "cuda" and not torch.cuda.is_available():
         logger.warning("CUDA requested but not available. Falling back to CPU.")
         device = "cpu"
     
-    # Clear CUDA cache before starting NeMo to avoid CUBLAS conflicts
+    # Initialize CUDA context properly for subprocess
     if device == "cuda":
         try:
+            # Force garbage collection first
+            gc.collect()
+            
+            # Clear any existing CUDA state
             torch.cuda.empty_cache()
+            
+            # Set device explicitly
+            torch.cuda.set_device(0)
+            
+            # Initialize fresh CUDA context with a small tensor
+            init_tensor = torch.zeros(1, device="cuda")
+            del init_tensor
             torch.cuda.synchronize()
-            # Initialize CUDA context explicitly
-            _ = torch.zeros(1, device="cuda")
-            logger.info("CUDA context initialized successfully")
+            
+            # Enable TF32 for faster computation on Ampere+ GPUs
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            
+            # Log GPU info
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            logger.info("CUDA initialized: %s (%.1f GB)", gpu_name, gpu_memory)
+            logger.info("TF32 enabled for faster computation")
+            
         except Exception as e:
             logger.warning("CUDA initialization failed: %s. Falling back to CPU.", e)
             device = "cpu"

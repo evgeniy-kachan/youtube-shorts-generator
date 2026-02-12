@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import multiprocessing as mp
 import os
 import subprocess
 import tempfile
@@ -28,7 +29,7 @@ class NemoDiarizationRunner:
         self,
         nemo_python: str | None = None,
         nemo_script: str | None = None,
-        device: str = "cpu",  # Use CPU to avoid CUDA context conflicts with main service
+        device: str = "cuda",  # Use GPU for faster processing (spawn isolates CUDA context)
         num_speakers: int = 0,
         max_speakers: int = 8,
     ):
@@ -55,6 +56,32 @@ class NemoDiarizationRunner:
         
         return True
 
+    def _release_gpu_memory(self) -> None:
+        """Aggressively release GPU memory before NeMo subprocess."""
+        import gc
+        gc.collect()
+        
+        try:
+            import torch
+            if torch.cuda.is_available():
+                # Clear all cached memory
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                
+                # Reset peak memory stats
+                torch.cuda.reset_peak_memory_stats()
+                
+                # Force garbage collection again
+                gc.collect()
+                torch.cuda.empty_cache()
+                
+                logger.info(
+                    "GPU memory released. Current allocated: %.1f MB",
+                    torch.cuda.memory_allocated() / 1024 / 1024
+                )
+        except Exception as e:
+            logger.warning("Could not release GPU memory: %s", e)
+
     def run(self, input_path: str) -> List[Dict]:
         """
         Run NeMo MSDD diarization on the input audio/video file.
@@ -70,6 +97,21 @@ class NemoDiarizationRunner:
             logger.error("NeMo diarization is not available")
             return []
 
+        # Set spawn method to avoid CUDA context inheritance issues
+        # This ensures NeMo subprocess gets a clean CUDA context
+        try:
+            current_method = mp.get_start_method(allow_none=True)
+            if current_method != "spawn":
+                mp.set_start_method("spawn", force=True)
+                logger.info("Set multiprocessing start method to 'spawn' for clean CUDA context")
+        except RuntimeError as e:
+            logger.debug("Could not set spawn method (may already be set): %s", e)
+        
+        # Release GPU memory before spawning NeMo
+        if self.device == "cuda":
+            logger.info("Releasing GPU memory before NeMo...")
+            self._release_gpu_memory()
+
         with tempfile.TemporaryDirectory() as tmpdir:
             out_json = Path(tmpdir) / "nemo_diar.json"
             
@@ -83,12 +125,15 @@ class NemoDiarizationRunner:
                 "--max_speakers", str(self.max_speakers),
             ]
             
-            logger.info("Running NeMo diarization: %s", " ".join(cmd[:6]) + " ...")
+            logger.info("Running NeMo diarization on %s: %s", self.device.upper(), " ".join(cmd[:6]) + " ...")
             
-            # Set environment variables to avoid CUDA context conflicts
+            # Set environment variables for clean CUDA context in subprocess
             env = os.environ.copy()
             env["CUDA_LAUNCH_BLOCKING"] = "1"  # Synchronous CUDA execution
             env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # Better memory management
+            env["CUDA_VISIBLE_DEVICES"] = "0"  # Ensure subprocess sees GPU
+            # Force subprocess to create new CUDA context
+            env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
             
             try:
                 result = subprocess.run(
