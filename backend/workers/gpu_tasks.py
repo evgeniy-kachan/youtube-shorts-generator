@@ -235,10 +235,10 @@ def diarize_nemo(
                 "--input", audio_path,
                 "--output", output_path,
                 "--device", device,
-                "--max-speakers", str(max_speakers),
+                "--max_speakers", str(max_speakers),
             ]
             if num_speakers > 0:
-                cmd.extend(["--num-speakers", str(num_speakers)])
+                cmd.extend(["--num_speakers", str(num_speakers)])
             
             logger.info("Running NeMo subprocess: %s", " ".join(cmd[:4]) + " ...")
             
