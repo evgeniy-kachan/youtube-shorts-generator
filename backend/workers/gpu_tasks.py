@@ -240,7 +240,7 @@ def diarize_nemo(
             if num_speakers > 0:
                 cmd.extend(["--num_speakers", str(num_speakers)])
             
-            logger.info("Running NeMo subprocess: %s", " ".join(cmd[:4]) + " ...")
+            logger.info("Running NeMo subprocess: %s", " ".join(cmd))
             
             # Run NeMo in subprocess
             result = subprocess.run(
@@ -250,13 +250,29 @@ def diarize_nemo(
                 timeout=3600,  # 1 hour max
             )
             
+            # Always log output for debugging
+            if result.stdout:
+                logger.info("NeMo stdout: %s", result.stdout[:2000])
+            if result.stderr:
+                # Log first 3000 chars of stderr (NeMo is verbose)
+                logger.warning("NeMo stderr: %s", result.stderr[:3000])
+            
             if result.returncode != 0:
-                logger.error("NeMo subprocess failed: %s", result.stderr)
-                raise RuntimeError(f"NeMo diarization failed: {result.stderr}")
+                logger.error("NeMo subprocess failed with code %d", result.returncode)
+                raise RuntimeError(f"NeMo diarization failed: {result.stderr[-1000:]}")
+            
+            # Check if output file exists
+            if not os.path.exists(output_path):
+                logger.error("NeMo output file not created: %s", output_path)
+                raise RuntimeError("NeMo did not create output file")
             
             # Read results
             with open(output_path) as f:
                 nemo_result = json.load(f)
+            
+            # Log if empty result
+            if not nemo_result.get("segments"):
+                logger.warning("NeMo returned empty segments! Full stderr: %s", result.stderr[-2000:])
             
             segments = nemo_result.get("segments", [])
             segments.sort(key=lambda x: x["start"])
