@@ -45,6 +45,10 @@ _services = {}
 
 class AnalyzeRequest(BaseModel):
     youtube_url: str
+    diarizer: str = Field(
+        default="pyannote",
+        description="Speaker diarization system: pyannote (fast) or nemo (accurate)"
+    )
 
 def get_service(name: str):
     """Lazy-load and cache services to save resources."""
@@ -763,7 +767,7 @@ def _generate_thumbnail(video_path: str, video_id: str, timestamp: float = 5.0) 
         logger.warning("Thumbnail generation error for %s: %s", video_id, exc)
         return None
 
-def _analyze_video_task(task_id: str, youtube_url: str):
+def _analyze_video_task(task_id: str, youtube_url: str, diarizer: str = "pyannote"):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Downloading video..."}
         
@@ -777,13 +781,13 @@ def _analyze_video_task(task_id: str, youtube_url: str):
             raise Exception("Failed to download video.")
 
         # This is a blocking call that performs the full analysis
-        _run_analysis_pipeline(task_id, video_id, video_path)
+        _run_analysis_pipeline(task_id, video_id, video_path, diarizer=diarizer)
 
     except Exception as e:
         logger.error(f"Error in analysis task {task_id}: {e}", exc_info=True)
         tasks[task_id] = {"status": "failed", "progress": tasks[task_id]['progress'], "message": str(e)}
 
-def _analyze_local_video_task(task_id: str, filename: str, analysis_mode: str = "fast"):
+def _analyze_local_video_task(task_id: str, filename: str, analysis_mode: str = "fast", diarizer: str = "pyannote"):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Processing local video..."}
         
@@ -793,23 +797,77 @@ def _analyze_local_video_task(task_id: str, filename: str, analysis_mode: str = 
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found in temp directory: {filename}")
 
-        _run_analysis_pipeline(task_id, video_id, video_path, analysis_mode)
+        _run_analysis_pipeline(task_id, video_id, video_path, analysis_mode, diarizer=diarizer)
 
     except Exception as e:
         logger.error(f"Error in local analysis task {task_id}: {e}", exc_info=True)
         tasks[task_id] = {"status": "failed", "progress": tasks[task_id].get('progress', 0.1), "message": str(e)}
 
-def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysis_mode: str = "fast"):
+def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysis_mode: str = "fast", diarizer: str = "pyannote"):
     """Core analysis logic, shared by YouTube and local video."""
     
     thumbnail_path = _generate_thumbnail(video_path, video_id)
     thumbnail_url = f"/api/video/thumbnail/{video_id}" if thumbnail_path else None
 
-    # 2. Transcribe audio
-    tasks[task_id] = {"status": "processing", "progress": 0.2, "message": "Transcribing audio..."}
-    transcriber = get_service("transcription")
-    transcription_result = transcriber.transcribe_audio_from_video(video_path)
-    segments = transcription_result['segments']
+    # 2. Transcribe audio + diarization
+    # Check if Redis Queue is available for GPU tasks
+    from backend.services.task_queue import is_queue_available, get_task_queue
+    
+    diarizer_label = "NeMo MSDD" if diarizer == "nemo" else "Pyannote"
+    tasks[task_id] = {"status": "processing", "progress": 0.2, "message": f"Транскрипция + диаризация ({diarizer_label})..."}
+    
+    if is_queue_available():
+        # Use GPU Worker via Redis Queue (production mode)
+        logger.info("Using GPU Worker for transcription (diarizer=%s)", diarizer)
+        queue = get_task_queue()
+        
+        # Extract audio for transcription
+        import tempfile
+        import ffmpeg as ffmpeg_lib
+        
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_audio:
+            audio_path = tmp_audio.name
+        
+        try:
+            # Extract audio
+            (
+                ffmpeg_lib.input(video_path)
+                .output(audio_path, acodec="pcm_s16le", ac=1, ar="16000")
+                .overwrite_output()
+                .run(quiet=True, capture_stdout=True, capture_stderr=True)
+            )
+            
+            # Enqueue transcription + diarization task
+            job = queue.enqueue_transcription(
+                audio_path=audio_path,
+                diarizer=diarizer,
+                model=config.WHISPER_MODEL,
+                language="en",
+                num_speakers=config.DIARIZATION_NUM_SPEAKERS,
+            )
+            
+            # Wait for result (blocking)
+            logger.info("Waiting for GPU worker result (job_id=%s)...", job.id)
+            transcription_result = job.wait_result(timeout=1800)  # 30 min max
+            
+            segments = transcription_result['segments']
+            logger.info(
+                "GPU Worker completed: %d segments, %d speakers, diarizer=%s",
+                len(segments),
+                transcription_result.get('num_speakers', 0),
+                transcription_result.get('diarizer_used', diarizer),
+            )
+        finally:
+            # Clean up temp audio
+            if os.path.exists(audio_path):
+                os.unlink(audio_path)
+    else:
+        # Fallback: direct call (development mode or Redis unavailable)
+        logger.warning("Redis Queue not available, using direct transcription (slower)")
+        transcriber = get_service("transcription")
+        transcription_result = transcriber.transcribe_audio_from_video(video_path)
+        segments = transcription_result['segments']
+    
     video_duration = segments[-1]['end'] if segments else 0.0
     min_highlight_count = get_min_highlights(video_duration)
 
@@ -1505,18 +1563,19 @@ def _process_segments_task(
 async def analyze_video(request: AnalyzeRequest, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
     tasks[task_id] = {"status": "pending", "progress": 0.0, "message": "Task queued"}
-    background_tasks.add_task(_analyze_video_task, task_id, request.youtube_url)
+    background_tasks.add_task(_analyze_video_task, task_id, request.youtube_url, request.diarizer)
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Task queued")
 
 @router.post("/analyze-local", response_model=TaskStatus)
 async def analyze_local_video(
     filename: str, 
     background_tasks: BackgroundTasks,
-    analysis_mode: str = "fast"  # 'fast' (deepseek-chat) or 'deep' (deepseek-reasoner)
+    analysis_mode: str = "fast",  # 'fast' (deepseek-chat) or 'deep' (deepseek-reasoner)
+    diarizer: str = "pyannote",  # 'pyannote' (fast) or 'nemo' (accurate)
 ):
     task_id = str(uuid.uuid4())
     tasks[task_id] = {"status": "pending", "progress": 0.0, "message": "Task queued"}
-    background_tasks.add_task(_analyze_local_video_task, task_id, filename, analysis_mode)
+    background_tasks.add_task(_analyze_local_video_task, task_id, filename, analysis_mode, diarizer)
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="Task queued")
 
 @router.post("/upload-video", response_model=TaskStatus)

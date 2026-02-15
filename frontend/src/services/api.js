@@ -9,9 +9,9 @@ const api = axios.create({
   },
 });
 
-export const analyzeLocalVideo = async (filename, analysisMode = 'fast') => {
+export const analyzeLocalVideo = async (filename, analysisMode = 'fast', diarizer = 'pyannote') => {
   const response = await api.post(
-    `/api/video/analyze-local?filename=${filename}&analysis_mode=${analysisMode}`
+    `/api/video/analyze-local?filename=${filename}&analysis_mode=${analysisMode}&diarizer=${diarizer}`
   );
   return response.data;
 };

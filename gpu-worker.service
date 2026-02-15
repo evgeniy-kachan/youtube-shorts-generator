@@ -1,0 +1,30 @@
+[Unit]
+Description=YouTube Shorts Generator - GPU Worker
+After=network.target redis-server.service
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/youtube-shorts-generator
+Environment="PATH=/opt/youtube-shorts-generator/venv-asr/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/opt/youtube-shorts-generator"
+Environment="REDIS_HOST=localhost"
+Environment="REDIS_PORT=6379"
+EnvironmentFile=/opt/youtube-shorts-generator/.env
+
+ExecStart=/opt/youtube-shorts-generator/venv-asr/bin/python -m backend.workers.run_worker
+
+Restart=always
+RestartSec=10
+
+# GPU Worker needs more memory for models
+MemoryMax=24G
+MemoryHigh=20G
+
+# Logging
+StandardOutput=append:/opt/youtube-shorts-generator/gpu-worker.log
+StandardError=append:/opt/youtube-shorts-generator/gpu-worker.log
+
+[Install]
+WantedBy=multi-user.target

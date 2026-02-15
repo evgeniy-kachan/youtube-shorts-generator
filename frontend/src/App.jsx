@@ -431,7 +431,7 @@ function App() {
     };
   }, [analysisTask, processingTask, stage, segments, buildProcessedSegments]);
 
-  const handleAnalyze = async (file, analysisMode = 'fast') => {
+  const handleAnalyze = async (file, analysisMode = 'fast', diarizer = 'pyannote') => {
     if (!file) {
       alert('Пожалуйста, выберите видеофайл формата MP4, MOV или WEBM');
       return;
@@ -468,12 +468,13 @@ function App() {
         }
 
         setProgress(0.05);
+        const diarizerLabel = diarizer === 'nemo' ? 'NeMo MSDD' : 'Pyannote';
         setStatusMessage(analysisMode === 'deep' 
-          ? 'Файл загружен. Запускаем глубокий анализ (3-4 мин)...' 
-          : 'Файл загружен. Начинаем анализ...');
+          ? `Файл загружен. Запускаем глубокий анализ + ${diarizerLabel} (3-4 мин)...` 
+          : `Файл загружен. Начинаем анализ + ${diarizerLabel}...`);
       }
 
-      const response = await analyzeLocalVideo(uploadedFilename, analysisMode);
+      const response = await analyzeLocalVideo(uploadedFilename, analysisMode, diarizer);
       setAnalysisTask(response.task_id);
     } catch (error) {
       console.error('Error starting analysis:', error);

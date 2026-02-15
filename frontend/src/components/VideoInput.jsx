@@ -5,6 +5,7 @@ const VideoInput = ({ onSubmit, loading }) => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [error, setError] = useState('');
   const [analysisMode, setAnalysisMode] = useState('fast'); // 'fast' or 'deep'
+  const [diarizer, setDiarizer] = useState('pyannote'); // 'pyannote' or 'nemo'
   const [cachedVideos, setCachedVideos] = useState([]);
   const [showCachedList, setShowCachedList] = useState(false);
 
@@ -33,7 +34,7 @@ const VideoInput = ({ onSubmit, loading }) => {
         cachedPath: data.path,
         cachedVideoId: videoId
       };
-      onSubmit(fakeFile, analysisMode);
+      onSubmit(fakeFile, analysisMode, diarizer);
     } catch (error) {
       setError('Ошибка при использовании кэшированного видео: ' + error.message);
     }
@@ -75,7 +76,7 @@ const VideoInput = ({ onSubmit, loading }) => {
       return;
     }
 
-    onSubmit(selectedFile, analysisMode);
+    onSubmit(selectedFile, analysisMode, diarizer);
   };
 
   return (
@@ -188,6 +189,45 @@ const VideoInput = ({ onSubmit, loading }) => {
               <div className="font-semibold text-gray-900">🧠 Глубокий</div>
               <div className="text-xs text-gray-500 mt-1">
                 ~3-4 мин, максимум качества
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {/* Speaker Diarization Selector */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Диаризация спикеров
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => setDiarizer('pyannote')}
+              className={`p-4 border rounded-xl text-left transition ${
+                diarizer === 'pyannote'
+                  ? 'border-green-600 bg-green-50 ring-1 ring-green-300'
+                  : 'border-gray-200 hover:border-green-400'
+              }`}
+            >
+              <div className="font-semibold text-gray-900">🎙️ Pyannote</div>
+              <div className="text-xs text-gray-500 mt-1">
+                Быстрая, стабильная
+              </div>
+            </button>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => setDiarizer('nemo')}
+              className={`p-4 border rounded-xl text-left transition ${
+                diarizer === 'nemo'
+                  ? 'border-green-600 bg-green-50 ring-1 ring-green-300'
+                  : 'border-gray-200 hover:border-green-400'
+              }`}
+            >
+              <div className="font-semibold text-gray-900">🧠 NeMo MSDD</div>
+              <div className="text-xs text-gray-500 mt-1">
+                Точная, для похожих голосов
               </div>
             </button>
           </div>
