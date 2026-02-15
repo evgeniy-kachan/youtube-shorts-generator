@@ -702,6 +702,7 @@ function App() {
         setStage('processing');
         setProgress(0);
         setStatusMessage('NeMo MSDD диаризация + рендер...');
+        setProcessedSegments([]); // Clear previous render results
       }
       
       console.log('[NeMo] Starting diarization for video:', videoData.video_id, 'autoRender:', autoRender);
