@@ -196,10 +196,13 @@ def diarize_nemo(
     audio_path: str,
     num_speakers: int = 0,  # 0 = auto-detect
     max_speakers: int = 8,
-    device: str = "cuda",
+    device: str = "cpu",  # NeMo runs in separate venv, device controlled there
 ) -> List[Dict]:
     """
-    Run NeMo MSDD speaker diarization.
+    Run NeMo MSDD speaker diarization via subprocess.
+    
+    NeMo is installed in a separate venv (venv-nemo), so we run it
+    as a subprocess using the NemoDiarizationRunner.
     
     Returns:
         List of segments: [{"start": 0.0, "end": 1.5, "speaker": "speaker_0"}, ...]
@@ -208,114 +211,66 @@ def diarize_nemo(
                 Path(audio_path).name, num_speakers if num_speakers > 0 else "auto")
     
     try:
-        import gc
-        from omegaconf import OmegaConf
-        from nemo.collections.asr.models import ClusteringDiarizer
+        import subprocess
         
-        # Adjust for CPU if needed  
-        if device == "cuda" and not torch.cuda.is_available():
-            device = "cpu"
-            logger.warning("CUDA not available, falling back to CPU")
+        # Path to NeMo venv and script
+        project_root = Path(__file__).parent.parent.parent
+        nemo_python = project_root / "venv-nemo" / "bin" / "python"
+        nemo_script = project_root / "backend" / "tools" / "diarize_nemo.py"
         
-        # Create temp directory for NeMo outputs
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create manifest file
-            manifest_path = Path(tmpdir) / "manifest.json"
-            with open(manifest_path, "w") as f:
-                json.dump({
-                    "audio_filepath": audio_path,
-                    "offset": 0,
-                    "duration": None,
-                    "label": "infer",
-                    "text": "-",
-                    "num_speakers": num_speakers if num_speakers > 0 else None,
-                    "rttm_filepath": None,
-                    "uem_filepath": None,
-                }, f)
-                f.write("\n")
+        if not nemo_python.exists():
+            raise FileNotFoundError(f"NeMo venv not found: {nemo_python}")
+        if not nemo_script.exists():
+            raise FileNotFoundError(f"NeMo script not found: {nemo_script}")
+        
+        # Create temp file for output
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            output_path = f.name
+        
+        try:
+            # Build command
+            cmd = [
+                str(nemo_python),
+                str(nemo_script),
+                "--input", audio_path,
+                "--output", output_path,
+                "--device", device,
+                "--max-speakers", str(max_speakers),
+            ]
+            if num_speakers > 0:
+                cmd.extend(["--num-speakers", str(num_speakers)])
             
-            # NeMo config
-            config = OmegaConf.create({
-                "device": device,
-                "verbose": True,
-                "num_workers": 1,
-                "sample_rate": 16000,
-                "batch_size": 64,
-                "diarizer": {
-                    "manifest_filepath": str(manifest_path),
-                    "out_dir": tmpdir,
-                    "oracle_vad": False,
-                    "collar": 0.25,
-                    "ignore_overlap": True,
-                    "vad": {
-                        "model_path": "vad_multilingual_marblenet",
-                        "parameters": {
-                            "onset": 0.8,
-                            "offset": 0.6,
-                            "min_duration_on": 0.1,
-                            "min_duration_off": 0.1,
-                            "pad_onset": 0.05,
-                            "pad_offset": -0.1,
-                        },
-                    },
-                    "speaker_embeddings": {
-                        "model_path": "titanet_large",
-                        "parameters": {
-                            "window_length_in_sec": 1.5,
-                            "shift_length_in_sec": 0.75,
-                            "multiscale_weights": [1, 1, 1],
-                            "save_embeddings": False,
-                        },
-                    },
-                    "clustering": {
-                        "parameters": {
-                            "oracle_num_speakers": num_speakers > 0,
-                            "max_num_speakers": max_speakers,
-                            "enhanced_count_thres": 80,
-                            "max_rp_threshold": 0.25,
-                            "sparse_search_volume": 30,
-                            "maj_vote_spk_count": False,
-                        },
-                    },
-                },
-            })
+            logger.info("Running NeMo subprocess: %s", " ".join(cmd[:4]) + " ...")
             
-            # Run diarization
-            logger.info("Initializing NeMo ClusteringDiarizer on %s", device)
-            diarizer = ClusteringDiarizer(cfg=config)
-            diarizer.diarize()
+            # Run NeMo in subprocess
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600,  # 1 hour max
+            )
             
-            # Parse RTTM output
-            rttm_path = Path(tmpdir) / "pred_rttms" / f"{Path(audio_path).stem}.rttm"
-            segments = []
+            if result.returncode != 0:
+                logger.error("NeMo subprocess failed: %s", result.stderr)
+                raise RuntimeError(f"NeMo diarization failed: {result.stderr}")
             
-            if rttm_path.exists():
-                with open(rttm_path) as f:
-                    for line in f:
-                        parts = line.strip().split()
-                        if len(parts) >= 8 and parts[0] == "SPEAKER":
-                            start = float(parts[3])
-                            duration = float(parts[4])
-                            speaker = parts[7]
-                            segments.append({
-                                "start": start,
-                                "end": start + duration,
-                                "speaker": speaker,
-                            })
+            # Read results
+            with open(output_path) as f:
+                nemo_result = json.load(f)
             
+            segments = nemo_result.get("segments", [])
             segments.sort(key=lambda x: x["start"])
-            
-            # Clean up
-            del diarizer
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             
             speakers = set(s["speaker"] for s in segments)
             logger.info("GPU Task: diarize_nemo complete, %d segments, %d speakers",
                        len(segments), len(speakers))
             
             return segments
+            
+        finally:
+            # Clean up temp file
+            if os.path.exists(output_path):
+                os.unlink(output_path)
             
     except Exception as e:
         logger.error("GPU Task: diarize_nemo failed: %s", e, exc_info=True)
