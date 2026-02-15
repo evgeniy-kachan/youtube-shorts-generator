@@ -23,11 +23,9 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-# Ensure we're using the GPU
-if torch.cuda.is_available():
-    logger.info("GPU Worker: CUDA available, device=%s", torch.cuda.get_device_name(0))
-else:
-    logger.warning("GPU Worker: CUDA not available, running on CPU")
+# NOTE: Don't call torch.cuda functions at module level!
+# RQ workers fork processes and CUDA can't be re-initialized in forked subprocess.
+# GPU info will be logged when tasks actually run.
 
 
 def transcribe_audio(
@@ -46,8 +44,13 @@ def transcribe_audio(
             "language": "en",
         }
     """
-    logger.info("GPU Task: transcribe_audio started, file=%s, model=%s", 
-                Path(audio_path).name, model)
+    # Log GPU info on first task
+    if torch.cuda.is_available():
+        logger.info("GPU Task: transcribe_audio started on %s, file=%s, model=%s", 
+                    torch.cuda.get_device_name(0), Path(audio_path).name, model)
+    else:
+        logger.info("GPU Task: transcribe_audio started on CPU, file=%s, model=%s", 
+                    Path(audio_path).name, model)
     
     try:
         import whisperx
