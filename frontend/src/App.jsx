@@ -431,7 +431,7 @@ function App() {
     };
   }, [analysisTask, processingTask, stage, segments, buildProcessedSegments]);
 
-  const handleAnalyze = async (file, analysisMode = 'fast', diarizer = 'pyannote') => {
+  const handleAnalyze = async (file, analysisMode = 'fast') => {
     if (!file) {
       alert('Пожалуйста, выберите видеофайл формата MP4, MOV или WEBM');
       return;
@@ -468,13 +468,14 @@ function App() {
         }
 
         setProgress(0.05);
-        const diarizerLabel = diarizer === 'nemo' ? 'NeMo MSDD' : 'Pyannote';
         setStatusMessage(analysisMode === 'deep' 
-          ? `Файл загружен. Запускаем глубокий анализ + ${diarizerLabel} (3-4 мин)...` 
-          : `Файл загружен. Начинаем анализ + ${diarizerLabel}...`);
+          ? 'Файл загружен. Запускаем глубокий анализ (3-4 мин)...' 
+          : 'Файл загружен. Начинаем анализ...');
       }
 
-      const response = await analyzeLocalVideo(uploadedFilename, analysisMode, diarizer);
+      // Always use Pyannote for initial analysis (faster)
+      // NeMo available as re-diarization option on segments page
+      const response = await analyzeLocalVideo(uploadedFilename, analysisMode, 'pyannote');
       setAnalysisTask(response.task_id);
     } catch (error) {
       console.error('Error starting analysis:', error);
