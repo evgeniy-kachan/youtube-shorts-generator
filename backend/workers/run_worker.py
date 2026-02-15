@@ -20,8 +20,18 @@ Environment variables:
 from __future__ import annotations
 
 import logging
+import multiprocessing as mp
 import os
 import sys
+
+# CRITICAL: Set multiprocessing start method to 'spawn' BEFORE importing torch
+# This is required for CUDA to work properly in worker subprocesses
+# Must be done before any torch imports!
+if __name__ == "__main__":
+    try:
+        mp.set_start_method("spawn", force=True)
+    except RuntimeError:
+        pass  # Already set
 
 # Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,11 +52,12 @@ logger = logging.getLogger("gpu_worker")
 
 def main():
     """Start the GPU worker."""
+    # Import torch AFTER setting spawn method
     import torch
     from redis import Redis
-    from rq import Worker, Queue
+    from rq import Queue, SimpleWorker
     
-    # Log GPU info
+    # Log GPU info (safe here because we're in main process, not forked)
     if torch.cuda.is_available():
         gpu_name = torch.cuda.get_device_name(0)
         gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
@@ -54,6 +65,7 @@ def main():
         logger.info("GPU Worker starting")
         logger.info("GPU: %s (%.1f GB)", gpu_name, gpu_memory)
         logger.info("CUDA version: %s", torch.version.cuda)
+        logger.info("Multiprocessing start method: %s", mp.get_start_method())
         logger.info("=" * 60)
     else:
         logger.warning("=" * 60)
@@ -84,8 +96,10 @@ def main():
     queue = Queue("gpu_tasks", connection=redis_conn)
     logger.info("Listening on queue: %s", queue.name)
     
-    # Start worker
-    worker = Worker(
+    # Use SimpleWorker instead of Worker!
+    # SimpleWorker executes jobs in the same process (no fork)
+    # This is required for CUDA which can't be re-initialized in forked subprocess
+    worker = SimpleWorker(
         queues=[queue],
         connection=redis_conn,
         name=f"gpu_worker_{os.getpid()}",
@@ -95,7 +109,9 @@ def main():
     logger.info("Press Ctrl+C to stop")
     
     try:
-        worker.work(with_scheduler=False)
+        # Use burst=False for continuous processing
+        # The worker will handle jobs one at a time
+        worker.work(with_scheduler=False, burst=False)
     except KeyboardInterrupt:
         logger.info("Worker stopped by user")
     except Exception as e:

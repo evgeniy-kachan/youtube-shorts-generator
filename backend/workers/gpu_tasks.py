@@ -44,13 +44,8 @@ def transcribe_audio(
             "language": "en",
         }
     """
-    # Log GPU info on first task
-    if torch.cuda.is_available():
-        logger.info("GPU Task: transcribe_audio started on %s, file=%s, model=%s", 
-                    torch.cuda.get_device_name(0), Path(audio_path).name, model)
-    else:
-        logger.info("GPU Task: transcribe_audio started on CPU, file=%s, model=%s", 
-                    Path(audio_path).name, model)
+    logger.info("GPU Task: transcribe_audio started, file=%s, model=%s, device=%s", 
+                Path(audio_path).name, model, device)
     
     try:
         import whisperx
