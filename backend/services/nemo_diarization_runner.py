@@ -29,7 +29,7 @@ class NemoDiarizationRunner:
         self,
         nemo_python: str | None = None,
         nemo_script: str | None = None,
-        device: str = "cpu",  # CPU only - GPU causes CUBLAS conflicts with main service
+        device: str = "cuda",  # GPU for speed - subprocess has isolated CUDA context
         num_speakers: int = 0,
         max_speakers: int = 8,
     ):
