@@ -13,7 +13,7 @@ import httpx
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydub import AudioSegment
 
 from backend.services.youtube_downloader import YouTubeDownloader
