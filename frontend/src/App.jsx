@@ -626,8 +626,9 @@ function App() {
         console.log('[NeMo] Task status:', status);
         
         // Update progress if in processing stage
+        // Backend sends progress as float 0.0-1.0, ProgressBar expects the same
         if (status.progress !== undefined) {
-          setProgress(Math.round(status.progress * 100));
+          setProgress(status.progress);
         }
         if (status.message) {
           setStatusMessage(status.message);
