@@ -2327,64 +2327,95 @@ def _nemo_diarization_task(
     preserve_background_audio: bool = True,
     crop_focus: str = "center",
 ):
-    """Background task for NeMo MSDD diarization with optional auto-render."""
+    """Background task for NeMo MSDD diarization with optional auto-render.
+    
+    Now uses RQ queue to run NeMo on GPU worker - no CUDA conflicts!
+    """
     try:
-        from backend.services.nemo_diarization_runner import get_nemo_diarization_runner
+        from backend.services.task_queue import get_task_queue, is_queue_available
         
-        tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Подготовка GPU для NeMo..."}
+        tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Подготовка NeMo диаризации..."}
         
-        # CRITICAL: Free GPU memory before NeMo subprocess to avoid CUBLAS conflicts
-        # NeMo runs in a separate process and needs exclusive GPU access
-        import gc
-        gc.collect()
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-                # Unload any cached models that might hold GPU memory
-                global _services
-                _services.clear()
-                gc.collect()
-                torch.cuda.empty_cache()
-                logger.info("GPU memory cleared for NeMo diarization")
-        except Exception as e:
-            logger.warning("Could not clear GPU memory: %s", e)
-        
-        tasks[task_id] = {"status": "processing", "progress": 0.15, "message": "Инициализация NeMo MSDD..."}
-        
-        runner = get_nemo_diarization_runner()
-        runner.num_speakers = num_speakers
-        runner.max_speakers = max_speakers
-        
-        tasks[task_id] = {"status": "processing", "progress": 0.2, "message": "🧠 NeMo анализирует спикеров (1-3 мин)..."}
-        
-        # Run diarization
-        diar_segments = runner.run(video_path)
-        
-        if not diar_segments:
+        # Check if RQ is available
+        if not is_queue_available():
             tasks[task_id] = {
                 "status": "failed",
                 "progress": 1.0,
-                "message": "NeMo diarization returned no segments",
+                "message": "GPU Worker недоступен. Запустите: systemctl start gpu-worker",
                 "result": {"success": False, "segments": [], "num_speakers_detected": 0}
             }
             return
         
+        tasks[task_id] = {"status": "processing", "progress": 0.15, "message": "Отправка задачи на GPU Worker..."}
+        
+        # Enqueue NeMo task to GPU worker
+        queue = get_task_queue()
+        job = queue.enqueue_nemo_diarization(
+            audio_path=video_path,
+            num_speakers=num_speakers,
+            max_speakers=max_speakers,
+        )
+        
+        tasks[task_id] = {"status": "processing", "progress": 0.2, "message": "🧠 NeMo анализирует спикеров на GPU (1-3 мин)..."}
+        
+        # Poll for job completion
+        import time
+        poll_interval = 2.0
+        timeout = 3600  # 1 hour max
+        start_time = time.time()
+        
+        while True:
+            elapsed = time.time() - start_time
+            
+            if elapsed > timeout:
+                tasks[task_id] = {
+                    "status": "failed",
+                    "progress": 1.0,
+                    "message": "NeMo диаризация превысила таймаут (1 час)",
+                    "result": {"success": False, "segments": [], "num_speakers_detected": 0}
+                }
+                return
+            
+            # Update progress based on elapsed time (estimate)
+            progress = min(0.2 + (elapsed / 300) * 0.5, 0.7)  # 0.2 -> 0.7 over 5 min
+            tasks[task_id] = {
+                "status": "processing", 
+                "progress": progress, 
+                "message": f"🧠 NeMo анализирует спикеров на GPU ({int(elapsed)}с)..."
+            }
+            
+            if job.is_finished:
+                break
+            
+            if job.is_failed:
+                tasks[task_id] = {
+                    "status": "failed",
+                    "progress": 1.0,
+                    "message": f"NeMo ошибка: {job.error}",
+                    "result": {"success": False, "segments": [], "num_speakers_detected": 0}
+                }
+                return
+            
+            time.sleep(poll_interval)
+        
+        # Get result from GPU worker
+        nemo_result = job.result
+        
+        if not nemo_result or not nemo_result.get("segments"):
+            tasks[task_id] = {
+                "status": "failed",
+                "progress": 1.0,
+                "message": "NeMo не вернул сегменты",
+                "result": {"success": False, "segments": [], "num_speakers_detected": 0}
+            }
+            return
+        
+        diar_segments = nemo_result["segments"]
+        speaker_stats = nemo_result.get("speaker_stats", {})
+        num_speakers_detected = nemo_result.get("num_speakers", len(speaker_stats))
+        total_speech = nemo_result.get("total_speech_duration", 0)
+        
         tasks[task_id] = {"status": "processing", "progress": 0.8, "message": "Обработка результатов диаризации..."}
-        
-        # Count unique speakers and calculate stats
-        speaker_stats = {}
-        for seg in diar_segments:
-            speaker = seg.get("speaker", "unknown")
-            duration = seg.get("end", 0) - seg.get("start", 0)
-            if speaker not in speaker_stats:
-                speaker_stats[speaker] = {"count": 0, "duration": 0.0}
-            speaker_stats[speaker]["count"] += 1
-            speaker_stats[speaker]["duration"] += duration
-        
-        num_speakers_detected = len(speaker_stats)
-        total_speech = sum(s["duration"] for s in speaker_stats.values())
         
         # Log detailed results
         logger.info("=" * 60)

@@ -166,6 +166,34 @@ class TaskQueue:
         
         return JobWrapper(job)
     
+    def enqueue_nemo_diarization(
+        self,
+        audio_path: str,
+        num_speakers: int = 0,
+        max_speakers: int = 8,
+        timeout: int = 3600,  # 1 hour for long videos
+    ) -> JobWrapper:
+        """
+        Enqueue NeMo MSDD diarization task.
+        
+        This runs NeMo on GPU in the worker process.
+        Returns full diarization result with speaker stats.
+        """
+        job = self.queue.enqueue(
+            "backend.workers.gpu_tasks.nemo_diarize_only",
+            audio_path=audio_path,
+            num_speakers=num_speakers,
+            max_speakers=max_speakers,
+            job_timeout=timeout,
+        )
+        
+        logger.info(
+            "Enqueued NeMo diarization task: job_id=%s, file=%s",
+            job.id, audio_path
+        )
+        
+        return JobWrapper(job)
+    
     def get_job(self, job_id: str) -> Optional[JobWrapper]:
         """Get job by ID."""
         try:

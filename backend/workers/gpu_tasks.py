@@ -350,6 +350,66 @@ def transcribe_and_diarize(
     }
 
 
+def nemo_diarize_only(
+    audio_path: str,
+    num_speakers: int = 0,
+    max_speakers: int = 8,
+) -> Dict[str, Any]:
+    """
+    Standalone NeMo diarization task for RQ queue.
+    
+    This runs NeMo MSDD on GPU in the worker process.
+    Called from video.py for re-diarization requests.
+    
+    Returns:
+        {
+            "segments": [...],  # Diarization segments
+            "num_speakers": 2,
+            "speaker_stats": {...},
+        }
+    """
+    logger.info("GPU Task: nemo_diarize_only started, file=%s", Path(audio_path).name)
+    
+    # Log GPU info
+    if torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        logger.info("GPU available: %s (%.1f GB)", gpu_name, gpu_mem)
+    else:
+        logger.warning("CUDA not available!")
+    
+    # Run NeMo diarization
+    segments = diarize_nemo(
+        audio_path=audio_path,
+        num_speakers=num_speakers,
+        max_speakers=max_speakers,
+        device="cuda",  # Always GPU in worker
+    )
+    
+    # Calculate speaker stats
+    speaker_stats = {}
+    for seg in segments:
+        speaker = seg.get("speaker", "unknown")
+        duration = seg.get("end", 0) - seg.get("start", 0)
+        if speaker not in speaker_stats:
+            speaker_stats[speaker] = {"count": 0, "duration": 0.0}
+        speaker_stats[speaker]["count"] += 1
+        speaker_stats[speaker]["duration"] += duration
+    
+    num_speakers_detected = len(speaker_stats)
+    total_speech = sum(s["duration"] for s in speaker_stats.values())
+    
+    logger.info("GPU Task: nemo_diarize_only complete, %d speakers, %.1fs speech",
+               num_speakers_detected, total_speech)
+    
+    return {
+        "segments": segments,
+        "num_speakers": num_speakers_detected,
+        "speaker_stats": speaker_stats,
+        "total_speech_duration": total_speech,
+    }
+
+
 def _merge_transcription_with_diarization(
     whisper_segments: List[Dict],
     diar_segments: List[Dict],
