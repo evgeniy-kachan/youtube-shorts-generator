@@ -196,7 +196,7 @@ def diarize_nemo(
     audio_path: str,
     num_speakers: int = 0,  # 0 = auto-detect
     max_speakers: int = 8,
-    device: str = "cpu",  # NeMo runs in separate venv, device controlled there
+    device: str = "cuda",  # NeMo runs in separate venv with its own CUDA context
 ) -> List[Dict]:
     """
     Run NeMo MSDD speaker diarization via subprocess.
