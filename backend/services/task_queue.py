@@ -39,8 +39,7 @@ REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 
 # Queue settings
 GPU_QUEUE_NAME = "gpu_tasks"
-# NOTE: NeMo now runs in the same gpu_tasks queue to prevent CUDA conflicts.
-# The gpu-worker processes all GPU tasks sequentially.
+NEMO_QUEUE_NAME = "nemo_tasks"  # Separate queue for NeMo - runs in isolated worker
 DEFAULT_TIMEOUT = 1800  # 30 minutes max per task
 
 
@@ -65,11 +64,16 @@ class TaskQueue:
             connection=self.redis_conn,
             default_timeout=DEFAULT_TIMEOUT,
         )
-        # NOTE: NeMo now uses the same queue as other GPU tasks.
-        # This ensures sequential execution and prevents CUDA conflicts.
+        # Separate queue for NeMo - processed by isolated nemo-worker
+        # This prevents CUDA context conflicts between Pyannote and NeMo
+        self.nemo_queue = Queue(
+            name=NEMO_QUEUE_NAME,
+            connection=self.redis_conn,
+            default_timeout=3600,  # 1 hour for NeMo
+        )
         logger.info(
-            "TaskQueue initialized: redis=%s:%d, queue=%s",
-            redis_host, redis_port, GPU_QUEUE_NAME
+            "TaskQueue initialized: redis=%s:%d, queues=[%s, %s]",
+            redis_host, redis_port, GPU_QUEUE_NAME, NEMO_QUEUE_NAME
         )
     
     def is_redis_available(self) -> bool:
@@ -180,15 +184,14 @@ class TaskQueue:
         """
         Enqueue NeMo MSDD diarization task.
         
-        Now runs in the SAME gpu-worker queue as other GPU tasks.
-        This ensures sequential execution and prevents CUDA conflicts.
-        The gpu-worker clears GPU memory before running NeMo subprocess.
+        Runs in SEPARATE nemo_tasks queue, processed by isolated nemo-worker.
+        This prevents CUDA context conflicts - nemo-worker has its own CUDA context.
         
         Returns full diarization result with speaker stats.
         """
-        # Use main gpu_tasks queue - processed by gpu-worker
-        job = self.queue.enqueue(
-            "backend.workers.gpu_tasks.nemo_diarize_only",
+        # Use separate nemo_tasks queue - processed by nemo-worker
+        job = self.nemo_queue.enqueue(
+            "backend.workers.nemo_tasks.nemo_diarize_task",
             audio_path=audio_path,
             num_speakers=num_speakers,
             max_speakers=max_speakers,
@@ -196,7 +199,7 @@ class TaskQueue:
         )
         
         logger.info(
-            "Enqueued NeMo diarization task to gpu_tasks: job_id=%s, file=%s",
+            "Enqueued NeMo diarization task to nemo_tasks: job_id=%s, file=%s",
             job.id, audio_path
         )
         

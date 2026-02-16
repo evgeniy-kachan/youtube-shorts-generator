@@ -7,12 +7,12 @@ No CUDA context conflicts because only one worker owns the GPU.
 Tasks:
 - transcribe_audio: WhisperX transcription + alignment
 - diarize_pyannote: Pyannote speaker diarization
-- diarize_nemo: NeMo MSDD diarization (via subprocess)
-- nemo_diarize_only: Standalone NeMo diarization task
 - transcribe_and_diarize: Combined transcription + diarization
 
-All GPU tasks run sequentially in the same worker to prevent CUDA conflicts.
-NeMo runs as subprocess with its own Python interpreter (venv-nemo).
+NOTE: Standalone NeMo diarization now runs in a SEPARATE worker (nemo-worker)
+via nemo_tasks.py. This prevents CUDA context conflicts between Pyannote and NeMo.
+The diarize_nemo function here is only used when diarizer="nemo" is passed to
+transcribe_and_diarize (legacy support).
 """
 from __future__ import annotations
 
@@ -412,64 +412,6 @@ def transcribe_and_diarize(
         "language": detected_language,
         "diarizer_used": diarizer,
         "num_speakers": len(speakers),
-    }
-
-
-def nemo_diarize_only(
-    audio_path: str,
-    num_speakers: int = 0,
-    max_speakers: int = 8,
-) -> Dict[str, Any]:
-    """
-    Standalone NeMo diarization task (no transcription).
-    
-    This is the main entry point for NeMo-only diarization from the UI.
-    Runs in the same gpu-worker queue to prevent CUDA conflicts.
-    
-    Args:
-        audio_path: Path to audio/video file
-        num_speakers: Number of speakers (0 = auto)
-        max_speakers: Maximum speakers for auto-detection
-    
-    Returns:
-        {
-            "segments": [...],
-            "num_speakers": 2,
-            "speaker_stats": {...},
-            "total_speech_duration": 123.4,
-        }
-    """
-    logger.info("GPU Task: nemo_diarize_only started, file=%s", Path(audio_path).name)
-    
-    # Run diarization (will clear GPU memory internally)
-    segments = diarize_nemo(
-        audio_path=audio_path,
-        num_speakers=num_speakers,
-        max_speakers=max_speakers,
-        device="cuda",
-    )
-    
-    # Calculate speaker stats
-    speaker_stats = {}
-    for seg in segments:
-        speaker = seg.get("speaker", "unknown")
-        duration = seg.get("end", 0) - seg.get("start", 0)
-        if speaker not in speaker_stats:
-            speaker_stats[speaker] = {"count": 0, "duration": 0.0}
-        speaker_stats[speaker]["count"] += 1
-        speaker_stats[speaker]["duration"] += duration
-    
-    num_speakers_detected = len(speaker_stats)
-    total_speech = sum(s["duration"] for s in speaker_stats.values())
-    
-    logger.info("GPU Task: nemo_diarize_only complete, %d speakers, %.1fs speech",
-               num_speakers_detected, total_speech)
-    
-    return {
-        "segments": segments,
-        "num_speakers": num_speakers_detected,
-        "speaker_stats": speaker_stats,
-        "total_speech_duration": total_speech,
     }
 
 
