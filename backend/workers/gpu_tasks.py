@@ -29,10 +29,13 @@ import torch
 logger = logging.getLogger(__name__)
 
 
-def _clear_gpu_memory():
+def _clear_gpu_memory(force_release: bool = False):
     """
-    Aggressively clear GPU memory before running a new task.
+    Aggressively clear GPU memory before/after running a task.
     This prevents CUDA context conflicts between different models.
+    
+    Args:
+        force_release: If True, attempt to release ALL GPU memory (for NeMo compatibility)
     """
     if torch.cuda.is_available():
         # Synchronize all CUDA streams
@@ -43,6 +46,13 @@ def _clear_gpu_memory():
         gc.collect()
         # Clear cache again after GC
         torch.cuda.empty_cache()
+        
+        if force_release:
+            # Additional aggressive cleanup
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            gc.collect()
         
         # Log memory status
         allocated = torch.cuda.memory_allocated() / 1024**2
@@ -115,21 +125,24 @@ def transcribe_audio(
             return_char_alignments=False,
         )
         
-        # Clean up GPU memory
-        del whisper_model, align_model
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        
         segments = result.get("segments", [])
         logger.info("GPU Task: transcribe_audio complete, %d segments", len(segments))
         
-        return {
+        result_data = {
             "segments": segments,
             "language": detected_language,
         }
         
+        # Clean up GPU memory AFTER preparing result
+        del whisper_model, align_model
+        _clear_gpu_memory(force_release=True)
+        
+        return result_data
+        
     except Exception as e:
         logger.error("GPU Task: transcribe_audio failed: %s", e, exc_info=True)
+        # Try to clean up even on error
+        _clear_gpu_memory(force_release=True)
         raise
 
 
@@ -202,20 +215,21 @@ def diarize_pyannote(
         
         segments.sort(key=lambda x: x["start"])
         
-        # Clean up
-        del pipeline
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        
         # Log summary
         speakers = set(s["speaker"] for s in segments)
         logger.info("GPU Task: diarize_pyannote complete, %d segments, %d speakers",
                    len(segments), len(speakers))
         
+        # Clean up GPU memory AFTER preparing result
+        del pipeline
+        _clear_gpu_memory(force_release=True)
+        
         return segments
         
     except Exception as e:
         logger.error("GPU Task: diarize_pyannote failed: %s", e, exc_info=True)
+        # Try to clean up even on error
+        _clear_gpu_memory(force_release=True)
         raise
 
 
