@@ -47,15 +47,16 @@ logger = logging.getLogger("nemo_worker")
 def main():
     """Start the NeMo worker."""
     # NOTE: Do NOT import torch here!
-    # NeMo tasks run diarize_nemo.py as subprocess which needs clean CUDA context.
-    # If we initialize CUDA here, subprocess will inherit corrupted context.
+    # NeMo tasks use lazy imports - torch/NeMo are imported INSIDE task functions.
+    # If we import torch here, CUDA context would be initialized too early.
     from redis import Redis
     from rq import Queue, SimpleWorker
     
     # Log startup info (without touching CUDA)
     logger.info("=" * 60)
     logger.info("NeMo Worker starting")
-    logger.info("NOTE: CUDA will be initialized by NeMo subprocess, not here")
+    logger.info("NOTE: CUDA will be initialized INSIDE task (lazy import)")
+    logger.info("NOTE: torch/NeMo NOT imported at worker startup")
     logger.info("Multiprocessing start method: %s", mp.get_start_method())
     logger.info("=" * 60)
     
