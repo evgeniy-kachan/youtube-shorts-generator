@@ -327,10 +327,7 @@ def nemo_diarize_task(
     NeMo diarization task for RQ queue.
     
     This is the main entry point called by nemo-worker.
-    Runs NeMo DIRECTLY (no subprocess) with lazy imports.
-    
-    CRITICAL: torch/NeMo are imported inside _run_nemo_diarization(),
-    not at module level. This ensures clean CUDA context.
+    Runs NeMo as a SUBPROCESS to avoid CUDA context issues with RQ fork.
     
     Args:
         audio_path: Path to audio/video file
@@ -348,78 +345,101 @@ def nemo_diarize_task(
     logger.info("NeMo Task: nemo_diarize_task started, file=%s", Path(audio_path).name)
     
     input_path = Path(audio_path)
-    num_speakers_param = num_speakers if num_speakers > 0 else None
     
-    # Check if we need to extract audio
-    if input_path.suffix.lower() == ".wav":
-        # Check if it's already 16kHz mono
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Extract audio to WAV 16kHz mono
+        wav_path = str(Path(tmpdir) / "audio.wav")
+        _extract_wav(str(input_path), wav_path)
+        
+        # Output JSON path
+        output_json = str(Path(tmpdir) / "result.json")
+        
+        # Path to subprocess script
+        script_path = Path(__file__).parent.parent / "tools" / "run_nemo_diarization.py"
+        
+        # Python interpreter from venv-nemo
+        python_path = "/opt/youtube-shorts-generator/venv-nemo/bin/python"
+        
+        # Build command
+        cmd = [
+            python_path,
+            str(script_path),
+            "--audio", wav_path,
+            "--output", output_json,
+            "--num-speakers", str(num_speakers),
+            "--max-speakers", str(max_speakers),
+        ]
+        
+        logger.info("Running NeMo subprocess: %s", " ".join(cmd[:4]) + " ...")
+        
+        # Run subprocess
         try:
-            # Lazy import soundfile
-            import soundfile as sf
-            info = sf.info(str(input_path))
-            
-            if info.samplerate == 16000 and info.channels == 1:
-                logger.info("Input is already 16kHz mono WAV")
-                wav_path = str(input_path)
-                segments = _run_nemo_diarization(
-                    wav_path,
-                    device="cuda",
-                    num_speakers=num_speakers_param,
-                    max_speakers=max_speakers,
-                )
-            else:
-                # Need to convert
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    wav_path = str(Path(tmpdir) / "audio.wav")
-                    _extract_wav(str(input_path), wav_path)
-                    segments = _run_nemo_diarization(
-                        wav_path,
-                        device="cuda",
-                        num_speakers=num_speakers_param,
-                        max_speakers=max_speakers,
-                    )
-        except Exception:
-            # If soundfile fails, just extract
-            with tempfile.TemporaryDirectory() as tmpdir:
-                wav_path = str(Path(tmpdir) / "audio.wav")
-                _extract_wav(str(input_path), wav_path)
-                segments = _run_nemo_diarization(
-                    wav_path,
-                    device="cuda",
-                    num_speakers=num_speakers_param,
-                    max_speakers=max_speakers,
-                )
-    else:
-        # Extract audio from video/other format
-        with tempfile.TemporaryDirectory() as tmpdir:
-            wav_path = str(Path(tmpdir) / "audio.wav")
-            _extract_wav(str(input_path), wav_path)
-            segments = _run_nemo_diarization(
-                wav_path,
-                device="cuda",
-                num_speakers=num_speakers_param,
-                max_speakers=max_speakers,
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600,  # 1 hour timeout
+                env={
+                    **os.environ,
+                    "CUDA_VISIBLE_DEVICES": "0",
+                },
             )
-    
-    # Calculate speaker stats
-    speaker_stats = {}
-    for seg in segments:
-        speaker = seg.get("speaker", "unknown")
-        duration = seg.get("end", 0) - seg.get("start", 0)
-        if speaker not in speaker_stats:
-            speaker_stats[speaker] = {"count": 0, "duration": 0.0}
-        speaker_stats[speaker]["count"] += 1
-        speaker_stats[speaker]["duration"] += duration
-    
-    num_speakers_detected = len(speaker_stats)
-    total_speech = sum(s["duration"] for s in speaker_stats.values())
-    
-    logger.info("NeMo Task: complete, %d speakers, %.1fs speech",
-               num_speakers_detected, total_speech)
-    
-    return {
-        "segments": segments,
-        "num_speakers": num_speakers_detected,
-        "speaker_stats": speaker_stats,
-        "total_speech_duration": total_speech,
-    }
+            
+            logger.info("NeMo subprocess stdout: %s", result.stdout)
+            if result.stderr:
+                logger.warning("NeMo subprocess stderr: %s", result.stderr[-2000:])
+            
+            if result.returncode != 0:
+                logger.error("NeMo subprocess failed with code %d", result.returncode)
+                return {
+                    "segments": [],
+                    "num_speakers": 0,
+                    "speaker_stats": {},
+                    "total_speech_duration": 0,
+                    "error": f"Subprocess failed: {result.stderr[-500:] if result.stderr else 'Unknown error'}",
+                }
+            
+            # Read result
+            if not Path(output_json).exists():
+                logger.error("NeMo subprocess did not create output file")
+                return {
+                    "segments": [],
+                    "num_speakers": 0,
+                    "speaker_stats": {},
+                    "total_speech_duration": 0,
+                    "error": "No output file created",
+                }
+            
+            with open(output_json, "r") as f:
+                result_data = json.load(f)
+            
+            # Log quality metrics
+            _log_diarization_quality(
+                result_data.get("segments", []),
+                result_data.get("audio_duration", 0)
+            )
+            
+            logger.info("NeMo Task: complete, %d speakers, %.1fs speech",
+                       result_data.get("num_speakers", 0),
+                       result_data.get("total_speech_duration", 0))
+            
+            return result_data
+            
+        except subprocess.TimeoutExpired:
+            logger.error("NeMo subprocess timed out")
+            return {
+                "segments": [],
+                "num_speakers": 0,
+                "speaker_stats": {},
+                "total_speech_duration": 0,
+                "error": "Subprocess timed out",
+            }
+        except Exception as e:
+            logger.error("NeMo subprocess error: %s", e, exc_info=True)
+            return {
+                "segments": [],
+                "num_speakers": 0,
+                "speaker_stats": {},
+                "total_speech_duration": 0,
+                "error": str(e),
+            }
