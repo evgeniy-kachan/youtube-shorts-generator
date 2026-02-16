@@ -132,10 +132,11 @@ def _run_nemo_diarization(
         logger.info("Created manifest for %.2fs audio", duration)
         
         # NeMo diarization config
+        # CRITICAL: num_workers=0 to avoid pickle errors with spawn multiprocessing
         config = OmegaConf.create({
             "device": device,
             "verbose": True,
-            "num_workers": 1,
+            "num_workers": 0,  # Must be 0 to avoid pickle errors!
             "sample_rate": 16000,
             "batch_size": 64,
             "diarizer": {
