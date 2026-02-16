@@ -654,9 +654,12 @@ function App() {
             setStage('segments');
             alert(`NeMo диаризация завершена, но рендер не удался:\n${result.render_error}\n\nСпикеров: ${result.nemo_speakers || 0}`);
           } else {
-            // Just diarization (no auto-render)
+            // Just diarization (no auto-render) - update segments in UI
+            if (result.updated_segments && result.updated_segments.length > 0) {
+              setSegments(result.updated_segments);
+            }
             setStage('segments');
-            alert(`NeMo диаризация завершена!\n\nОбнаружено спикеров: ${result.num_speakers_detected || result.nemo_speakers || 0}\nСегментов: ${result.segments?.length || result.nemo_segments || 0}\n\nРезультаты применены к сегментам.`);
+            alert(`NeMo диаризация завершена!\n\nОбнаружено спикеров: ${result.num_speakers_detected || 0}\nСегментов диаризации: ${result.diarization_segments?.length || 0}\n\nСпикеры обновлены в сегментах.`);
           }
         } else if (status.status === 'failed') {
           clearInterval(pollInterval);

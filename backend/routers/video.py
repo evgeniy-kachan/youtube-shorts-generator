@@ -2523,14 +2523,20 @@ def _nemo_diarization_task(
             else:
                 logger.warning("No segments to render after NeMo diarization")
         
+        # Get updated video segments (with new speaker labels)
+        updated_video_segments = []
+        if video_id in analysis_results_cache:
+            updated_video_segments = analysis_results_cache[video_id].get("segments", [])
+        
         tasks[task_id] = {
             "status": "completed",
             "progress": 1.0,
             "message": f"NeMo diarization completed: {num_speakers_detected} speakers, {len(diar_segments)} segments",
             "result": {
                 "success": True,
-                "segments": diar_segments,
+                "diarization_segments": diar_segments,  # Raw NeMo segments
                 "num_speakers_detected": num_speakers_detected,
+                "updated_segments": updated_video_segments,  # Video segments with updated speakers
             }
         }
         
