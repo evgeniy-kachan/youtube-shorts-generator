@@ -386,11 +386,24 @@ def nemo_diarize_only(
     """
     logger.info("GPU Task: nemo_diarize_only started, file=%s", Path(audio_path).name)
     
-    # Log GPU info
+    # CRITICAL: Release GPU memory before NeMo subprocess
+    # This prevents CUBLAS_STATUS_NOT_INITIALIZED errors when
+    # Pyannote was run before NeMo in the same worker
     if torch.cuda.is_available():
+        logger.info("Releasing GPU memory before NeMo subprocess...")
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        # Log GPU memory status
         gpu_name = torch.cuda.get_device_name(0)
         gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        logger.info("GPU available: %s (%.1f GB)", gpu_name, gpu_mem)
+        allocated = torch.cuda.memory_allocated(0) / 1024**3
+        reserved = torch.cuda.memory_reserved(0) / 1024**3
+        logger.info("GPU: %s (%.1f GB total, %.2f GB allocated, %.2f GB reserved)", 
+                   gpu_name, gpu_mem, allocated, reserved)
     else:
         logger.warning("CUDA not available!")
     
