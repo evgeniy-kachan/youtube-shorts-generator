@@ -7,10 +7,12 @@ No CUDA context conflicts because only one worker owns the GPU.
 Tasks:
 - transcribe_audio: WhisperX transcription + alignment
 - diarize_pyannote: Pyannote speaker diarization
+- diarize_nemo: NeMo MSDD diarization (via subprocess)
+- nemo_diarize_only: Standalone NeMo diarization task
 - transcribe_and_diarize: Combined transcription + diarization
 
-NOTE: NeMo diarization tasks are in nemo_tasks.py and run in a separate
-nemo-worker with its own CUDA context to prevent conflicts.
+All GPU tasks run sequentially in the same worker to prevent CUDA conflicts.
+NeMo runs as subprocess with its own Python interpreter (venv-nemo).
 """
 from __future__ import annotations
 
@@ -21,9 +23,32 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import gc
 import torch
 
 logger = logging.getLogger(__name__)
+
+
+def _clear_gpu_memory():
+    """
+    Aggressively clear GPU memory before running a new task.
+    This prevents CUDA context conflicts between different models.
+    """
+    if torch.cuda.is_available():
+        # Synchronize all CUDA streams
+        torch.cuda.synchronize()
+        # Clear cache
+        torch.cuda.empty_cache()
+        # Force garbage collection
+        gc.collect()
+        # Clear cache again after GC
+        torch.cuda.empty_cache()
+        
+        # Log memory status
+        allocated = torch.cuda.memory_allocated() / 1024**2
+        reserved = torch.cuda.memory_reserved() / 1024**2
+        logger.info("GPU memory after cleanup: %.1f MB allocated, %.1f MB reserved", 
+                   allocated, reserved)
 
 # NOTE: Don't call torch.cuda functions at module level!
 # RQ workers fork processes and CUDA can't be re-initialized in forked subprocess.
@@ -198,13 +223,16 @@ def diarize_nemo(
     audio_path: str,
     num_speakers: int = 0,  # 0 = auto-detect
     max_speakers: int = 8,
-    device: str = "cuda",  # NeMo runs in separate venv with its own CUDA context
+    device: str = "cuda",
 ) -> List[Dict]:
     """
     Run NeMo MSDD speaker diarization via subprocess.
     
     NeMo is installed in a separate venv (venv-nemo), so we run it
-    as a subprocess using the NemoDiarizationRunner.
+    as a subprocess. This ensures NeMo gets a clean CUDA context.
+    
+    IMPORTANT: We clear GPU memory before running NeMo to prevent
+    CUBLAS_STATUS_NOT_INITIALIZED errors from stale CUDA state.
     
     Returns:
         List of segments: [{"start": 0.0, "end": 1.5, "speaker": "speaker_0"}, ...]
@@ -215,10 +243,21 @@ def diarize_nemo(
     try:
         import subprocess
         
+        # CRITICAL: Clear GPU memory before NeMo subprocess
+        # This prevents CUDA context conflicts with Pyannote/WhisperX
+        logger.info("Clearing GPU memory before NeMo...")
+        _clear_gpu_memory()
+        
         # Path to NeMo venv and script
-        project_root = Path(__file__).parent.parent.parent
-        nemo_python = project_root / "venv-nemo" / "bin" / "python"
-        nemo_script = project_root / "backend" / "tools" / "diarize_nemo.py"
+        # Try production path first, then local
+        nemo_python = Path("/opt/youtube-shorts-generator/venv-nemo/bin/python")
+        nemo_script = Path("/opt/youtube-shorts-generator/backend/tools/diarize_nemo.py")
+        
+        if not nemo_python.exists():
+            # Fallback to local path
+            project_root = Path(__file__).parent.parent.parent
+            nemo_python = project_root / "venv-nemo" / "bin" / "python"
+            nemo_script = project_root / "backend" / "tools" / "diarize_nemo.py"
         
         if not nemo_python.exists():
             raise FileNotFoundError(f"NeMo venv not found: {nemo_python}")
@@ -242,14 +281,19 @@ def diarize_nemo(
             if num_speakers > 0:
                 cmd.extend(["--num_speakers", str(num_speakers)])
             
-            logger.info("Running NeMo subprocess: %s", " ".join(cmd))
+            logger.info("Running NeMo subprocess: %s", " ".join(cmd[:6]) + " ...")
             
-            # Run NeMo in subprocess
+            # Run NeMo in subprocess with clean environment
+            env = os.environ.copy()
+            # Ensure CUDA is visible
+            env["CUDA_VISIBLE_DEVICES"] = "0"
+            
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=3600,  # 1 hour max
+                env=env,
             )
             
             # Always log output for debugging
@@ -257,10 +301,11 @@ def diarize_nemo(
                 logger.info("NeMo stdout: %s", result.stdout[:2000])
             if result.stderr:
                 # Log first 3000 chars of stderr (NeMo is verbose)
-                logger.warning("NeMo stderr: %s", result.stderr[:3000])
+                logger.debug("NeMo stderr (truncated): %s", result.stderr[:3000])
             
             if result.returncode != 0:
                 logger.error("NeMo subprocess failed with code %d", result.returncode)
+                logger.error("NeMo stderr: %s", result.stderr[-2000:])
                 raise RuntimeError(f"NeMo diarization failed: {result.stderr[-1000:]}")
             
             # Check if output file exists
@@ -272,11 +317,13 @@ def diarize_nemo(
             with open(output_path) as f:
                 nemo_result = json.load(f)
             
-            # Log if empty result
-            if not nemo_result.get("segments"):
-                logger.warning("NeMo returned empty segments! Full stderr: %s", result.stderr[-2000:])
-            
             segments = nemo_result.get("segments", [])
+            
+            # Log if empty result
+            if not segments:
+                logger.warning("NeMo returned 0 segments!")
+                logger.warning("Full NeMo stderr: %s", result.stderr[-3000:])
+            
             segments.sort(key=lambda x: x["start"])
             
             speakers = set(s["speaker"] for s in segments)
@@ -368,9 +415,62 @@ def transcribe_and_diarize(
     }
 
 
-# NOTE: nemo_diarize_only has been moved to nemo_tasks.py
-# NeMo now runs in a separate worker (nemo-worker) with its own CUDA context
-# This prevents CUBLAS_STATUS_NOT_INITIALIZED errors
+def nemo_diarize_only(
+    audio_path: str,
+    num_speakers: int = 0,
+    max_speakers: int = 8,
+) -> Dict[str, Any]:
+    """
+    Standalone NeMo diarization task (no transcription).
+    
+    This is the main entry point for NeMo-only diarization from the UI.
+    Runs in the same gpu-worker queue to prevent CUDA conflicts.
+    
+    Args:
+        audio_path: Path to audio/video file
+        num_speakers: Number of speakers (0 = auto)
+        max_speakers: Maximum speakers for auto-detection
+    
+    Returns:
+        {
+            "segments": [...],
+            "num_speakers": 2,
+            "speaker_stats": {...},
+            "total_speech_duration": 123.4,
+        }
+    """
+    logger.info("GPU Task: nemo_diarize_only started, file=%s", Path(audio_path).name)
+    
+    # Run diarization (will clear GPU memory internally)
+    segments = diarize_nemo(
+        audio_path=audio_path,
+        num_speakers=num_speakers,
+        max_speakers=max_speakers,
+        device="cuda",
+    )
+    
+    # Calculate speaker stats
+    speaker_stats = {}
+    for seg in segments:
+        speaker = seg.get("speaker", "unknown")
+        duration = seg.get("end", 0) - seg.get("start", 0)
+        if speaker not in speaker_stats:
+            speaker_stats[speaker] = {"count": 0, "duration": 0.0}
+        speaker_stats[speaker]["count"] += 1
+        speaker_stats[speaker]["duration"] += duration
+    
+    num_speakers_detected = len(speaker_stats)
+    total_speech = sum(s["duration"] for s in speaker_stats.values())
+    
+    logger.info("GPU Task: nemo_diarize_only complete, %d speakers, %.1fs speech",
+               num_speakers_detected, total_speech)
+    
+    return {
+        "segments": segments,
+        "num_speakers": num_speakers_detected,
+        "speaker_stats": speaker_stats,
+        "total_speech_duration": total_speech,
+    }
 
 
 def _merge_transcription_with_diarization(
