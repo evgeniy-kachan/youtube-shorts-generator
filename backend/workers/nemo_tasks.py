@@ -28,10 +28,11 @@ def diarize_nemo(
     device: str = "cuda",
 ) -> List[Dict]:
     """
-    Run NeMo MSDD speaker diarization.
+    Run NeMo MSDD speaker diarization via subprocess.
     
-    This function runs directly in the NeMo worker process,
-    which has its own CUDA context.
+    IMPORTANT: This runs diarize_nemo.py as a subprocess with its own
+    Python interpreter (venv-nemo). We must NOT import torch here,
+    as it would initialize CUDA and corrupt the subprocess's context.
     
     Args:
         audio_path: Path to audio/video file
@@ -42,19 +43,11 @@ def diarize_nemo(
     Returns:
         List of diarization segments
     """
-    import torch
+    # NOTE: Do NOT import torch here! It would initialize CUDA and
+    # cause CUBLAS_STATUS_NOT_INITIALIZED in the subprocess.
     
-    logger.info("NeMo Task: diarize_nemo started, file=%s", Path(audio_path).name)
-    
-    # Log GPU status
-    if torch.cuda.is_available():
-        gpu_name = torch.cuda.get_device_name(0)
-        gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        allocated = torch.cuda.memory_allocated(0) / 1024**3
-        logger.info("GPU: %s (%.1f GB total, %.2f GB allocated)", gpu_name, gpu_mem, allocated)
-    else:
-        logger.warning("CUDA not available, using CPU")
-        device = "cpu"
+    logger.info("NeMo Task: diarize_nemo started, file=%s, device=%s", 
+                Path(audio_path).name, device)
     
     # Create temp file for output
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
@@ -137,6 +130,9 @@ def nemo_diarize_task(
     
     This is the main entry point called by the NeMo worker.
     
+    IMPORTANT: Do NOT import torch here! The subprocess (diarize_nemo.py)
+    needs a clean CUDA context. Any torch import here would corrupt it.
+    
     Args:
         audio_path: Path to audio/video file
         num_speakers: Number of speakers (0 = auto)
@@ -150,24 +146,14 @@ def nemo_diarize_task(
             "total_speech_duration": 123.4,
         }
     """
-    import torch
-    
     logger.info("NeMo Task: nemo_diarize_task started, file=%s", Path(audio_path).name)
     
-    # Log GPU info
-    if torch.cuda.is_available():
-        gpu_name = torch.cuda.get_device_name(0)
-        gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        logger.info("GPU available: %s (%.1f GB)", gpu_name, gpu_mem)
-    else:
-        logger.warning("CUDA not available!")
-    
-    # Run diarization
+    # Run diarization (subprocess will handle CUDA)
     segments = diarize_nemo(
         audio_path=audio_path,
         num_speakers=num_speakers,
         max_speakers=max_speakers,
-        device="cuda" if torch.cuda.is_available() else "cpu",
+        device="cuda",  # Subprocess will fallback to CPU if needed
     )
     
     # Calculate speaker stats

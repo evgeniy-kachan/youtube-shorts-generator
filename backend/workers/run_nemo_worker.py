@@ -46,28 +46,16 @@ logger = logging.getLogger("nemo_worker")
 
 def main():
     """Start the NeMo worker."""
-    # Import torch AFTER setting spawn method
-    import torch
+    # NOTE: Do NOT import torch here!
+    # NeMo tasks run diarize_nemo.py as subprocess which needs clean CUDA context.
+    # If we initialize CUDA here, subprocess will inherit corrupted context.
     from redis import Redis
     from rq import Queue, SimpleWorker
     
-    # Log GPU info
+    # Log startup info (without touching CUDA)
     logger.info("=" * 60)
     logger.info("NeMo Worker starting")
-    
-    if torch.cuda.is_available():
-        gpu_name = torch.cuda.get_device_name(0)
-        gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        logger.info("GPU: %s (%.1f GB)", gpu_name, gpu_memory)
-        logger.info("CUDA version: %s", torch.version.cuda)
-        
-        # Enable TF32 for faster computation on Ampere+ GPUs
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        logger.info("TF32 enabled for faster computation")
-    else:
-        logger.warning("CUDA is not available! NeMo will run on CPU (very slow)")
-    
+    logger.info("NOTE: CUDA will be initialized by NeMo subprocess, not here")
     logger.info("Multiprocessing start method: %s", mp.get_start_method())
     logger.info("=" * 60)
     
