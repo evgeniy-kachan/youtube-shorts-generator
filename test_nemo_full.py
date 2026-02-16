@@ -55,6 +55,10 @@ with tempfile.TemporaryDirectory() as tmpdir:
                 'parameters': {
                     'oracle_num_speakers': False,
                     'max_num_speakers': 8,
+                    'enhanced_count_thres': 80,
+                    'max_rp_threshold': 0.25,
+                    'sparse_search_volume': 30,
+                    'maj_vote_spk_count': False,
                 }
             },
             'vad': {
