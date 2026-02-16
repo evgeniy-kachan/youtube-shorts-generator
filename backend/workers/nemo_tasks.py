@@ -76,10 +76,21 @@ def _run_nemo_diarization(
             torch.cuda.empty_cache()
             torch.cuda.set_device(0)
             
-            # Initialize fresh CUDA context
+            # Initialize fresh CUDA context with simple tensor
             init_tensor = torch.zeros(1, device="cuda")
             del init_tensor
             torch.cuda.synchronize()
+            
+            # CRITICAL: Initialize cuBLAS by doing a matrix multiplication
+            # This forces cuBLAS handle creation BEFORE NeMo loads models
+            logger.info("Initializing cuBLAS...")
+            a = torch.randn(64, 64, device="cuda")
+            b = torch.randn(64, 64, device="cuda")
+            c = torch.mm(a, b)  # This initializes cuBLAS
+            del a, b, c
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            logger.info("cuBLAS initialized successfully")
             
             # Enable TF32 for faster computation
             torch.backends.cuda.matmul.allow_tf32 = True
