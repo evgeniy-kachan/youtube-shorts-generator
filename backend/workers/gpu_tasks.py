@@ -1,5 +1,5 @@
 """
-GPU Tasks for RQ Worker.
+GPU Tasks for RQ Worker (gpu-worker).
 
 These tasks run in a separate process with exclusive GPU access.
 No CUDA context conflicts because only one worker owns the GPU.
@@ -7,8 +7,10 @@ No CUDA context conflicts because only one worker owns the GPU.
 Tasks:
 - transcribe_audio: WhisperX transcription + alignment
 - diarize_pyannote: Pyannote speaker diarization
-- diarize_nemo: NeMo MSDD speaker diarization
-- detect_faces: InsightFace face detection for focus timeline
+- transcribe_and_diarize: Combined transcription + diarization
+
+NOTE: NeMo diarization tasks are in nemo_tasks.py and run in a separate
+nemo-worker with its own CUDA context to prevent conflicts.
 """
 from __future__ import annotations
 
@@ -366,77 +368,9 @@ def transcribe_and_diarize(
     }
 
 
-def nemo_diarize_only(
-    audio_path: str,
-    num_speakers: int = 0,
-    max_speakers: int = 8,
-) -> Dict[str, Any]:
-    """
-    Standalone NeMo diarization task for RQ queue.
-    
-    This runs NeMo MSDD on GPU in the worker process.
-    Called from video.py for re-diarization requests.
-    
-    Returns:
-        {
-            "segments": [...],  # Diarization segments
-            "num_speakers": 2,
-            "speaker_stats": {...},
-        }
-    """
-    logger.info("GPU Task: nemo_diarize_only started, file=%s", Path(audio_path).name)
-    
-    # CRITICAL: Release GPU memory before NeMo subprocess
-    # This prevents CUBLAS_STATUS_NOT_INITIALIZED errors when
-    # Pyannote was run before NeMo in the same worker
-    if torch.cuda.is_available():
-        logger.info("Releasing GPU memory before NeMo subprocess...")
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-        import gc
-        gc.collect()
-        torch.cuda.empty_cache()
-        
-        # Log GPU memory status
-        gpu_name = torch.cuda.get_device_name(0)
-        gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        allocated = torch.cuda.memory_allocated(0) / 1024**3
-        reserved = torch.cuda.memory_reserved(0) / 1024**3
-        logger.info("GPU: %s (%.1f GB total, %.2f GB allocated, %.2f GB reserved)", 
-                   gpu_name, gpu_mem, allocated, reserved)
-    else:
-        logger.warning("CUDA not available!")
-    
-    # Run NeMo diarization
-    segments = diarize_nemo(
-        audio_path=audio_path,
-        num_speakers=num_speakers,
-        max_speakers=max_speakers,
-        device="cuda",  # Always GPU in worker
-    )
-    
-    # Calculate speaker stats
-    speaker_stats = {}
-    for seg in segments:
-        speaker = seg.get("speaker", "unknown")
-        duration = seg.get("end", 0) - seg.get("start", 0)
-        if speaker not in speaker_stats:
-            speaker_stats[speaker] = {"count": 0, "duration": 0.0}
-        speaker_stats[speaker]["count"] += 1
-        speaker_stats[speaker]["duration"] += duration
-    
-    num_speakers_detected = len(speaker_stats)
-    total_speech = sum(s["duration"] for s in speaker_stats.values())
-    
-    logger.info("GPU Task: nemo_diarize_only complete, %d speakers, %.1fs speech",
-               num_speakers_detected, total_speech)
-    
-    return {
-        "segments": segments,
-        "num_speakers": num_speakers_detected,
-        "speaker_stats": speaker_stats,
-        "total_speech_duration": total_speech,
-    }
+# NOTE: nemo_diarize_only has been moved to nemo_tasks.py
+# NeMo now runs in a separate worker (nemo-worker) with its own CUDA context
+# This prevents CUBLAS_STATUS_NOT_INITIALIZED errors
 
 
 def _merge_transcription_with_diarization(

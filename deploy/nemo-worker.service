@@ -1,0 +1,32 @@
+[Unit]
+Description=NeMo Speaker Diarization Worker
+After=network.target redis.service
+Wants=redis.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/youtube-shorts-generator
+Environment="PYTHONUNBUFFERED=1"
+Environment="REDIS_HOST=localhost"
+Environment="REDIS_PORT=6379"
+Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64:/lib/x86_64-linux-gnu"
+Environment="CUDA_VISIBLE_DEVICES=0"
+
+# Use venv-nemo Python for NeMo
+ExecStart=/opt/youtube-shorts-generator/venv-nemo/bin/python -m backend.workers.run_nemo_worker
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=append:/opt/youtube-shorts-generator/nemo-worker.log
+StandardError=append:/opt/youtube-shorts-generator/nemo-worker.log
+
+# Resource limits
+MemoryMax=14G
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

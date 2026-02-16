@@ -39,6 +39,7 @@ REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 
 # Queue settings
 GPU_QUEUE_NAME = "gpu_tasks"
+NEMO_QUEUE_NAME = "nemo_tasks"  # Separate queue for NeMo (separate CUDA context)
 DEFAULT_TIMEOUT = 1800  # 30 minutes max per task
 
 
@@ -63,9 +64,15 @@ class TaskQueue:
             connection=self.redis_conn,
             default_timeout=DEFAULT_TIMEOUT,
         )
+        # Separate queue for NeMo tasks (runs in separate worker with own CUDA context)
+        self.nemo_queue = Queue(
+            name=NEMO_QUEUE_NAME,
+            connection=self.redis_conn,
+            default_timeout=3600,  # 1 hour for NeMo
+        )
         logger.info(
-            "TaskQueue initialized: redis=%s:%d, queue=%s",
-            redis_host, redis_port, GPU_QUEUE_NAME
+            "TaskQueue initialized: redis=%s:%d, queues=[%s, %s]",
+            redis_host, redis_port, GPU_QUEUE_NAME, NEMO_QUEUE_NAME
         )
     
     def is_redis_available(self) -> bool:
@@ -176,11 +183,14 @@ class TaskQueue:
         """
         Enqueue NeMo MSDD diarization task.
         
-        This runs NeMo on GPU in the worker process.
+        This runs in a SEPARATE worker (nemo-worker) with its own CUDA context.
+        This prevents CUDA conflicts with Pyannote in gpu-worker.
+        
         Returns full diarization result with speaker stats.
         """
-        job = self.queue.enqueue(
-            "backend.workers.gpu_tasks.nemo_diarize_only",
+        # Use nemo_queue - processed by separate nemo-worker
+        job = self.nemo_queue.enqueue(
+            "backend.workers.nemo_tasks.nemo_diarize_task",
             audio_path=audio_path,
             num_speakers=num_speakers,
             max_speakers=max_speakers,
@@ -188,7 +198,7 @@ class TaskQueue:
         )
         
         logger.info(
-            "Enqueued NeMo diarization task: job_id=%s, file=%s",
+            "Enqueued NeMo diarization task to nemo_queue: job_id=%s, file=%s",
             job.id, audio_path
         )
         
