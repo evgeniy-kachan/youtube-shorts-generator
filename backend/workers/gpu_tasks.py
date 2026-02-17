@@ -153,83 +153,122 @@ def diarize_pyannote(
     hf_token: Optional[str] = None,
 ) -> List[Dict]:
     """
-    Run Pyannote speaker diarization.
+    Run Pyannote speaker diarization via subprocess (venv-diar).
+    
+    Uses a separate process with clean CUDA context for better performance.
+    This avoids memory fragmentation and CUDA conflicts with WhisperX.
     
     Returns:
         List of segments: [{"start": 0.0, "end": 1.5, "speaker": "SPEAKER_00"}, ...]
     """
+    import subprocess
+    import time
+    
     logger.info("GPU Task: diarize_pyannote started, file=%s, speakers=%s",
                 Path(audio_path).name, num_speakers if num_speakers > 0 else "auto")
     
     try:
-        from pyannote.audio import Pipeline
+        # Clear GPU memory before spawning subprocess
+        _clear_gpu_memory(force_release=True)
         
         # Get HF token
         hf_token = hf_token or os.getenv("HUGGINGFACE_TOKEN")
         if not hf_token:
             raise ValueError("HUGGINGFACE_TOKEN required for Pyannote")
         
-        # Adjust for CPU if needed
-        if device == "cuda" and not torch.cuda.is_available():
-            device = "cpu"
-            logger.warning("CUDA not available, falling back to CPU")
+        # Path to Pyannote venv and script
+        pyannote_python = Path("/opt/youtube-shorts-generator/venv-diar/bin/python")
+        pyannote_script = Path("/opt/youtube-shorts-generator/backend/tools/diarize.py")
         
-        # Load pipeline
-        logger.info("Loading Pyannote pipeline on %s", device)
-        pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1",
-            use_auth_token=hf_token,
-        )
+        if not pyannote_python.exists():
+            # Fallback to local path
+            project_root = Path(__file__).parent.parent.parent
+            pyannote_python = project_root / "venv-diar" / "bin" / "python"
+            pyannote_script = project_root / "backend" / "tools" / "diarize.py"
         
-        if device == "cuda":
-            pipeline.to(torch.device("cuda"))
-            logger.info("Pyannote pipeline moved to GPU")
+        if not pyannote_python.exists():
+            raise FileNotFoundError(f"Pyannote venv not found: {pyannote_python}")
+        if not pyannote_script.exists():
+            raise FileNotFoundError(f"Pyannote script not found: {pyannote_script}")
         
-        # Fine-tune parameters for better speaker separation
-        pipeline.instantiate({
-            "segmentation": {
-                "min_duration_off": 0.05,
-            },
-            "clustering": {
-                "method": "centroid",
-                "min_cluster_size": 3,
-                "threshold": 0.35,
-            },
-        })
+        # Create temp file for output
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            output_path = f.name
         
-        # Run diarization
-        actual_num_speakers = num_speakers if num_speakers > 0 else None
-        logger.info("Running diarization with num_speakers=%s", 
-                   actual_num_speakers if actual_num_speakers else "auto")
+        try:
+            # Build command
+            cmd = [
+                str(pyannote_python),
+                str(pyannote_script),
+                "--input", audio_path,
+                "--output", output_path,
+                "--device", device,
+                "--num_speakers", str(num_speakers),
+                "--hf_token", hf_token,
+            ]
+            
+            logger.info("Running Pyannote subprocess: %s %s --input %s ...",
+                       pyannote_python.name, pyannote_script.name, Path(audio_path).name)
+            
+            start_time = time.time()
+            
+            # Run in subprocess with clean environment
+            env = os.environ.copy()
+            env["CUDA_VISIBLE_DEVICES"] = "0"
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600,  # 1 hour max
+                env=env,
+            )
+            
+            elapsed = time.time() - start_time
+            logger.info("Pyannote subprocess completed in %.1f seconds", elapsed)
+            
+            # Log stderr (pyannote logs there)
+            if result.stderr:
+                stderr_text = result.stderr
+                for line in stderr_text.split("\n"):
+                    line_lower = line.lower()
+                    if any(kw in line_lower for kw in ["speaker", "segment", "error", "cuda", "gpu", "device", "pipeline", "diarization", "complete"]):
+                        logger.info("Pyannote: %s", line.strip())
+            
+            if result.returncode != 0:
+                logger.error("Pyannote subprocess failed with code %d", result.returncode)
+                logger.error("Pyannote stderr: %s", result.stderr[-2000:])
+                raise RuntimeError(f"Pyannote diarization failed: {result.stderr[-1000:]}")
+            
+            # Check if output file exists
+            if not os.path.exists(output_path):
+                logger.error("Pyannote output file not created: %s", output_path)
+                raise RuntimeError("Pyannote did not create output file")
+            
+            # Read results
+            with open(output_path) as f:
+                pyannote_result = json.load(f)
+            
+            segments = pyannote_result.get("segments", [])
+            segments.sort(key=lambda x: x["start"])
+            
+            # Log summary
+            speakers = set(s["speaker"] for s in segments)
+            logger.info("GPU Task: diarize_pyannote complete, %d segments, %d speakers, %.1fs",
+                       len(segments), len(speakers), elapsed)
+            
+            return segments
+            
+        finally:
+            # Clean up temp file
+            if os.path.exists(output_path):
+                os.unlink(output_path)
         
-        diarization = pipeline(audio_path, num_speakers=actual_num_speakers)
-        
-        # Extract segments
-        segments = []
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
-            segments.append({
-                "start": float(turn.start),
-                "end": float(turn.end),
-                "speaker": str(speaker),
-            })
-        
-        segments.sort(key=lambda x: x["start"])
-        
-        # Log summary
-        speakers = set(s["speaker"] for s in segments)
-        logger.info("GPU Task: diarize_pyannote complete, %d segments, %d speakers",
-                   len(segments), len(speakers))
-        
-        # Clean up GPU memory AFTER preparing result
-        del pipeline
-        _clear_gpu_memory(force_release=True)
-        
-        return segments
-        
+    except subprocess.TimeoutExpired:
+        logger.error("GPU Task: diarize_pyannote timed out (60 min)")
+        raise RuntimeError("Pyannote diarization timed out after 60 minutes")
     except Exception as e:
         logger.error("GPU Task: diarize_pyannote failed: %s", e, exc_info=True)
-        # Try to clean up even on error
-        _clear_gpu_memory(force_release=True)
         raise
 
 
