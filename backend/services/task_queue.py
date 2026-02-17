@@ -192,9 +192,10 @@ class TaskQueue:
         
         Returns full diarization result with speaker stats.
         """
-        # Use separate nemo_tasks queue - processed by nemo-worker
+        # Use separate nemo_tasks queue - processed by remote Selectel nemo-worker
+        # The remote worker has nemo_tasks.py in /opt/nemo-worker/
         job = self.nemo_queue.enqueue(
-            "backend.workers.nemo_tasks.nemo_diarize_task",
+            "nemo_tasks.nemo_diarize_task",
             audio_path=audio_path,
             num_speakers=num_speakers,
             max_speakers=max_speakers,
