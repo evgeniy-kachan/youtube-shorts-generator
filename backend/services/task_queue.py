@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)  # For remote NeMo worker
 
 # Queue settings
 GPU_QUEUE_NAME = "gpu_tasks"
@@ -53,11 +54,13 @@ class TaskQueue:
         redis_host: str = REDIS_HOST,
         redis_port: int = REDIS_PORT,
         redis_db: int = REDIS_DB,
+        redis_password: str = REDIS_PASSWORD,
     ):
         self.redis_conn = Redis(
             host=redis_host,
             port=redis_port,
             db=redis_db,
+            password=redis_password,
         )
         self.queue = Queue(
             name=GPU_QUEUE_NAME,
@@ -225,6 +228,44 @@ class TaskQueue:
             "failed": len(self.queue.failed_job_registry),
             "finished": len(self.queue.finished_job_registry),
         }
+    
+    def get_nemo_server_status(self) -> Dict[str, Any]:
+        """
+        Check if remote NeMo server (Selectel) is online.
+        
+        The NeMo worker sets 'nemo_server:status' key in Redis when it starts.
+        """
+        try:
+            status = self.redis_conn.get("nemo_server:status")
+            last_heartbeat = self.redis_conn.get("nemo_server:heartbeat")
+            
+            if status:
+                status = status.decode("utf-8")
+                heartbeat_ts = float(last_heartbeat.decode("utf-8")) if last_heartbeat else 0
+                
+                # Check if heartbeat is recent (within 60 seconds)
+                import time
+                is_alive = (time.time() - heartbeat_ts) < 60 if heartbeat_ts else False
+                
+                return {
+                    "available": status == "ready" and is_alive,
+                    "status": status,
+                    "last_heartbeat": heartbeat_ts,
+                    "message": "NeMo server (Selectel) is online" if is_alive else "NeMo server heartbeat stale"
+                }
+            else:
+                return {
+                    "available": False,
+                    "status": "offline",
+                    "message": "NeMo server not connected"
+                }
+        except Exception as e:
+            logger.error("Error checking NeMo server status: %s", e)
+            return {
+                "available": False,
+                "status": "error",
+                "message": f"Error: {str(e)}"
+            }
 
 
 class JobWrapper:

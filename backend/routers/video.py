@@ -2170,15 +2170,23 @@ class NemoDiarizationResponse(BaseModel):
 
 @router.get("/nemo/status")
 async def get_nemo_status():
-    """Check if NeMo MSDD diarization is available."""
+    """
+    Check if NeMo MSDD diarization is available.
+    
+    NeMo runs on a dedicated Selectel server to avoid CUDA conflicts.
+    The remote worker connects to our Redis and sets status keys.
+    """
     try:
-        from backend.services.nemo_diarization_runner import is_nemo_available
-        available = is_nemo_available()
+        from backend.services.task_queue import get_task_queue
+        queue = get_task_queue()
+        status = queue.get_nemo_server_status()
         return {
-            "available": available,
-            "message": "NeMo MSDD is ready" if available else "NeMo MSDD not installed (venv-nemo not found)"
+            "available": status.get("available", False),
+            "message": status.get("message", "Unknown"),
+            "server_status": status.get("status", "unknown"),
         }
     except Exception as e:
+        logger.error("Error checking NeMo status: %s", e)
         return {
             "available": False,
             "message": f"Error checking NeMo status: {str(e)}"
@@ -2205,16 +2213,20 @@ async def run_nemo_diarization(request: NemoDiarizationRequest, background_tasks
     if not video_path or not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail="Source video file not found")
     
-    # Check if NeMo is available
+    # Check if NeMo server is available (runs on dedicated Selectel server)
     try:
-        from backend.services.nemo_diarization_runner import is_nemo_available
-        if not is_nemo_available():
+        from backend.services.task_queue import get_task_queue
+        queue = get_task_queue()
+        nemo_status = queue.get_nemo_server_status()
+        if not nemo_status.get("available", False):
             raise HTTPException(
                 status_code=503, 
-                detail="NeMo MSDD not available. Please install venv-nemo with nemo_toolkit[asr]"
+                detail=f"NeMo server offline: {nemo_status.get('message', 'Unknown')}"
             )
-    except ImportError:
-        raise HTTPException(status_code=503, detail="NeMo diarization runner not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Error checking NeMo server: {str(e)}")
     
     task_id = str(uuid.uuid4())
     tasks[task_id] = {"status": "pending", "progress": 0.0, "message": "NeMo diarization queued"}
@@ -2548,6 +2560,79 @@ def _nemo_diarization_task(
             "message": f"NeMo diarization failed: {str(e)}",
             "result": {"success": False, "error": str(e)}
         }
+
+
+# =============================================================================
+# Internal API for NeMo Server (Selectel)
+# =============================================================================
+
+@router.get("/internal/download/{video_id}")
+async def download_audio_for_nemo(video_id: str, token: str = None):
+    """
+    Internal endpoint for NeMo server to download audio files.
+    
+    The NeMo server (Selectel) calls this to get the audio file for diarization.
+    Protected by a simple token check.
+    """
+    # Simple token validation (should match NEMO_INTERNAL_TOKEN env var)
+    expected_token = os.getenv("NEMO_INTERNAL_TOKEN", "NeMo2026InternalToken!")
+    if token != expected_token:
+        raise HTTPException(status_code=403, detail="Invalid token")
+    
+    # Find video in cache
+    if video_id not in analysis_results_cache:
+        raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
+    
+    cached = analysis_results_cache[video_id]
+    video_path = cached.get("video_path")
+    
+    if not video_path or not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Video file not found")
+    
+    # Return the file
+    return FileResponse(
+        video_path,
+        media_type="video/mp4",
+        filename=os.path.basename(video_path)
+    )
+
+
+@router.get("/files/temp/{filename}")
+async def get_temp_file(filename: str):
+    """
+    Serve files from temp directory.
+    
+    Used by NeMo server (Selectel) to download audio/video files for processing.
+    """
+    temp_dir = get_temp_dir()
+    file_path = os.path.join(temp_dir, filename)
+    
+    # Security: prevent directory traversal
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+    
+    # Determine media type
+    ext = Path(filename).suffix.lower()
+    media_types = {
+        ".mp4": "video/mp4",
+        ".mkv": "video/x-matroska",
+        ".avi": "video/x-msvideo",
+        ".mov": "video/quicktime",
+        ".webm": "video/webm",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+    }
+    media_type = media_types.get(ext, "application/octet-stream")
+    
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        filename=filename
+    )
 
 
 @router.on_event("startup")
