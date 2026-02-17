@@ -854,7 +854,7 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysi
             
             # Wait for result (blocking)
             logger.info("Waiting for GPU worker result (job_id=%s)...", job.id)
-            transcription_result = job.wait_result(timeout=1800)  # 30 min max
+            transcription_result = job.wait_result(timeout=3600)  # 60 min max (long videos need more)
             
             segments = transcription_result['segments']
             logger.info(

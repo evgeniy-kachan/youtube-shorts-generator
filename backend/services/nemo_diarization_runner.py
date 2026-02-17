@@ -141,7 +141,7 @@ class NemoDiarizationRunner:
                     check=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=1800,  # 30 min max
+                    timeout=3600,  # 60 min max (long videos need more)
                     env=env,
                 )
                 

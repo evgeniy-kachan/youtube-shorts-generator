@@ -94,7 +94,7 @@ class TranscriptionRunner:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=1800,  # 30 min max
+                timeout=3600,  # 60 min max (long videos need more)
                 check=True,
             )
 
