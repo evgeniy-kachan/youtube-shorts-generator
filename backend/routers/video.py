@@ -3,9 +3,11 @@ import re
 import uuid
 import logging
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from itertools import cycle
 from pathlib import Path
+from threading import Semaphore
 from typing import List, Optional
 
 import ffmpeg
@@ -15,6 +17,10 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from pydub import AudioSegment
+
+# Semaphore to limit parallel NVENC sessions (Tesla T4 has no limit, but we limit for stability)
+MAX_PARALLEL_RENDERS = int(os.getenv("MAX_PARALLEL_RENDERS", "3"))
+_render_semaphore = Semaphore(MAX_PARALLEL_RENDERS)
 
 from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
@@ -1442,42 +1448,39 @@ def _process_segments_task(
         # Import DeepSeek client for description generation
         from backend.services.deepseek_client import DeepSeekClient
         
-        output_files = []
-        for idx, segment in enumerate(segments_to_process):
-            # Update progress
-            segment_progress = 0.6 + (0.35 * idx / len(segments_to_process))
-            tasks[task_id] = {
-                "status": "processing",
-                "progress": segment_progress,
-                "message": f"Rendering video {idx + 1}/{len(segments_to_process)}..."
-            }
+        def render_single_segment(idx: int, segment: dict) -> dict:
+            """Render a single segment with semaphore to limit parallel NVENC sessions."""
+            segment_id = segment['id']
             
-            output_path = os.path.join(output_dir, f"{segment['id']}.mp4")
-            final_clip = renderer.create_vertical_video(
-                video_path=video_path,
-                audio_path=segment['audio_path'],
-                text=segment['text_ru'],
-                start_time=segment['start_time'],
-                end_time=segment['end_time'],
-                target_duration=segment.get('target_duration'),
-                method=vertical_method,
-                subtitle_animation=subtitle_animation,
-                subtitle_position=subtitle_position,
-                subtitle_font=subtitle_font,
-                subtitle_font_size=subtitle_font_size,
-                subtitle_background=subtitle_background,
-                subtitle_glow=subtitle_glow,
-                subtitle_gradient=subtitle_gradient,
-                dialogue=segment.get('dialogue'),
-                preserve_background_audio=preserve_background_audio,
-                crop_focus=crop_focus,
-                speaker_color_mode=speaker_color_mode,
-            )
-            renderer.save_video(final_clip, output_path)
+            with _render_semaphore:
+                logger.info("Rendering segment %d/%d: %s (parallel limit: %d)", 
+                           idx + 1, len(segments_to_process), segment_id, MAX_PARALLEL_RENDERS)
+                
+                output_path = os.path.join(output_dir, f"{segment_id}.mp4")
+                final_clip = renderer.create_vertical_video(
+                    video_path=video_path,
+                    audio_path=segment['audio_path'],
+                    text=segment['text_ru'],
+                    start_time=segment['start_time'],
+                    end_time=segment['end_time'],
+                    target_duration=segment.get('target_duration'),
+                    method=vertical_method,
+                    subtitle_animation=subtitle_animation,
+                    subtitle_position=subtitle_position,
+                    subtitle_font=subtitle_font,
+                    subtitle_font_size=subtitle_font_size,
+                    subtitle_background=subtitle_background,
+                    subtitle_glow=subtitle_glow,
+                    subtitle_gradient=subtitle_gradient,
+                    dialogue=segment.get('dialogue'),
+                    preserve_background_audio=preserve_background_audio,
+                    crop_focus=crop_focus,
+                    speaker_color_mode=speaker_color_mode,
+                )
+                renderer.save_video(final_clip, output_path)
             
-            # Generate description for this segment
+            # Generate description (can run outside semaphore - it's API call, not GPU)
             try:
-                # Get English text - fallback to dialogue if main text is empty
                 text_en = segment.get('text', '')
                 if not text_en and segment.get('dialogue'):
                     text_en = ' '.join(turn.get('text', '') for turn in segment['dialogue'])
@@ -1493,7 +1496,7 @@ def _process_segments_task(
             except httpx.HTTPStatusError as http_exc:
                 logger.warning(
                     "Description generation HTTP error for %s: status=%s, response=%s",
-                    segment['id'], http_exc.response.status_code, http_exc.response.text[:200]
+                    segment_id, http_exc.response.status_code, http_exc.response.text[:200]
                 )
                 description_data = {
                     "category": "другое",
@@ -1502,7 +1505,7 @@ def _process_segments_task(
                     "hashtags": ["#shorts", "#viral", "#рекомендации"]
                 }
             except Exception as desc_exc:
-                logger.warning("Failed to generate description for %s: %s", segment['id'], desc_exc)
+                logger.warning("Failed to generate description for %s: %s", segment_id, desc_exc)
                 description_data = {
                     "category": "другое",
                     "title": "Интересный момент",
@@ -1510,29 +1513,63 @@ def _process_segments_task(
                     "hashtags": ["#shorts", "#viral", "#рекомендации"]
                 }
             
-            # Relative path for API response
-            relative_path = os.path.join(video_id, f"{segment['id']}.mp4")
-            output_files.append({
+            relative_path = os.path.join(video_id, f"{segment_id}.mp4")
+            return {
+                "idx": idx,
                 "path": relative_path,
-                "segment_id": segment['id'],
+                "segment_id": segment_id,
                 "description": description_data
-            })
+            }
+        
+        # Render segments in parallel (limited by semaphore)
+        output_files = []
+        completed_count = 0
+        total_segments = len(segments_to_process)
+        
+        # Use ThreadPoolExecutor for parallel rendering
+        # Face detection uses GPU but is thread-safe, FFmpeg NVENC is limited by semaphore
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL_RENDERS) as executor:
+            futures = {
+                executor.submit(render_single_segment, idx, segment): segment['id']
+                for idx, segment in enumerate(segments_to_process)
+            }
             
-            # Clean up memory after each segment to prevent OOM
-            # Especially important when processing multiple segments
-            import gc
-            gc.collect()
-            
-            # Clear CUDA cache if available
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-            except Exception:
-                pass
-            
-            logger.debug("Memory cleaned after segment %s", segment['id'])
+            for future in as_completed(futures):
+                segment_id = futures[future]
+                try:
+                    result = future.result()
+                    output_files.append(result)
+                    completed_count += 1
+                    
+                    # Update progress
+                    segment_progress = 0.6 + (0.35 * completed_count / total_segments)
+                    tasks[task_id] = {
+                        "status": "processing",
+                        "progress": segment_progress,
+                        "message": f"Rendered {completed_count}/{total_segments} videos..."
+                    }
+                    logger.info("Completed segment %s (%d/%d)", segment_id, completed_count, total_segments)
+                    
+                except Exception as exc:
+                    logger.error("Segment %s failed: %s", segment_id, exc, exc_info=True)
+                    # Continue with other segments
+        
+        # Sort output_files by original index to maintain order
+        output_files.sort(key=lambda x: x.get("idx", 0))
+        # Remove idx from final output
+        for f in output_files:
+            f.pop("idx", None)
+        
+        # Clean up memory after all segments
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except Exception:
+            pass
         
         # Save transcription JSON with word timestamps (Yandex format)
         json_relative_path = None
