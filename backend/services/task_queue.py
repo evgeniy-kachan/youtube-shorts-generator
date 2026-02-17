@@ -41,7 +41,7 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)  # For remote NeMo worker
 # Queue settings
 GPU_QUEUE_NAME = "gpu_tasks"
 NEMO_QUEUE_NAME = "nemo_tasks"  # Separate queue for NeMo - runs in isolated worker
-DEFAULT_TIMEOUT = 1800  # 30 minutes max per task
+DEFAULT_TIMEOUT = 3600  # 60 minutes max per task (long videos need more time)
 
 
 class TaskQueue:
