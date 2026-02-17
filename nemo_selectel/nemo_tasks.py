@@ -43,21 +43,21 @@ def download_audio_by_path(audio_path: str, dest_path: str) -> bool:
     """
     Download audio file from main server.
     
-    If audio_path looks like a video_id (UUID), use the internal API.
+    If audio_path is a full path on the main server, use the project file endpoint.
     Otherwise, try to download by filename from temp directory.
     """
-    import re
-    
-    # Check if it's a UUID (video_id)
-    uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     filename = Path(audio_path).name
     
-    # Try internal API with video_id first (if path contains video_id)
-    # The audio_path from main server is the full path like /tmp/youtube-shorts/video.mp4
-    # We need to extract video_id from the task context or use filename
+    # If audio_path is a full path starting with /opt/youtube-shorts-generator/
+    # use the project file endpoint with relative path
+    project_prefix = "/opt/youtube-shorts-generator/"
+    if audio_path.startswith(project_prefix):
+        relative_path = audio_path[len(project_prefix):]
+        url = f"{MAIN_SERVER_URL}/api/video/files/project/{relative_path}"
+    else:
+        # Fallback to temp file endpoint
+        url = f"{MAIN_SERVER_URL}/api/video/files/temp/{filename}"
     
-    # For now, use the temp file endpoint
-    url = f"{MAIN_SERVER_URL}/api/files/temp/{filename}"
     logger.info(f"Downloading audio from: {url}")
     
     try:

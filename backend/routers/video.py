@@ -2608,7 +2608,7 @@ async def get_temp_file(filename: str):
     file_path = os.path.join(temp_dir, filename)
     
     # Security: prevent directory traversal
-    if ".." in filename or "/" in filename or "\\" in filename:
+    if ".." in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
     
     if not os.path.exists(file_path):
@@ -2632,6 +2632,55 @@ async def get_temp_file(filename: str):
         file_path,
         media_type=media_type,
         filename=filename
+    )
+
+
+@router.get("/files/project/{file_path:path}")
+async def get_project_file(file_path: str):
+    """
+    Serve files from project directory (temp, cache, uploads, etc).
+    
+    Used by NeMo server (Selectel) to download audio/video files for processing.
+    The file_path is relative to /opt/youtube-shorts-generator/
+    """
+    # Security: prevent directory traversal outside project
+    if ".." in file_path:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    
+    # Base project directory
+    project_root = Path("/opt/youtube-shorts-generator")
+    full_path = project_root / file_path
+    
+    # Ensure path is within project directory
+    try:
+        full_path.resolve().relative_to(project_root.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Path outside project directory")
+    
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    
+    if not full_path.is_file():
+        raise HTTPException(status_code=400, detail="Not a file")
+    
+    # Determine media type
+    ext = full_path.suffix.lower()
+    media_types = {
+        ".mp4": "video/mp4",
+        ".mkv": "video/x-matroska",
+        ".avi": "video/x-msvideo",
+        ".mov": "video/quicktime",
+        ".webm": "video/webm",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+    }
+    media_type = media_types.get(ext, "application/octet-stream")
+    
+    return FileResponse(
+        str(full_path),
+        media_type=media_type,
+        filename=full_path.name
     )
 
 
