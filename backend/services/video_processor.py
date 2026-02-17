@@ -16,6 +16,89 @@ from backend.services.diarization_runner import get_diarization_runner
 logger = logging.getLogger(__name__)
 
 # =============================================================================
+# GPU ENCODING CONFIGURATION (NVENC)
+# =============================================================================
+# Enable GPU encoding for faster video rendering (requires NVIDIA GPU with NVENC)
+USE_GPU_ENCODING = os.getenv("USE_GPU_ENCODING", "1") == "1"
+
+# Check if NVENC is available on this system
+_nvenc_available: bool | None = None
+
+def _check_nvenc_available() -> bool:
+    """Check if h264_nvenc encoder is available."""
+    global _nvenc_available
+    if _nvenc_available is not None:
+        return _nvenc_available
+    
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-encoders"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        _nvenc_available = "h264_nvenc" in result.stdout
+        if _nvenc_available:
+            logger.info("GPU encoding (NVENC) is available and enabled")
+        else:
+            logger.warning("GPU encoding (NVENC) not available, falling back to CPU (libx264)")
+    except Exception as e:
+        logger.warning("Failed to check NVENC availability: %s", e)
+        _nvenc_available = False
+    
+    return _nvenc_available
+
+def get_video_codec_params(quality: str = "medium") -> dict:
+    """
+    Get video codec parameters for ffmpeg output.
+    Uses GPU (NVENC) if available, otherwise falls back to CPU (libx264).
+    
+    Args:
+        quality: "fast" (lower quality, faster), "medium" (balanced), "high" (best quality)
+    
+    Returns:
+        Dict of ffmpeg output parameters
+    """
+    if USE_GPU_ENCODING and _check_nvenc_available():
+        # NVENC presets: p1 (fastest) to p7 (slowest/best quality)
+        # rc=vbr (variable bitrate), cq (constant quality mode)
+        presets = {
+            "fast": {"preset": "p4", "rc": "vbr", "cq": "23"},
+            "medium": {"preset": "p5", "rc": "vbr", "cq": "20"},
+            "high": {"preset": "p6", "rc": "vbr", "cq": "18"},
+        }
+        preset_params = presets.get(quality, presets["medium"])
+        return {
+            "c:v": "h264_nvenc",
+            **preset_params,
+        }
+    else:
+        # CPU encoding (libx264)
+        presets = {
+            "fast": {"preset": "fast", "crf": "23"},
+            "medium": {"preset": "medium", "crf": "20"},
+            "high": {"preset": "slow", "crf": "18"},
+        }
+        preset_params = presets.get(quality, presets["medium"])
+        return {
+            "c:v": "libx264",
+            **preset_params,
+        }
+
+def get_video_codec_args(quality: str = "medium") -> list[str]:
+    """
+    Get video codec arguments for subprocess ffmpeg calls.
+    
+    Returns:
+        List of ffmpeg arguments like ["-c:v", "h264_nvenc", "-preset", "p5", ...]
+    """
+    params = get_video_codec_params(quality)
+    args = []
+    for key, value in params.items():
+        args.extend([f"-{key}" if not key.startswith("-") else key, str(value)])
+    return args
+
+# =============================================================================
 # FONT METRICS CACHE - for dynamic subtitle line splitting
 # =============================================================================
 # Cache stores: font_filename -> average character width per 1 unit of fontsize
@@ -271,16 +354,15 @@ class VideoProcessor:
             
             # Use ffmpeg to cut video precisely
             # Re-encode for frame-accurate cuts (slower but cleaner transitions)
+            codec_params = get_video_codec_params("high")
             (
                 ffmpeg
                 .input(video_path, ss=start_time, t=duration)
                 .output(
                     output_path,
-                    vcodec='libx264',
                     acodec='aac',
-                    crf=18,  # High quality
-                    preset='fast',
-                    avoid_negative_ts='make_zero'
+                    avoid_negative_ts='make_zero',
+                    **codec_params
                 )
                 .overwrite_output()
                 .run(quiet=True, capture_stdout=True, capture_stderr=True)
@@ -333,7 +415,7 @@ class VideoProcessor:
                     ffmpeg
                     .input(video_path)
                     .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT)
-                    .output(output_path, **{'c:v': 'libx264', 'preset': 'medium'})
+                    .output(output_path, **get_video_codec_params("medium"))
                     .overwrite_output()
                     .run(quiet=True, capture_stdout=True, capture_stderr=True)
                 )
@@ -355,7 +437,7 @@ class VideoProcessor:
                     .input(video_path)
                     .filter('scale', self.TARGET_WIDTH, self.TARGET_HEIGHT, force_original_aspect_ratio='decrease')
                     .filter('pad', self.TARGET_WIDTH, self.TARGET_HEIGHT, '(ow-iw)/2', '(oh-ih)/2', color='black')
-                    .output(output_path, **{'c:v': 'libx264', 'preset': 'medium', 'crf': 23})
+                    .output(output_path, **get_video_codec_params("medium"))
                     .overwrite_output()
                     .run(quiet=True, capture_stdout=True, capture_stderr=True)
                 )
@@ -427,7 +509,7 @@ class VideoProcessor:
 
                 (
                     pipeline
-                    .output(output_path, **{'c:v': 'libx264', 'preset': 'medium'})
+                    .output(output_path, **get_video_codec_params("medium"))
                     .overwrite_output()
                     .run(quiet=True, capture_stdout=True, capture_stderr=True)
                 )
@@ -533,6 +615,8 @@ class VideoProcessor:
         concat = "".join([f"[{l}]" for l in labels]) + f"concat=n={len(labels)}:v=1:a=0[outv]"
         filter_complex = ";".join(parts + [concat])
 
+        # Build command with GPU or CPU encoding
+        codec_args = get_video_codec_args("medium")
         cmd = [
             "ffmpeg",
             "-y",
@@ -542,10 +626,7 @@ class VideoProcessor:
             filter_complex,
             "-map",
             "[outv]",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
+            *codec_args,
             output_path,
         ]
 
@@ -722,6 +803,10 @@ class VideoProcessor:
             
             video_stream = self._apply_ass_filter(video_stream, subtitle_path)
 
+            # Combine video codec params with audio params
+            codec_params = get_video_codec_params("medium")
+            codec_params.update({'c:a': 'aac', 'b:a': '192k'})
+            
             output = (
                 ffmpeg
                 .output(
@@ -729,7 +814,7 @@ class VideoProcessor:
                     audio_stream,
                     output_path,
                     shortest=None,  # Use shortest stream
-                    **{'c:v': 'libx264', 'c:a': 'aac', 'b:a': '192k', 'preset': 'medium', 'crf': 23}
+                    **codec_params
                 )
                 .overwrite_output()
             )
