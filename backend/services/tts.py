@@ -1121,7 +1121,7 @@ class ElevenLabsTTSService(BaseTTSService):
         Args:
             text: Text to synthesize
             voice_override: Optional voice ID to use instead of default
-            speed: Speech speed multiplier (0.7-1.2, default 1.0)
+            speed: Speech speed multiplier (0.9-1.2, default 1.0)
         """
         voice_id = voice_override or self.voice_id
         url = f"{self.base_url}/text-to-speech/{voice_id}"
@@ -1133,7 +1133,7 @@ class ElevenLabsTTSService(BaseTTSService):
         # Only add speed if different from default (1.0) - we use FFmpeg for tempo adjustment
         voice_settings_final = {**self.voice_settings}
         if abs(speed - 1.0) > 0.02:
-            voice_settings_final["speed"] = max(0.7, min(1.2, speed))
+            voice_settings_final["speed"] = max(0.9, min(1.2, speed))
         payload = {
             "text": text,
             "model_id": self.model_id,
@@ -1179,7 +1179,7 @@ class ElevenLabsTTSService(BaseTTSService):
         Args:
             text: Text to synthesize
             voice_override: Optional voice ID to use instead of default
-            speed: Speech speed multiplier (0.7-1.2, default 1.0)
+            speed: Speech speed multiplier (0.9-1.2, default 1.0)
             
         Returns:
             Tuple of (audio_bytes, word_timestamps)
@@ -1194,7 +1194,7 @@ class ElevenLabsTTSService(BaseTTSService):
         # Only add speed if different from default (1.0) - we use FFmpeg for tempo adjustment
         voice_settings_final = {**self.voice_settings}
         if abs(speed - 1.0) > 0.02:
-            voice_settings_final["speed"] = max(0.7, min(1.2, speed))
+            voice_settings_final["speed"] = max(0.9, min(1.2, speed))
         payload = {
             "text": text,
             "model_id": self.model_id,
@@ -1338,7 +1338,7 @@ class ElevenLabsTTSService(BaseTTSService):
         all_words: list[dict] = []
         voice_override = speaker or self.voice_id
         
-        # Speed adjustment is handled by FFmpeg tempo in video.py (0.7-1.25x range)
+        # Speed adjustment is handled by FFmpeg tempo in video.py (0.9-1.25x range)
         # ElevenLabs speed parameter is unreliable, so we generate at natural speed
         speed = 1.0
 

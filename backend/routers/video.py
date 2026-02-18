@@ -644,7 +644,7 @@ def _speed_match_audio_duration(
     current_duration: float,
     target_duration: float,
     max_tempo: float = 1.25,
-    min_tempo: float = 0.7,
+    min_tempo: float = 0.9,
 ) -> bool:
     """
     Use ffmpeg atempo filters to adjust audio duration to match target.
@@ -654,7 +654,7 @@ def _speed_match_audio_duration(
         current_duration: Current audio duration in seconds
         target_duration: Target duration to match
         max_tempo: Maximum tempo (speed up limit, default 1.35 - balance between timing and quality)
-        min_tempo: Minimum tempo (slow down limit, default 0.7)
+        min_tempo: Minimum tempo (slow down limit, default 0.9)
     """
     if not audio_path or current_duration <= 0 or target_duration <= 0:
         return False
@@ -1396,21 +1396,21 @@ def _process_segments_task(
 
             original_duration = max(0.1, float(segment.get('end_time', 0)) - float(segment.get('start_time', 0)))
 
-            # Tempo adjustment: keep audio within 0.7x-1.35x of original duration
+            # Tempo adjustment: keep audio within 0.9x-1.35x of original duration
             # Increased from 1.25x to 1.35x to better fit longer translations
             duration_diff = abs(audio_duration - original_duration)
             if duration_diff > 0.2:  # More than 200ms difference
                 before_duration = audio_duration
                 
                 logger.info(
-                    "Applying tempo adjustment for %s: %.2fs -> %.2fs (range: 0.7x-1.35x)%s",
+                    "Applying tempo adjustment for %s: %.2fs -> %.2fs (range: 0.9x-1.35x)%s",
                     segment['id'],
                     audio_duration,
                     original_duration,
                     " [multi-speaker]" if has_dialogue else "",
                 )
                 
-                if _speed_match_audio_duration(audio_path, audio_duration, original_duration, max_tempo=1.35, min_tempo=0.7):
+                if _speed_match_audio_duration(audio_path, audio_duration, original_duration, max_tempo=1.35, min_tempo=0.9):
                     try:
                         audio_segment = AudioSegment.from_file(audio_path)
                         audio_duration = audio_segment.duration_seconds or original_duration
@@ -2295,12 +2295,21 @@ async def run_nemo_diarization(request: NemoDiarizationRequest, background_tasks
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="NeMo diarization started")
 
 
+def _get_nemo_speaker_for_time(nemo_segments: list, t: float) -> str | None:
+    """Find the NeMo speaker label for a given timestamp."""
+    for ns in nemo_segments:
+        if float(ns.get('start', 0)) <= t <= float(ns.get('end', 0)):
+            return ns.get('speaker')
+    return None
+
+
 def _apply_nemo_diarization_to_segments(segments: list, nemo_segments: list) -> None:
     """
-    Apply NeMo diarization results to segment dialogues.
+    Apply NeMo diarization results to segment dialogues at word level.
     
-    NeMo provides speaker labels for the entire video. This function maps
-    those labels to individual segment dialogue turns based on time overlap.
+    NeMo provides speaker labels for the entire video. This function assigns
+    speakers to individual words (like WhisperX does for Pyannote), then
+    splits turns at speaker boundaries for accurate multi-speaker dialogues.
     """
     if not nemo_segments:
         return
@@ -2313,7 +2322,6 @@ def _apply_nemo_diarization_to_segments(segments: list, nemo_segments: list) -> 
         segment_start = float(segment.get('start_time', 0))
         segment_end = float(segment.get('end_time', 0))
         
-        # Find NeMo segments that overlap with this segment
         relevant_nemo = [
             ns for ns in nemo_segments
             if float(ns.get('start', 0)) < segment_end and float(ns.get('end', 0)) > segment_start
@@ -2322,36 +2330,67 @@ def _apply_nemo_diarization_to_segments(segments: list, nemo_segments: list) -> 
         if not relevant_nemo:
             continue
         
-        # Update dialogue turns with NeMo speaker labels
-        for turn in dialogue:
-            turn_start = float(turn.get('start', 0))
-            turn_end = float(turn.get('end', turn_start + 0.1))
-            turn_mid = (turn_start + turn_end) / 2
-            
-            # Find best matching NeMo segment (by midpoint overlap)
-            best_match = None
-            best_overlap = 0
-            
-            for ns in relevant_nemo:
-                ns_start = float(ns.get('start', 0))
-                ns_end = float(ns.get('end', 0))
-                
-                # Check if turn midpoint falls within NeMo segment
-                if ns_start <= turn_mid <= ns_end:
-                    overlap = min(turn_end, ns_end) - max(turn_start, ns_start)
-                    if overlap > best_overlap:
-                        best_overlap = overlap
-                        best_match = ns
-            
-            if best_match:
-                turn['speaker'] = best_match.get('speaker', 'SPEAKER_00')
+        new_dialogue = []
         
-        # Log update
-        speakers_in_segment = set(t.get('speaker') for t in dialogue if t.get('speaker'))
+        for turn in dialogue:
+            words = turn.get('words') or []
+            
+            if not words:
+                turn_mid = (float(turn.get('start', 0)) + float(turn.get('end', 0))) / 2
+                speaker = _get_nemo_speaker_for_time(relevant_nemo, turn_mid)
+                if speaker:
+                    turn['speaker'] = speaker
+                new_dialogue.append(turn)
+                continue
+            
+            # Assign NeMo speaker to each word by its midpoint
+            for w in words:
+                w_start = w.get('start')
+                w_end = w.get('end')
+                if w_start is not None and w_end is not None:
+                    w_mid = (w_start + w_end) / 2
+                else:
+                    w_mid = w_start or w_end or 0
+                w['_nemo_speaker'] = _get_nemo_speaker_for_time(relevant_nemo, w_mid)
+            
+            # Group consecutive words by speaker into new turns
+            current_speaker = None
+            current_words = []
+            
+            for w in words:
+                w_speaker = w.pop('_nemo_speaker', None) or turn.get('speaker', 'SPEAKER_00')
+                
+                if w_speaker != current_speaker and current_words:
+                    new_dialogue.append(_build_turn_from_words(current_words, current_speaker))
+                    current_words = []
+                
+                current_speaker = w_speaker
+                current_words.append(w)
+            
+            if current_words:
+                new_dialogue.append(_build_turn_from_words(current_words, current_speaker))
+        
+        segment['dialogue'] = new_dialogue
+        
+        speakers_in_segment = set(t.get('speaker') for t in new_dialogue if t.get('speaker'))
         logger.debug(
-            "Applied NeMo diarization to segment %s: %d turns, speakers: %s",
-            segment.get('id'), len(dialogue), list(speakers_in_segment)
+            "Applied NeMo diarization to segment %s: %d turns (was %d), speakers: %s",
+            segment.get('id'), len(new_dialogue), len(dialogue), list(speakers_in_segment)
         )
+
+
+def _build_turn_from_words(words: list, speaker: str) -> dict:
+    """Create a dialogue turn dict from a list of words."""
+    text = " ".join(w.get("word", "").strip() for w in words).strip()
+    start = words[0].get("start", 0)
+    end = words[-1].get("end", words[-1].get("start", 0))
+    return {
+        "speaker": speaker,
+        "text": text,
+        "start": start,
+        "end": end,
+        "words": words,
+    }
 
 
 def _nemo_diarization_task(

@@ -100,6 +100,42 @@ def _parse_rttm(rttm_path: str) -> List[Dict]:
     return sorted(segments, key=lambda x: x["start"])
 
 
+def _get_multiscale_params(duration: float, gpu_memory_gb: float = 6.0):
+    """
+    Choose multi-scale parameters based on audio duration and GPU memory.
+    
+    For long files on small GPUs (e.g. RTX A2000 6GB), reduce scales
+    to prevent CUDA OOM during clustering (affinity matrix N×N).
+    
+    - Short (<30min): 5 scales (best quality)
+    - Medium (30-90min): 3 scales (good quality, safe for 6GB)
+    - Long (>90min): 2 scales (acceptable quality, minimal memory)
+    """
+    duration_min = duration / 60.0
+    
+    if duration_min <= 30 or gpu_memory_gb >= 12:
+        # Full 5-scale for short audio or large GPUs
+        return {
+            "window_length_in_sec": [1.5, 1.25, 1.0, 0.75, 0.5],
+            "shift_length_in_sec": [0.75, 0.625, 0.5, 0.375, 0.25],
+            "multiscale_weights": [1, 1, 1, 1, 1],
+        }
+    elif duration_min <= 90:
+        # 3 scales for medium audio on 6GB GPU
+        return {
+            "window_length_in_sec": [1.5, 1.0, 0.5],
+            "shift_length_in_sec": [0.75, 0.5, 0.25],
+            "multiscale_weights": [1, 1, 1],
+        }
+    else:
+        # 2 scales for very long audio (>90 min) on 6GB GPU
+        return {
+            "window_length_in_sec": [1.5, 0.75],
+            "shift_length_in_sec": [0.75, 0.375],
+            "multiscale_weights": [1, 1],
+        }
+
+
 def nemo_diarize_task(
     audio_path: str,
     num_speakers: int = 0,
@@ -115,12 +151,25 @@ def nemo_diarize_task(
     
     Returns:
         Dict with segments, num_speakers, etc.
+    
+    Raises:
+        RuntimeError: on CUDA OOM or other diarization errors
     """
+    import time as _time
+    task_start = _time.time()
     filename = Path(audio_path).name
     logger.info(f"NeMo Task started: {filename}")
     
+    # Optimize CUDA memory allocation for large affinity matrices
+    os.environ.setdefault(
+        "PYTORCH_CUDA_ALLOC_CONF",
+        "expandable_segments:True,max_split_size_mb:512"
+    )
+    
     # Set status to busy
     set_status("busy")
+    
+    diarizer = None
     
     try:
         # Lazy imports for clean CUDA context
@@ -131,16 +180,23 @@ def nemo_diarize_task(
         from omegaconf import OmegaConf
         
         # Initialize CUDA
+        gpu_memory_gb = 0.0
         if torch.cuda.is_available():
             gc.collect()
             torch.cuda.empty_cache()
             torch.cuda.set_device(0)
             
-            # Warm up cuBLAS
-            _ = torch.mm(torch.randn(1, 1, device='cuda'), torch.randn(1, 1, device='cuda'))
-            torch.cuda.synchronize()
+            gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             
-            logger.info(f"CUDA ready: {torch.cuda.get_device_name(0)}")
+            # Warm up cuBLAS with realistic matrix size
+            a = torch.randn(64, 64, device='cuda')
+            b = torch.randn(64, 64, device='cuda')
+            _ = torch.mm(a, b)
+            del a, b, _
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            
+            logger.info(f"CUDA ready: {torch.cuda.get_device_name(0)}, VRAM: {gpu_memory_gb:.1f} GB")
         
         device = "cuda" if torch.cuda.is_available() else "cpu"
         
@@ -160,7 +216,21 @@ def nemo_diarize_task(
             # Get duration
             audio_info = sf.info(wav_path)
             duration = audio_info.duration
-            logger.info(f"Audio duration: {duration:.2f}s")
+            logger.info(f"Audio duration: {duration:.2f}s ({duration/60:.1f} min)")
+            
+            # Choose multi-scale params based on duration and GPU memory
+            ms_params = _get_multiscale_params(duration, gpu_memory_gb)
+            num_scales = len(ms_params["window_length_in_sec"])
+            logger.info(f"Using {num_scales} scales for {gpu_memory_gb:.1f}GB GPU "
+                        f"(windows: {ms_params['window_length_in_sec']})")
+            
+            # Adjust batch size based on GPU memory
+            if gpu_memory_gb >= 12:
+                batch_size = 128
+            elif duration > 1800 and gpu_memory_gb < 8:
+                batch_size = 32
+            else:
+                batch_size = 64
             
             # Create manifest
             manifest_path = os.path.join(tmpdir, "manifest.json")
@@ -187,7 +257,7 @@ def nemo_diarize_task(
                 "verbose": True,
                 "num_workers": 0,
                 "sample_rate": 16000,
-                "batch_size": 64,
+                "batch_size": batch_size,
                 "diarizer": {
                     "manifest_filepath": manifest_path,
                     "out_dir": output_dir,
@@ -198,9 +268,7 @@ def nemo_diarize_task(
                     "speaker_embeddings": {
                         "model_path": "titanet_large",
                         "parameters": {
-                            "window_length_in_sec": [1.5, 1.25, 1.0, 0.75, 0.5],
-                            "shift_length_in_sec": [0.75, 0.625, 0.5, 0.375, 0.25],
-                            "multiscale_weights": [1, 1, 1, 1, 1],
+                            **ms_params,
                             "save_embeddings": False,
                         }
                     },
@@ -220,7 +288,7 @@ def nemo_diarize_task(
                         "model_path": "diar_msdd_telephonic",
                         "parameters": {
                             "use_speaker_model_from_ckpt": True,
-                            "infer_batch_size": 25,
+                            "infer_batch_size": 50 if gpu_memory_gb >= 12 else 25,
                             "sigmoid_threshold": [0.7],
                             "seq_eval_mode": False,
                             "split_infer": True,
@@ -248,44 +316,61 @@ def nemo_diarize_task(
                 }
             })
             
-            try:
-                logger.info("Initializing NeMo ClusteringDiarizer...")
-                diarizer = ClusteringDiarizer(cfg=config)
-                
-                logger.info("Running diarization...")
-                diarizer.diarize()
-                
-                # Find results
-                rttm_files = list(Path(output_dir).glob("pred_rttms/*.rttm"))
-                if not rttm_files:
-                    logger.warning("No RTTM output found")
-                    return {"segments": [], "num_speakers": 0}
-                
-                segments = _parse_rttm(str(rttm_files[0]))
-                
-                # Statistics
-                speakers = set(s["speaker"] for s in segments)
-                total_speech = sum(s["end"] - s["start"] for s in segments)
-                
-                logger.info(f"Diarization complete: {len(speakers)} speakers, {total_speech:.1f}s speech")
-                
-                return {
-                    "segments": segments,
-                    "num_speakers": len(speakers),
-                    "total_speech_duration": total_speech,
-                }
-                
-            except Exception as e:
-                logger.error(f"NeMo diarization failed: {e}", exc_info=True)
-                return {"segments": [], "num_speakers": 0, "error": str(e)}
+            logger.info("Initializing NeMo ClusteringDiarizer...")
+            diarizer = ClusteringDiarizer(cfg=config)
             
-            finally:
-                # Cleanup GPU
-                if torch.cuda.is_available():
-                    del diarizer
-                    gc.collect()
-                    torch.cuda.empty_cache()
+            logger.info("Running diarization...")
+            diarizer.diarize()
+            
+            # Find results
+            rttm_files = list(Path(output_dir).glob("pred_rttms/*.rttm"))
+            if not rttm_files:
+                raise RuntimeError("NeMo diarization produced no RTTM output")
+            
+            segments = _parse_rttm(str(rttm_files[0]))
+            
+            if not segments:
+                raise RuntimeError("NeMo RTTM file is empty — no speech segments found")
+            
+            # Statistics
+            speakers = set(s["speaker"] for s in segments)
+            total_speech = sum(s["end"] - s["start"] for s in segments)
+            elapsed = _time.time() - task_start
+            
+            logger.info(f"Diarization complete in {elapsed:.1f}s: "
+                        f"{len(speakers)} speakers, {len(segments)} segments, "
+                        f"{total_speech:.1f}s speech, {num_scales} scales")
+            
+            return {
+                "segments": segments,
+                "num_speakers": len(speakers),
+                "total_speech_duration": total_speech,
+            }
+    
+    except torch.cuda.OutOfMemoryError as oom:
+        gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unknown"
+        logger.error(f"CUDA OOM during NeMo diarization on {gpu_name}: {oom}")
+        raise RuntimeError(
+            f"GPU memory exhausted ({gpu_name}, {gpu_memory_gb:.0f}GB). "
+            f"Audio too long ({duration/60:.0f} min) for this GPU. "
+            f"Try a shorter file or use Pyannote diarizer."
+        ) from oom
+    
+    except Exception as e:
+        logger.error(f"NeMo diarization failed: {e}", exc_info=True)
+        raise RuntimeError(f"NeMo diarization error: {e}") from e
     
     finally:
+        # Cleanup GPU
+        try:
+            import gc
+            import torch
+            if diarizer is not None:
+                del diarizer
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
         # Set status back to ready
         set_status("ready")
