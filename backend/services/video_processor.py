@@ -803,6 +803,7 @@ class VideoProcessor:
                     )
 
             video_duration = self._probe_duration(working_video)
+            audio_dur = self._probe_duration(audio_path) if audio_path else None
             if target_duration and video_duration:
                 extra = target_duration - video_duration
                 if extra > 0.05:
@@ -816,6 +817,14 @@ class VideoProcessor:
                         extra,
                         target_duration,
                     )
+            
+            # Trim video to audio length if TTS audio is shorter than segment
+            if audio_dur and video_duration and audio_dur < video_duration - 0.5:
+                video_stream = video_stream.filter("trim", duration=audio_dur).filter("setpts", "PTS-STARTPTS")
+                logger.info(
+                    "Trimmed video from %.2fs to %.2fs to match TTS audio (removed %.2fs silent tail)",
+                    video_duration, audio_dur, video_duration - audio_dur,
+                )
             
             # Apply gradient overlay before subtitles (so subtitles appear on top)
             if subtitle_gradient:
