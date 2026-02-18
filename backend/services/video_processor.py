@@ -259,6 +259,22 @@ class VideoProcessor:
             logger.warning("Face focus estimation failed for %s: %s", video_path, exc)
             return None, None
 
+    def _detect_scene_changes_cached(
+        self,
+        video_path: str,
+    ) -> list[float]:
+        """Run TransNetV2 once and return scene change timestamps."""
+        try:
+            detector = self._get_face_detector()
+        except Exception as exc:
+            logger.warning("Unable to initialize face detector for scene detection: %s", exc)
+            return []
+        try:
+            return detector._detect_scene_changes(video_path, 0.0, None)
+        except Exception as exc:
+            logger.warning("TransNetV2 scene detection failed for %s: %s", video_path, exc)
+            return []
+
     def _build_focus_timeline(
         self,
         video_path: str,
@@ -266,6 +282,7 @@ class VideoProcessor:
         segment_start: float,
         segment_end: float | None,
         sample_period: float = 0.5,
+        precomputed_scene_changes: list[float] | None = None,
     ) -> list[dict]:
         """
         Build a per-time focus timeline (no smoothing). Returns list of dicts:
@@ -283,6 +300,7 @@ class VideoProcessor:
                 segment_start=segment_start,
                 segment_end=segment_end,
                 sample_period=sample_period,
+                precomputed_scene_changes=precomputed_scene_changes,
             )
         except Exception as exc:
             logger.warning("Focus timeline build failed for %s: %s", video_path, exc)
@@ -294,6 +312,7 @@ class VideoProcessor:
         segment_start: float,
         segment_end: float | None,
         sample_period: float = 0.5,
+        precomputed_scene_changes: list[float] | None = None,
     ) -> list[dict]:
         """
         Build vertical (y-axis) focus timeline (0..1 top to bottom).
@@ -309,6 +328,7 @@ class VideoProcessor:
                 segment_start=segment_start,
                 segment_end=segment_end,
                 sample_period=sample_period,
+                precomputed_scene_changes=precomputed_scene_changes,
             )
         except Exception as exc:
             logger.warning("Vertical focus timeline build failed for %s: %s", video_path, exc)
@@ -952,19 +972,24 @@ class VideoProcessor:
                 )
                 # === END DIAGNOSTIC ===
                 
+                # Run TransNetV2 ONCE and reuse for both horizontal and vertical timelines
+                scene_changes = self._detect_scene_changes_cached(str(cut_path))
+                
                 # Build timeline (dynamic crops). If timeline has 0 or 1 segment, fall back to single focus.
                 focus_timeline = self._build_focus_timeline(
                     str(cut_path),
                     dialogue=dialogue_turns,
                     segment_start=start_time,
                     segment_end=end_time,
-                    sample_period=0.10,  # частая детекция (0.10s) + scene detection для резких смен планов
+                    sample_period=0.10,
+                    precomputed_scene_changes=scene_changes,
                 )
                 focus_timeline_y = self._build_vertical_focus_timeline(
                     str(cut_path),
                     segment_start=start_time,
                     segment_end=end_time,
                     sample_period=0.10,
+                    precomputed_scene_changes=scene_changes,
                 )
                 if focus_timeline:
                     if len(focus_timeline) == 1:

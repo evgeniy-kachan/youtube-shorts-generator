@@ -819,6 +819,7 @@ class FaceDetector:
         segment_start: float = 0.0,
         segment_end: float | None = None,
         sample_period: float = 0.33,  # ignored
+        precomputed_scene_changes: list[float] | None = None,
     ) -> list[dict]:
         """
         Build focus timeline optimized for interview videos (3-camera setup).
@@ -862,7 +863,11 @@ class FaceDetector:
         # STEP 1: TransNetV2 scene detection
         # NOTE: video_path is already the CUT segment (starts at 0), so use local time
         # ============================================================
-        scene_changes = self._detect_scene_changes(video_path, 0.0, None)
+        if precomputed_scene_changes is not None:
+            scene_changes = precomputed_scene_changes
+            logger.info("TransNetV2: using precomputed %d scene changes (cached)", len(scene_changes))
+        else:
+            scene_changes = self._detect_scene_changes(video_path, 0.0, None)
         scene_boundaries = [0.0] + scene_changes + [duration]
         
         logger.info(
@@ -1154,6 +1159,7 @@ class FaceDetector:
         segment_start: float = 0.0,
         segment_end: float | None = None,
         sample_period: float = 0.15,
+        precomputed_scene_changes: list[float] | None = None,
     ) -> list[dict]:
         """
         Build a coarse per-time vertical focus timeline (0..1 from top to bottom).
@@ -1248,7 +1254,11 @@ class FaceDetector:
 
         # Detect scene changes and split segments at those boundaries
         # NOTE: video_path is already the CUT segment (starts at 0), so use local time
-        scene_changes = self._detect_scene_changes(video_path, 0.0, None)
+        if precomputed_scene_changes is not None:
+            scene_changes = precomputed_scene_changes
+            logger.info("TransNetV2 (vertical): using precomputed %d scene changes (cached)", len(scene_changes))
+        else:
+            scene_changes = self._detect_scene_changes(video_path, 0.0, None)
         
         if scene_changes:
             split_segments: list[dict] = []
