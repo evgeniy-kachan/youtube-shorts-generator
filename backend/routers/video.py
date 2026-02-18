@@ -138,6 +138,11 @@ def _extract_unique_speakers(segments: list[dict]) -> list[str]:
         for speaker_id in segment.get("speakers") or []:
             if speaker_id and speaker_id not in order:
                 order.append(speaker_id)
+        # Also check dialogue turns (NeMo assigns speakers at turn level)
+        for turn in segment.get("dialogue") or []:
+            speaker_id = turn.get("speaker")
+            if speaker_id and speaker_id not in order:
+                order.append(speaker_id)
     if not order:
         order = ["speaker_0"]
     return order
@@ -2372,10 +2377,12 @@ def _apply_nemo_diarization_to_segments(segments: list, nemo_segments: list) -> 
         
         segment['dialogue'] = new_dialogue
         
-        speakers_in_segment = set(t.get('speaker') for t in new_dialogue if t.get('speaker'))
-        logger.debug(
+        speakers_in_segment = sorted(set(t.get('speaker') for t in new_dialogue if t.get('speaker')))
+        segment['speakers'] = speakers_in_segment
+        
+        logger.info(
             "Applied NeMo diarization to segment %s: %d turns (was %d), speakers: %s",
-            segment.get('id'), len(new_dialogue), len(dialogue), list(speakers_in_segment)
+            segment.get('id'), len(new_dialogue), len(dialogue), speakers_in_segment
         )
 
 
