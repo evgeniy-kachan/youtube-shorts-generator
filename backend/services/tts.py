@@ -2917,120 +2917,91 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     words_by_input = temp_words_by_input
             
             # Apply timing to dialogue turns (with inserted silence offsets)
-            for idx, turn in enumerate(dialogue_turns):
-                if idx >= len(inputs):
-                    break
-                
+            # Two-phase approach: first assign API-timed turns, then distribute
+            # groups of consecutive non-API turns proportionally by word count
+            num_inputs = min(len(dialogue_turns), len(inputs))
+            
+            # Phase 1: classify turns and assign API-timed ones
+            api_timed = [False] * num_inputs
+            for idx in range(num_inputs):
                 timing = segment_timing.get(idx, {})
-                # Add offset from inserted silences before this turn
                 offset = turn_offsets[idx] if idx < len(turn_offsets) else 0.0
+                s = timing.get("start", 0) + leading_sec + offset
+                e = timing.get("end", 0) + leading_sec + offset
+                if (e - s) >= 0.1:
+                    api_timed[idx] = True
+                    turn = dialogue_turns[idx]
+                    turn["tts_start_offset"] = s
+                    turn["tts_duration"] = e - s
+                    turn["tts_end_offset"] = e
+                    turn["_timing_source"] = "api"
+            
+            api_count = sum(api_timed)
+            interp_count = num_inputs - api_count
+            
+            # Phase 2: distribute groups of consecutive non-API turns
+            INTERP_GAP = 0.05
+            idx = 0
+            while idx < num_inputs:
+                if api_timed[idx]:
+                    idx += 1
+                    continue
                 
-                start_time = timing.get("start", 0) + leading_sec + offset
-                end_time = timing.get("end", 0) + leading_sec + offset
-                turn_duration = end_time - start_time
+                group_start = idx
+                group_end = idx
+                while group_end + 1 < num_inputs and not api_timed[group_end + 1]:
+                    group_end += 1
                 
-                # Fallback for missing timing: interpolate from neighbors or estimate
-                if turn_duration < 0.1:
-                    text = inputs[idx]["text"] if idx < len(inputs) else ""
-                    word_count = len(text.split())
-                    
-                    # Get speaker's personal speech rate from valid turns
-                    voice_id = inputs[idx].get("voice_id") if idx < len(inputs) else None
-                    speaker_rate = self._get_speaker_rate(
-                        voice_id, segment_timing, inputs, dialogue_turns
-                    )
-                    
-                    estimated_duration = max(0.5, word_count / speaker_rate)
-                    
-                    # Try to use previous turn's end as start
-                    if idx > 0 and dialogue_turns[idx - 1].get("tts_end_offset"):
-                        start_time = dialogue_turns[idx - 1]["tts_end_offset"] + 0.1
-                    else:
-                        start_time = offset + leading_sec
-                    
-                    end_time = start_time + estimated_duration
-                    
-                    # Check if we overlap with next turn and clamp if needed
-                    next_turn_start = None
-                    for next_idx in range(idx + 1, len(dialogue_turns)):
-                        next_timing = segment_timing.get(next_idx, {})
-                        next_offset = turn_offsets[next_idx] if next_idx < len(turn_offsets) else 0.0
-                        next_start = next_timing.get("start", 0) + leading_sec + next_offset
-                        if next_start > 0.1:  # Valid timing
-                            next_turn_start = next_start
-                            break
-                    
-                    if next_turn_start and end_time > next_turn_start - 0.1:
-                        # Clamp end_time to not overlap with next turn
-                        old_end = end_time
-                        end_time = next_turn_start - 0.1
-                        
-                        # If end_time is now before start_time, adjust start_time too
-                        if end_time <= start_time:
-                            # Ensure minimum 0.3s duration, shift start_time back
-                            min_duration = 0.3
-                            new_start = end_time - min_duration
-                            
-                            # But don't overlap with previous turn!
-                            prev_end = 0.0
-                            if idx > 0 and dialogue_turns[idx - 1].get("tts_end_offset"):
-                                prev_end = dialogue_turns[idx - 1]["tts_end_offset"]
-                            
-                            # Ensure at least 0.05s gap from previous turn
-                            min_start = prev_end + 0.05
-                            start_time = max(min_start, new_start)
-                            
-                            logger.warning(
-                                "TTD turn %d: shifting start to %.2f (end=%.2f, prev_end=%.2f)",
-                                idx, start_time, end_time, prev_end
-                            )
-                        
-                        logger.warning(
-                            "TTD turn %d: clamped end %.2f->%.2f to avoid overlap with next turn at %.2f",
-                            idx, old_end, end_time, next_turn_start
-                        )
-                    
-                    # CRITICAL: Final validation - ensure start < end
-                    # If there's no room (squeezed between prev and next turns), 
-                    # place this turn right after prev with minimal duration
-                    if start_time >= end_time:
-                        prev_end = 0.0
-                        if idx > 0 and dialogue_turns[idx - 1].get("tts_end_offset"):
-                            prev_end = dialogue_turns[idx - 1]["tts_end_offset"]
-                        
-                        # Place immediately after previous turn
-                        start_time = prev_end + 0.05
-                        end_time = start_time + 0.3
-                        
-                        # But also check we don't overlap with NEXT turn!
-                        if next_turn_start and end_time > next_turn_start - 0.05:
-                            end_time = next_turn_start - 0.05
-                            # Ensure minimum 0.1s duration
-                            if end_time - start_time < 0.1:
-                                # Truly no room - make it minimal
-                                end_time = start_time + 0.1
-                        
-                        logger.warning(
-                            "TTD turn %d: NO ROOM! Forcing %.2f-%.2f (%.2fs) after prev_end=%.2f, next_start=%.2f",
-                            idx, start_time, end_time, end_time - start_time, prev_end, 
-                            next_turn_start if next_turn_start else -1
-                        )
-                    
-                    estimated_duration = end_time - start_time
-                    
-                    turn_duration = estimated_duration
+                # Find available window
+                window_start = leading_sec
+                if group_start > 0:
+                    prev = dialogue_turns[group_start - 1]
+                    window_start = prev.get("tts_end_offset", 0) + INTERP_GAP
+                
+                window_end = duration_sec
+                if group_end + 1 < num_inputs:
+                    nxt = dialogue_turns[group_end + 1]
+                    window_end = nxt.get("tts_start_offset", duration_sec) - INTERP_GAP
+                
+                group_size = group_end - group_start + 1
+                available = max(0.1, window_end - window_start)
+                gap_total = max(0, (group_size - 1)) * INTERP_GAP
+                available_speech = available - gap_total
+                
+                word_counts = []
+                total_words = 0
+                for g in range(group_start, group_end + 1):
+                    text = inputs[g]["text"] if g < len(inputs) else ""
+                    wc = max(1, len(text.split()))
+                    word_counts.append(wc)
+                    total_words += wc
+                
+                if available_speech < group_size * 0.3:
                     logger.warning(
-                        "TTD turn %d: interpolated timing %.2f-%.2fs (%.2fs) using speaker rate %.2f w/s for '%s...'",
-                        idx, start_time, end_time, turn_duration, speaker_rate, text[:30]
+                        "TTD INTERPOLATE: turns %d-%d only %.2fs for %d turns (%d words)",
+                        group_start, group_end, available, group_size, total_words
                     )
                 
-                turn["tts_start_offset"] = start_time
-                turn["tts_duration"] = turn_duration
-                turn["tts_end_offset"] = end_time
-                # Mark timing source based on whether we had valid API timing
-                api_timing = segment_timing.get(idx, {})
-                api_duration = api_timing.get("end", 0) - api_timing.get("start", 0)
-                turn["_timing_source"] = "api" if api_duration >= 0.1 else "interpolated"
+                current = window_start
+                for i, g_idx in enumerate(range(group_start, group_end + 1)):
+                    turn = dialogue_turns[g_idx]
+                    proportion = word_counts[i] / total_words if total_words > 0 else 1.0 / group_size
+                    dur = max(0.3, available_speech * proportion)
+                    
+                    turn["tts_start_offset"] = current
+                    turn["tts_duration"] = dur
+                    turn["tts_end_offset"] = current + dur
+                    turn["_timing_source"] = "interpolated"
+                    
+                    text = inputs[g_idx]["text"] if g_idx < len(inputs) else ""
+                    logger.info(
+                        "TTD turn %d: interpolated %.2f-%.2fs (%.2fs, %d words) [group %d-%d, %.1f%%]",
+                        g_idx, current, current + dur, dur, word_counts[i],
+                        group_start, group_end, proportion * 100,
+                    )
+                    current = current + dur + INTERP_GAP
+                
+                idx = group_end + 1
                 
                 # Add word-level timestamps if available
                 if idx in words_by_input:
