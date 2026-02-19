@@ -920,6 +920,16 @@ class FaceDetector:
                 if speaker and t_end > t_start:
                     for t in range(int(t_start * 10), int(t_end * 10)):
                         speaker_at_time[t / 10.0] = speaker
+
+        def _dominant_speaker(s_start: float, s_end: float) -> str | None:
+            counts: dict[str, int] = {}
+            for t in range(int(s_start * 10), int(s_end * 10)):
+                spk = speaker_at_time.get(t / 10.0)
+                if spk:
+                    counts[spk] = counts.get(spk, 0) + 1
+            if not counts:
+                return None
+            return max(counts, key=counts.get)
         
         for scene_idx in range(len(scene_boundaries) - 1):
             scene_start_t = scene_boundaries[scene_idx]
@@ -1051,7 +1061,7 @@ class FaceDetector:
                             )
                         else:
                             # Use speaker-aware or fallback to right speaker
-                            speaking_speaker = speaker_at_time.get(round(scene_start_t, 1))
+                            speaking_speaker = _dominant_speaker(scene_start_t, scene_end_t)
                             if speaking_speaker and dialogue:
                                 if "00" in speaking_speaker or "0" == speaking_speaker[-1]:
                                     scene_focus = max(safe_min, min(safe_max, left_pos))
@@ -1074,8 +1084,8 @@ class FaceDetector:
                         )
                     else:
                         # === DON'T FIT → SPEAKER-AWARE mode ===
-                        # Find who's speaking at scene start
-                        speaking_speaker = speaker_at_time.get(round(scene_start_t, 1))
+                        # Find who speaks for the majority of this scene
+                        speaking_speaker = _dominant_speaker(scene_start_t, scene_end_t)
                         
                         if speaking_speaker and dialogue:
                             # Find speaker position from detection
