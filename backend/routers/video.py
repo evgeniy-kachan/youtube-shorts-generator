@@ -1283,9 +1283,11 @@ def _process_segments_task(
             has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
             
             if has_dialogue and voice_plan:
+                turn_speakers = [t.get('speaker', '?') for t in segment['dialogue']]
                 logger.info(
-                    "TTS METHOD [%s]: Using TTD (Text-to-Dialogue) synthesis with %d turns",
-                    segment['id'], len(segment['dialogue'])
+                    "TTS METHOD [%s]: TTD with %d turns (%d ElevenLabs API calls expected), speakers: %s",
+                    segment['id'], len(segment['dialogue']), len(segment['dialogue']),
+                    turn_speakers,
                 )
                 # Refine turn boundaries using word-level timestamps
                 _refine_turn_boundaries(segment['dialogue'])
@@ -2300,11 +2302,29 @@ async def run_nemo_diarization(request: NemoDiarizationRequest, background_tasks
     return TaskStatus(task_id=task_id, status="pending", progress=0.0, message="NeMo diarization started")
 
 
-def _get_nemo_speaker_for_time(nemo_segments: list, t: float) -> str | None:
-    """Find the NeMo speaker label for a given timestamp."""
+def _get_nemo_speaker_for_time(nemo_segments: list, t: float, max_gap: float = 0.5) -> str | None:
+    """Find the NeMo speaker label for a given timestamp.
+    
+    First tries exact containment, then falls back to nearest segment
+    within max_gap seconds to handle small gaps between NeMo segments.
+    """
+    best_speaker = None
+    best_dist = float('inf')
+    
     for ns in nemo_segments:
-        if float(ns.get('start', 0)) <= t <= float(ns.get('end', 0)):
+        ns_start = float(ns.get('start', 0))
+        ns_end = float(ns.get('end', 0))
+        
+        if ns_start <= t <= ns_end:
             return ns.get('speaker')
+        
+        dist = min(abs(t - ns_start), abs(t - ns_end))
+        if dist < best_dist:
+            best_dist = dist
+            best_speaker = ns.get('speaker')
+    
+    if best_dist <= max_gap:
+        return best_speaker
     return None
 
 
@@ -2315,6 +2335,10 @@ def _apply_nemo_diarization_to_segments(segments: list, nemo_segments: list) -> 
     NeMo provides speaker labels for the entire video. This function assigns
     speakers to individual words (like WhisperX does for Pyannote), then
     splits turns at speaker boundaries for accurate multi-speaker dialogues.
+    
+    Merging: after word-level assignment, consecutive single-word turns with the
+    same speaker are merged back to avoid unnecessary turn fragmentation (which
+    increases TTS API calls).
     """
     if not nemo_segments:
         return
@@ -2334,6 +2358,12 @@ def _apply_nemo_diarization_to_segments(segments: list, nemo_segments: list) -> 
         
         if not relevant_nemo:
             continue
+        
+        logger.debug(
+            "NeMo segments for segment %s [%.1f-%.1f]: %s",
+            segment.get('id'), segment_start, segment_end,
+            [(f"{ns.get('speaker')}:{ns.get('start'):.1f}-{ns.get('end'):.1f}") for ns in relevant_nemo],
+        )
         
         new_dialogue = []
         
@@ -2358,6 +2388,18 @@ def _apply_nemo_diarization_to_segments(segments: list, nemo_segments: list) -> 
                     w_mid = w_start or w_end or 0
                 w['_nemo_speaker'] = _get_nemo_speaker_for_time(relevant_nemo, w_mid)
             
+            # Log word-level assignments for diagnostics
+            word_assignments = [
+                (w.get('word', '?'), f"{w.get('start', 0):.1f}", w.get('_nemo_speaker', '?'))
+                for w in words
+            ]
+            logger.info(
+                "NeMo word mapping [%s turn %.1f-%.1f]: %s",
+                segment.get('id'),
+                float(turn.get('start', 0)), float(turn.get('end', 0)),
+                word_assignments,
+            )
+            
             # Group consecutive words by speaker into new turns
             current_speaker = None
             current_words = []
@@ -2375,14 +2417,30 @@ def _apply_nemo_diarization_to_segments(segments: list, nemo_segments: list) -> 
             if current_words:
                 new_dialogue.append(_build_turn_from_words(current_words, current_speaker))
         
-        segment['dialogue'] = new_dialogue
+        # Merge consecutive turns with the same speaker to reduce TTS API calls
+        merged_dialogue = []
+        for turn in new_dialogue:
+            if merged_dialogue and merged_dialogue[-1].get('speaker') == turn.get('speaker'):
+                prev = merged_dialogue[-1]
+                prev_words = prev.get('words') or []
+                turn_words = turn.get('words') or []
+                combined_words = prev_words + turn_words
+                if combined_words:
+                    merged_dialogue[-1] = _build_turn_from_words(combined_words, turn['speaker'])
+                else:
+                    prev['text'] = (prev.get('text', '') + ' ' + turn.get('text', '')).strip()
+                    prev['end'] = turn.get('end', prev.get('end'))
+            else:
+                merged_dialogue.append(turn)
         
-        speakers_in_segment = sorted(set(t.get('speaker') for t in new_dialogue if t.get('speaker')))
+        segment['dialogue'] = merged_dialogue
+        
+        speakers_in_segment = sorted(set(t.get('speaker') for t in merged_dialogue if t.get('speaker')))
         segment['speakers'] = speakers_in_segment
         
         logger.info(
-            "Applied NeMo diarization to segment %s: %d turns (was %d), speakers: %s",
-            segment.get('id'), len(new_dialogue), len(dialogue), speakers_in_segment
+            "NeMo diarization applied to segment %s: %d turns (was %d, before merge %d), speakers: %s",
+            segment.get('id'), len(merged_dialogue), len(dialogue), len(new_dialogue), speakers_in_segment
         )
 
 
