@@ -981,24 +981,20 @@ class VideoProcessor:
                 )
                 # === END DIAGNOSTIC ===
                 
-                # Run TransNetV2 ONCE and reuse for both horizontal and vertical timelines
-                scene_changes = self._detect_scene_changes_cached(str(cut_path))
-                
                 # Build timeline (dynamic crops). If timeline has 0 or 1 segment, fall back to single focus.
+                # TransNetV2 runs independently in each pass (no cache)
                 focus_timeline = self._build_focus_timeline(
                     str(cut_path),
                     dialogue=dialogue_turns,
                     segment_start=start_time,
                     segment_end=end_time,
                     sample_period=0.10,
-                    precomputed_scene_changes=scene_changes,
                 )
                 focus_timeline_y = self._build_vertical_focus_timeline(
                     str(cut_path),
                     segment_start=start_time,
                     segment_end=end_time,
                     sample_period=1.0,
-                    precomputed_scene_changes=scene_changes,
                 )
                 if focus_timeline:
                     if len(focus_timeline) == 1:
