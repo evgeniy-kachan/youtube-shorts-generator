@@ -994,7 +994,7 @@ class VideoProcessor:
                     str(cut_path),
                     segment_start=start_time,
                     segment_end=end_time,
-                    sample_period=1.0,
+                    sample_period=0.10,
                 )
                 if focus_timeline:
                     if len(focus_timeline) == 1:
