@@ -719,7 +719,7 @@ class FaceDetector:
     CROP_WIDTH_PX = 1080  # Target crop width for 9:16 vertical video
     
     # Face-jump detection constants
-    FACE_JUMP_SAMPLE_INTERVAL = 0.1  # Sample face position every 0.1 seconds
+    FACE_JUMP_SAMPLE_INTERVAL = 0.2  # Sample face position every 0.2 seconds
     FACE_JUMP_THRESHOLD = 0.15  # 15% position change = camera switch (lowered from 25%)
     MIN_SUBSCENE_DURATION = 2.0  # Minimum duration for a sub-scene (seconds)
     
@@ -992,141 +992,141 @@ class FaceDetector:
                     
                 elif most_common_count >= 2:
                     # === TWO FACES (wide shot) → check if they fit ===
-                    # Get leftmost and rightmost positions
-                    left_pos = min(all_positions)
-                    right_pos = max(all_positions)
                     
-                    # Calculate if both faces fit in 1080px crop
-                    # Positions are normalized (0-1), convert to pixels in scaled video
-                    left_px = left_pos * scaled_width
-                    right_px = right_pos * scaled_width
-                    span_px = right_px - left_px
+                    # --- SIZE RATIO FILTER ---
+                    # In close-up shots, SCRFD may falsely detect a tiny "face"
+                    # (hand, ear, shadow). Compare average sizes of the two largest
+                    # face clusters: if one is 2x+ bigger, treat as close-up.
+                    large_face_areas: list[float] = []
+                    small_face_areas: list[float] = []
+                    large_face_positions: list[float] = []
+                    for faces in all_faces:
+                        if len(faces) >= 2:
+                            sorted_by_area = sorted(faces, key=lambda f: f.get("w", 0) * f.get("h", 0), reverse=True)
+                            large_face_areas.append(sorted_by_area[0].get("w", 0) * sorted_by_area[0].get("h", 0))
+                            small_face_areas.append(sorted_by_area[1].get("w", 0) * sorted_by_area[1].get("h", 0))
+                            large_face_positions.append(sorted_by_area[0]["center_x"] / frame_width)
                     
-                    # Add margin for face width (~100px each side)
-                    required_width = span_px + 200
+                    avg_large = sum(large_face_areas) / len(large_face_areas) if large_face_areas else 0
+                    avg_small = sum(small_face_areas) / len(small_face_areas) if small_face_areas else 0
+                    size_ratio = avg_large / avg_small if avg_small > 0 else 999.0
                     
-                    # Check for "mixed" scenes: some frames show 1 face (close-up), some show 2
-                    # Count frames by face count
-                    single_face_frames = sum(1 for fc in face_counts if fc == 1)
-                    total_frames = len(face_counts)
-                    single_face_ratio = single_face_frames / total_frames if total_frames > 0 else 0
-                    
-                    # If >= 30% of frames show single face, it MIGHT be a close-up shot
-                    # But first check if single-face positions are clustered together
-                    # If they're spread out (min/max > 0.20), it's not a real close-up,
-                    # just detector sometimes missing one of two faces
-                    single_face_spread = 0.0
-                    if single_face_positions:
-                        single_face_spread = max(single_face_positions) - min(single_face_positions)
-                    
-                    is_real_closeup = (
-                        single_face_ratio >= 0.30 
-                        and single_face_positions 
-                        and single_face_spread < 0.20  # Positions must be clustered (same person)
-                    )
-                    
-                    if is_real_closeup:
-                        avg_pos = sum(single_face_positions) / len(single_face_positions)
+                    if size_ratio >= 2.0 and large_face_positions:
+                        avg_pos = sum(large_face_positions) / len(large_face_positions)
                         scene_focus = max(safe_min, min(safe_max, avg_pos))
                         logger.info(
-                            "Scene %d [%.2f-%.2f]: MIXED (%.0f%% single-face, spread=%.2f) → CLOSE-UP focus=%.3f",
-                            scene_idx, scene_start_t, scene_end_t, 
-                            single_face_ratio * 100, single_face_spread, scene_focus
+                            "Scene %d [%.2f-%.2f]: 2 detections but DOMINANT FACE (ratio=%.1fx) → CLOSE-UP focus=%.3f",
+                            scene_idx, scene_start_t, scene_end_t, size_ratio, scene_focus
                         )
-                    elif single_face_ratio >= 0.30 and single_face_spread >= 0.20:
-                        # High single-face ratio but positions are scattered
-                        # → NOT a real close-up, detector just missed one face sometimes
-                        # Fall through to 2-face logic below
-                        logger.info(
-                            "Scene %d [%.2f-%.2f]: MIXED but spread=%.2f too wide (different faces) → using 2-face logic",
-                            scene_idx, scene_start_t, scene_end_t, single_face_spread
+                    else:
+                        # --- Two real faces of similar size ---
+                        left_pos = min(all_positions)
+                        right_pos = max(all_positions)
+                        
+                        left_px = left_pos * scaled_width
+                        right_px = right_pos * scaled_width
+                        span_px = right_px - left_px
+                        required_width = span_px + 200
+                        
+                        single_face_frames = sum(1 for fc in face_counts if fc == 1)
+                        total_frames = len(face_counts)
+                        single_face_ratio = single_face_frames / total_frames if total_frames > 0 else 0
+                        
+                        single_face_spread = 0.0
+                        if single_face_positions:
+                            single_face_spread = max(single_face_positions) - min(single_face_positions)
+                        
+                        is_real_closeup = (
+                            single_face_ratio >= 0.30 
+                            and single_face_positions 
+                            and single_face_spread < 0.20
                         )
-                        # Continue to check if faces fit or use speaker-aware
-                        if required_width <= self.CROP_WIDTH_PX:
+                        
+                        if is_real_closeup:
+                            avg_pos = sum(single_face_positions) / len(single_face_positions)
+                            scene_focus = max(safe_min, min(safe_max, avg_pos))
+                            logger.info(
+                                "Scene %d [%.2f-%.2f]: MIXED (%.0f%% single-face, spread=%.2f) → CLOSE-UP focus=%.3f",
+                                scene_idx, scene_start_t, scene_end_t, 
+                                single_face_ratio * 100, single_face_spread, scene_focus
+                            )
+                        elif single_face_ratio >= 0.30 and single_face_spread >= 0.20:
+                            logger.info(
+                                "Scene %d [%.2f-%.2f]: MIXED but spread=%.2f too wide (different faces) → using 2-face logic",
+                                scene_idx, scene_start_t, scene_end_t, single_face_spread
+                            )
+                            if required_width <= self.CROP_WIDTH_PX:
+                                center_pos = (left_pos + right_pos) / 2.0
+                                scene_focus = max(safe_min, min(safe_max, center_pos))
+                                logger.info(
+                                    "  → 2 FACES FIT (span=%dpx) → center=%.3f",
+                                    int(required_width), scene_focus
+                                )
+                            else:
+                                speaking_speaker = speaker_at_time.get(round(scene_start_t, 1))
+                                if speaking_speaker and dialogue:
+                                    if "00" in speaking_speaker or "0" == speaking_speaker[-1]:
+                                        scene_focus = max(safe_min, min(safe_max, left_pos))
+                                        logger.info("  → SPEAKER-AWARE: %s (left) → focus=%.3f", speaking_speaker, scene_focus)
+                                    else:
+                                        scene_focus = max(safe_min, min(safe_max, right_pos))
+                                        logger.info("  → SPEAKER-AWARE: %s (right) → focus=%.3f", speaking_speaker, scene_focus)
+                                else:
+                                    scene_focus = max(safe_min, min(safe_max, right_pos))
+                                    logger.info("  → NO DIARIZATION → right speaker focus=%.3f", scene_focus)
+                        elif required_width <= self.CROP_WIDTH_PX:
                             center_pos = (left_pos + right_pos) / 2.0
                             scene_focus = max(safe_min, min(safe_max, center_pos))
                             logger.info(
-                                "  → 2 FACES FIT (span=%dpx) → center=%.3f",
-                                int(required_width), scene_focus
+                                "Scene %d [%.2f-%.2f]: 2 FACES FIT (span=%dpx < %dpx) → center=%.3f",
+                                scene_idx, scene_start_t, scene_end_t, 
+                                int(required_width), self.CROP_WIDTH_PX, scene_focus
                             )
                         else:
-                            # Use speaker-aware or fallback to right speaker
                             speaking_speaker = speaker_at_time.get(round(scene_start_t, 1))
+                            
                             if speaking_speaker and dialogue:
                                 if "00" in speaking_speaker or "0" == speaking_speaker[-1]:
                                     scene_focus = max(safe_min, min(safe_max, left_pos))
-                                    logger.info("  → SPEAKER-AWARE: %s (left) → focus=%.3f", speaking_speaker, scene_focus)
+                                    logger.info(
+                                        "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT → SPEAKER-AWARE: %s (left) → focus=%.3f",
+                                        scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
+                                    )
                                 else:
                                     scene_focus = max(safe_min, min(safe_max, right_pos))
-                                    logger.info("  → SPEAKER-AWARE: %s (right) → focus=%.3f", speaking_speaker, scene_focus)
+                                    logger.info(
+                                        "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT → SPEAKER-AWARE: %s (right) → focus=%.3f",
+                                        scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
+                                    )
                             else:
-                                scene_focus = max(safe_min, min(safe_max, right_pos))
-                                logger.info("  → NO DIARIZATION → right speaker focus=%.3f", scene_focus)
-                    elif required_width <= self.CROP_WIDTH_PX:
-                        # === BOTH FIT → center between them ===
-                        # Use safe bounds since we know where faces are
-                        center_pos = (left_pos + right_pos) / 2.0
-                        scene_focus = max(safe_min, min(safe_max, center_pos))
-                        logger.info(
-                            "Scene %d [%.2f-%.2f]: 2 FACES FIT (span=%dpx < %dpx) → center=%.3f",
-                            scene_idx, scene_start_t, scene_end_t, 
-                            int(required_width), self.CROP_WIDTH_PX, scene_focus
-                        )
-                    else:
-                        # === DON'T FIT → SPEAKER-AWARE mode ===
-                        # Find who's speaking at scene start
-                        speaking_speaker = speaker_at_time.get(round(scene_start_t, 1))
-                        
-                        if speaking_speaker and dialogue:
-                            # Find speaker position from detection
-                            # Assume left speaker is SPEAKER_00, right is SPEAKER_01
-                            # (common interview convention)
-                            # Use safe bounds since we know face positions
-                            if "00" in speaking_speaker or "0" == speaking_speaker[-1]:
-                                scene_focus = max(safe_min, min(safe_max, left_pos))
-                                logger.info(
-                                    "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT → SPEAKER-AWARE: %s (left) → focus=%.3f",
-                                    scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
-                                )
-                            else:
-                                scene_focus = max(safe_min, min(safe_max, right_pos))
-                                logger.info(
-                                    "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT → SPEAKER-AWARE: %s (right) → focus=%.3f",
-                                    scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
-                                )
-                        else:
-                            # No diarization → pick side with LARGER face (or right if equal)
-                            # Collect face sizes for left and right clusters
-                            left_sizes: list[float] = []
-                            right_sizes: list[float] = []
-                            mid_pos = (left_pos + right_pos) / 2.0
-                            
-                            for faces in all_faces:
-                                for f in faces:
-                                    pos = f["center_x"] / frame_width  # FIX: divide by ORIGINAL frame width!
-                                    face_w = f.get("face_w", 50)  # face width in pixels
-                                    if pos < mid_pos:
-                                        left_sizes.append(face_w)
-                                    else:
-                                        right_sizes.append(face_w)
-                            
-                            avg_left = sum(left_sizes) / len(left_sizes) if left_sizes else 0
-                            avg_right = sum(right_sizes) / len(right_sizes) if right_sizes else 0
-                            
-                            # Use safe bounds since we know face positions
-                            if avg_left > avg_right * 1.2:  # Left is significantly larger
-                                scene_focus = max(safe_min, min(safe_max, left_pos))
-                                logger.info(
-                                    "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → LARGER LEFT (%.0f vs %.0f) → focus=%.3f",
-                                    scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus
-                                )
-                            else:
-                                # Right is larger or equal → pick right (default)
-                                scene_focus = max(safe_min, min(safe_max, right_pos))
-                                logger.info(
-                                    "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → RIGHT (%.0f vs %.0f) → focus=%.3f",
-                                    scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus
-                                )
+                                left_sizes: list[float] = []
+                                right_sizes: list[float] = []
+                                mid_pos = (left_pos + right_pos) / 2.0
+                                
+                                for faces in all_faces:
+                                    for f in faces:
+                                        pos = f["center_x"] / frame_width
+                                        face_w = f.get("face_w", 50)
+                                        if pos < mid_pos:
+                                            left_sizes.append(face_w)
+                                        else:
+                                            right_sizes.append(face_w)
+                                
+                                avg_left = sum(left_sizes) / len(left_sizes) if left_sizes else 0
+                                avg_right = sum(right_sizes) / len(right_sizes) if right_sizes else 0
+                                
+                                if avg_left > avg_right * 1.2:
+                                    scene_focus = max(safe_min, min(safe_max, left_pos))
+                                    logger.info(
+                                        "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → LARGER LEFT (%.0f vs %.0f) → focus=%.3f",
+                                        scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus
+                                    )
+                                else:
+                                    scene_focus = max(safe_min, min(safe_max, right_pos))
+                                    logger.info(
+                                        "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → RIGHT (%.0f vs %.0f) → focus=%.3f",
+                                        scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus
+                                    )
                 else:
                     scene_focus = last_valid_focus
                     
