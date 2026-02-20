@@ -981,11 +981,33 @@ class VideoProcessor:
                 )
                 # === END DIAGNOSTIC ===
                 
+                # Pre-downscale for face analysis if video is wider than 1920px.
+                # SCRFD resizes to 1280 internally, so anything above 1920 is wasted decode time.
+                analysis_path = str(cut_path)
+                try:
+                    probe = ffmpeg.probe(str(cut_path))
+                    v_stream = next(s for s in probe["streams"] if s["codec_type"] == "video")
+                    src_w = int(v_stream["width"])
+                    if src_w > 1920:
+                        downscaled = str(cut_path).replace(".mp4", "_analysis.mp4")
+                        (
+                            ffmpeg
+                            .input(str(cut_path))
+                            .filter("scale", 1920, -2)
+                            .output(downscaled, **{"c:v": "libx264", "preset": "ultrafast", "crf": "23", "an": None})
+                            .overwrite_output()
+                            .run(quiet=True, capture_stdout=True, capture_stderr=True)
+                        )
+                        analysis_path = downscaled
+                        logger.info("Pre-downscaled %dx → 1920px for face analysis", src_w)
+                except Exception as ds_err:
+                    logger.warning("Downscale for analysis failed (%s), using original", ds_err)
+
                 # Run TransNetV2 ONCE and reuse for both horizontal and vertical timelines
-                scene_changes = self._detect_scene_changes_cached(str(cut_path))
+                scene_changes = self._detect_scene_changes_cached(analysis_path)
                 
                 focus_timeline = self._build_focus_timeline(
-                    str(cut_path),
+                    analysis_path,
                     dialogue=dialogue_turns,
                     segment_start=start_time,
                     segment_end=end_time,
@@ -993,12 +1015,19 @@ class VideoProcessor:
                     precomputed_scene_changes=scene_changes,
                 )
                 focus_timeline_y = self._build_vertical_focus_timeline(
-                    str(cut_path),
+                    analysis_path,
                     segment_start=start_time,
                     segment_end=end_time,
                     sample_period=1.0,
                     precomputed_scene_changes=scene_changes,
                 )
+                
+                # Cleanup analysis file
+                if analysis_path != str(cut_path):
+                    try:
+                        os.remove(analysis_path)
+                    except OSError:
+                        pass
                 if focus_timeline:
                     if len(focus_timeline) == 1:
                         # Single stable focus - reuse classic flow
