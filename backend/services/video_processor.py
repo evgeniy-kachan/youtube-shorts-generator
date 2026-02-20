@@ -988,13 +988,13 @@ class VideoProcessor:
                     dialogue=dialogue_turns,
                     segment_start=start_time,
                     segment_end=end_time,
-                    sample_period=0.10,
+                    sample_period=0.05,
                 )
                 focus_timeline_y = self._build_vertical_focus_timeline(
                     str(cut_path),
                     segment_start=start_time,
                     segment_end=end_time,
-                    sample_period=0.10,
+                    sample_period=0.05,
                 )
                 if focus_timeline:
                     if len(focus_timeline) == 1:
