@@ -30,8 +30,46 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
     segments.forEach((segment, index) => {
       setTimeout(() => {
         handleDownload(segment.segment_id, segment.filename);
-      }, index * 500);
+      }, index * 1200);
     });
+  };
+
+  const downloadAllDescriptions = () => {
+    const lines = segments.map((segment, index) => {
+      const desc = segment.description;
+      const segLabel = `Segment ${segment.segment_id} — ${segment.filename}`;
+      const separator = '='.repeat(segLabel.length);
+
+      if (!desc) {
+        return `${separator}\n${segLabel}\n${separator}\n\nОписание не сгенерировано\n`;
+      }
+
+      const parts = [
+        `${separator}`,
+        `${segLabel}`,
+        `${separator}`,
+        '',
+      ];
+
+      if (desc.category) parts.push(`Категория: ${desc.category}`, '');
+      if (desc.title)    parts.push(`Заголовок: ${desc.title}`, '');
+      if (desc.description) parts.push(`Описание:\n${desc.description}`, '');
+      if (desc.guest_bio)   parts.push(`О госте:\n${desc.guest_bio}`, '');
+      if (desc.hashtags?.length) parts.push(`Хэштеги: ${desc.hashtags.join(' ')}`, '');
+
+      return parts.join('\n');
+    });
+
+    const content = lines.join('\n\n');
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `descriptions_${videoId || 'all'}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleDownloadTranscription = () => {
@@ -58,9 +96,13 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
   const handleCopyAll = (segment) => {
     const desc = segment.description;
     if (!desc) return;
-    const categoryText = desc.category ? `Категория: ${desc.category}\n\n` : '';
-    const fullText = `${categoryText}${desc.title}\n\n${desc.description}\n\n${desc.hashtags?.join(' ') || ''}`;
-    handleCopy(fullText, `all-${segment.segment_id}`);
+    const parts = [];
+    if (desc.category)    parts.push(`Категория: ${desc.category}`);
+    if (desc.title)       parts.push(`\n${desc.title}`);
+    if (desc.description) parts.push(`\n${desc.description}`);
+    if (desc.guest_bio)   parts.push(`\n${desc.guest_bio}`);
+    if (desc.hashtags?.length) parts.push(`\n${desc.hashtags.join(' ')}`);
+    handleCopy(parts.join('\n'), `all-${segment.segment_id}`);
   };
 
   const handleRegenerate = async (segment, index) => {
@@ -186,6 +228,16 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
                       </p>
                     </div>
 
+                    {/* Guest bio */}
+                    {segment.description.guest_bio && (
+                      <div>
+                        <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">О госте</span>
+                        <p className="text-gray-700 mt-1 whitespace-pre-wrap">
+                          {segment.description.guest_bio}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Hashtags */}
                     {segment.description.hashtags && segment.description.hashtags.length > 0 && (
                       <div>
@@ -263,7 +315,7 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
         </div>
 
         {/* Bottom actions */}
-        <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
           <button
             onClick={downloadAll}
             className="flex-1 btn-primary"
@@ -272,6 +324,15 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             Скачать все ({segmentCount})
+          </button>
+          <button
+            onClick={downloadAllDescriptions}
+            className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-sm transition"
+          >
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Скачать описания (.txt)
           </button>
           <button
             onClick={onBackToSegments}
