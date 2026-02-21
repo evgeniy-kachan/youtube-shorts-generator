@@ -769,46 +769,67 @@ def _speed_match_audio_duration(
 def _extract_guest_name(video_id: str) -> str:
     """
     Extract podcast guest name from video_id/filename.
-    
-    Patterns:
-      "Chris Williamson_ Fix This One Habit..."  → "Chris Williamson"
-      "Why We Stopped Progressing _ Peter Thiel _ EP 541" → "Peter Thiel"
-      "Peter Thiel on Stagnation _ Lex Fridman"  → "Peter Thiel"
-    
-    Strategy: take the part before the first underscore/pipe separator,
-    or after if it looks like "Topic _ Guest _ EP N" format.
-    Returns empty string if no clear guest name found.
+
+    Handles patterns:
+      "Chris Williamson_ Fix This One Habit..."          → "Chris Williamson"
+      "Why We Stopped Progressing _ Peter Thiel _ EP 541"→ "Peter Thiel"
+      "The 2026 Immortality Protocol - Bryan Johnson (4K)"→ "Bryan Johnson"
+      "...Formula! Alex Hormozi"                         → "Alex Hormozi"
+      "These People Need To Be Stopped - Eric Weinstein" → "Eric Weinstein"
     """
     import re
-    
+
     name = video_id.strip()
-    # Remove file extension if present
+    # Remove file extension
     name = re.sub(r'\.[a-zA-Z0-9]+$', '', name)
-    
-    # Pattern: "Name_ something" — name is before first underscore
-    # e.g. "Chris Williamson_ Fix This..." → "Chris Williamson"
-    m = re.match(r'^([A-Z][a-zA-Z\s\-\.\']{3,40})_', name)
+    # Remove trailing qualifiers: (4K), [HD], (Full Interview), (Ep 541), etc.
+    name = re.sub(r'\s*[\(\[][^\)\]]{1,30}[\)\]]\s*$', '', name).strip()
+
+    def looks_like_name(text: str) -> bool:
+        """2-3 words, all start with uppercase, only letters/hyphens/apostrophes."""
+        words = text.strip().split()
+        if not (2 <= len(words) <= 3):
+            return False
+        return all(
+            w[0].isupper() and re.match(r"^[A-Za-zÀ-ÿ\-\'\.]+$", w)
+            for w in words
+        )
+
+    # Pattern 1: "Name_ something" — name before first underscore (2-3 words)
+    m = re.match(r'^([A-Z][a-zA-Z\s\-\.\']{3,35})_', name)
     if m:
         candidate = m.group(1).strip()
-        # Must look like a person's name: exactly 2-3 words (First Last / First Middle Last)
-        # 4+ words is likely a title, not a name
-        words = candidate.split()
-        if 2 <= len(words) <= 3:
+        if looks_like_name(candidate):
             return candidate
-    
-    # Pattern: "... _ Name _ EP N" or "... _ Name" at end
-    # e.g. "Why We Stopped Progressing _ Peter Thiel _ EP 541"
-    parts = re.split(r'\s*[_|]\s*', name)
+
+    # Pattern 2: split by _, |, " - ", " – ", " — "
+    parts = re.split(r'\s*[_|]\s*|\s+[-–—]\s+', name)
+
     for part in reversed(parts):
         part = part.strip()
-        # Skip episode markers like "EP 541", "E541", "#541"
+        # Skip episode markers: EP 541, E12, #541
         if re.match(r'^(EP|E|#|episode)\s*\d+', part, re.IGNORECASE):
             continue
-        words = part.split()
-        # A name has 2-3 capitalized words
-        if 2 <= len(words) <= 3 and all(w[0].isupper() for w in words if w):
+        # Part contains numbers/special chars (e.g. "$10k") — check last 2-3 words
+        if re.search(r'[\$\d\!\?]', part):
+            words = part.split()
+            for n in [2, 3]:
+                if len(words) >= n:
+                    candidate = ' '.join(words[-n:])
+                    if looks_like_name(candidate):
+                        return candidate
+            continue
+        if looks_like_name(part):
             return part
-    
+
+    # Last resort: last 2-3 words of the full cleaned title
+    words = name.split()
+    for n in [2, 3]:
+        if len(words) >= n:
+            candidate = ' '.join(words[-n:])
+            if looks_like_name(candidate):
+                return candidate
+
     return ""
 
 
