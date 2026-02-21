@@ -249,7 +249,7 @@ class DeepSeekClient:
                 "category": "другое",
                 "title": "Интересный момент из видео",
                 "description": "Смотрите до конца! 🔥",
-                "hashtags": ["#shorts", "#viral", "#рекомендации", "#интересное", "#факты"]
+                "hashtags": ["#kachan.cuts_другое", "#подкаст", "#мудрость"]
             }
         
         try:
@@ -265,22 +265,40 @@ class DeepSeekClient:
                     "category": "другое",
                     "title": "Интересный момент из видео",
                     "description": "Смотрите до конца! 🔥",
-                    "hashtags": ["#shorts", "#viral", "#рекомендации", "#интересное", "#факты"]
+                    "hashtags": ["#kachan.cuts_другое", "#подкаст", "#мудрость"]
                 }
         
         # Ensure hashtags is a list
         if isinstance(result.get("hashtags"), str):
             result["hashtags"] = [h.strip() for h in result["hashtags"].split() if h.startswith("#")]
         
-        # Ensure #shorts is first
-        hashtags = result.get("hashtags", [])
-        if hashtags and hashtags[0] != "#shorts":
-            hashtags = ["#shorts"] + [h for h in hashtags if h != "#shorts"]
-            result["hashtags"] = hashtags[:7]  # Max 7 hashtags
-        
         # Ensure category is set (default to "другое" if missing)
         if "category" not in result or not result.get("category"):
             result["category"] = "другое"
+        
+        # Build final hashtags: #kachan.cuts_category + 2 relevant ones
+        category = result.get("category", "другое").lower().replace(" ", "_")
+        brand_hashtag = f"#kachan.cuts_{category}"
+        
+        # Pick 2 best hashtags from DeepSeek response (skip generic ones)
+        generic_tags = {"#shorts", "#viral", "#рекомендации", "#интересное", "#факты", "#trending", "#fyp"}
+        original_hashtags = result.get("hashtags", [])
+        relevant_hashtags = [h for h in original_hashtags if h.lower() not in generic_tags][:2]
+        
+        # If not enough relevant ones, add defaults based on category
+        if len(relevant_hashtags) < 2:
+            category_defaults = {
+                "саморазвитие": ["#мотивация", "#успех"],
+                "психология": ["#психология", "#отношения"],
+                "бизнес": ["#бизнес", "#деньги"],
+                "отношения": ["#отношения", "#любовь"],
+                "мышление": ["#мышление", "#саморазвитие"],
+            }
+            defaults = category_defaults.get(result.get("category", "").lower(), ["#подкаст", "#мудрость"])
+            relevant_hashtags.extend(defaults)
+            relevant_hashtags = relevant_hashtags[:2]
+        
+        result["hashtags"] = [brand_hashtag] + relevant_hashtags
         
         logger.info(
             "Generated description: category='%s', title='%s', %d hashtags",
@@ -332,7 +350,8 @@ class DeepSeekClient:
             if "description" not in result:
                 result["description"] = "Смотрите до конца! 🔥"
             if "hashtags" not in result:
-                result["hashtags"] = ["#shorts", "#viral", "#рекомендации"]
+                category = result.get("category", "другое").lower().replace(" ", "_")
+                result["hashtags"] = [f"#kachan.cuts_{category}", "#подкаст", "#мудрость"]
             return result
         
         return None

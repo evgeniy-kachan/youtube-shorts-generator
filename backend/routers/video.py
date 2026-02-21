@@ -1509,7 +1509,7 @@ def _process_segments_task(
                     "category": "другое",
                     "title": "Интересный момент",
                     "description": "Смотрите до конца! 🔥",
-                    "hashtags": ["#shorts", "#viral", "#рекомендации"]
+                    "hashtags": ["#kachan.cuts_другое", "#подкаст", "#мудрость"]
                 }
             except Exception as desc_exc:
                 logger.warning("Failed to generate description for %s: %s", segment_id, desc_exc)
@@ -1517,7 +1517,7 @@ def _process_segments_task(
                     "category": "другое",
                     "title": "Интересный момент",
                     "description": "Смотрите до конца! 🔥",
-                    "hashtags": ["#shorts", "#viral", "#рекомендации"]
+                    "hashtags": ["#kachan.cuts_другое", "#подкаст", "#мудрость"]
                 }
             
             relative_path = os.path.join(video_id, f"{segment_id}.mp4")
