@@ -307,7 +307,7 @@ const SegmentsList = ({
   const speakerColorMode = 'colored'; // Always use colored mode
   
   const [ttsProvider, setTtsProvider] = useState('elevenlabs');
-  const [voiceMix, setVoiceMix] = useState('auto');
+  const [voiceMix, setVoiceMix] = useState('male_duo');
   const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(true);
   const [numSpeakers, setNumSpeakers] = useState(0); // 0 = auto-detect, 1-3 = fixed
   const [speakerChangeTime, setSpeakerChangeTime] = useState(''); // Time in seconds when speaker changes (e.g., "15" or "15,30")
@@ -775,8 +775,8 @@ const SegmentsList = ({
                   ))}
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  <b>Авто</b> — NeMo определяет пол голосом (F0 pitch). Выберите
-                  вручную, если NeMo не запускался или результат неверный.
+                  По умолчанию — два мужских. Если точно знаете, что есть женский голос —
+                  выберите <b>Муж + Жен</b> или <b>🤖 Авто</b> (NeMo F0 pitch определит пол сам).
                 </p>
               </div>
 
