@@ -3020,6 +3020,20 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             "end": w["end"] + leading_sec + offset,
                         })
                     
+                    # Cap the last word's end time: ElevenLabs sometimes assigns
+                    # end = full_audio_duration to the last word, creating a huge tail.
+                    if tts_words:
+                        last_w = tts_words[-1]
+                        char_count = max(1, len(last_w["word"]))
+                        # ~100ms per char + 200ms base, max 4s
+                        natural_max = last_w["start"] + min(4.0, char_count * 0.10 + 0.2)
+                        if last_w["end"] > natural_max:
+                            logger.info(
+                                "TTD turn %d: capping last word '%s' end %.2f→%.2f",
+                                idx, last_w["word"], last_w["end"], natural_max
+                            )
+                            tts_words[-1] = dict(last_w, end=natural_max)
+                    
                     turn["tts_words"] = tts_words
                     logger.debug(
                         "TTD turn %d: %d words with timestamps (first: %.2f-%.2fs, last: %.2f-%.2fs)",
@@ -3049,19 +3063,24 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     clean_text = re.sub(r'\[[\w]+\]\s*', '', text)
                     words = clean_text.split()
                     if words and turn_duration > 0:
-                        per_word = turn_duration / len(words)
+                        # Proportional timing by character count (longer words get more time)
+                        char_counts = [max(1, len(w)) for w in words]
+                        total_chars = sum(char_counts)
                         tts_words = []
+                        cursor = start_time
                         for w_idx, word in enumerate(words):
-                            w_start = start_time + w_idx * per_word
-                            w_end = w_start + per_word
+                            word_dur = turn_duration * char_counts[w_idx] / total_chars
+                            w_start = cursor
+                            w_end = cursor + word_dur
                             tts_words.append({
                                 "word": word,
                                 "start": w_start,
                                 "end": w_end,
                             })
+                            cursor = w_end
                         turn["tts_words"] = tts_words
                         logger.debug(
-                            "TTD turn %d: generated %d estimated word timestamps (%.2f-%.2fs)",
+                            "TTD turn %d: generated %d proportional word timestamps (%.2f-%.2fs)",
                             idx, len(tts_words), start_time, end_time
                         )
                         
