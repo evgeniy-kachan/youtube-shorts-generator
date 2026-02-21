@@ -2820,56 +2820,76 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             PHRASE_SYNC_CF_MS   = 30    # Crossfade duration at splice points (ms)
             PHRASE_SYNC_MAX_MS  = 3000  # Cap single insertion at 3 s to avoid runaway
 
+            logger.info(
+                "PHRASE_SYNC: %s (min=%dms, max=%dms, crossfade=%dms) | "
+                "Disable with: TTD_PHRASE_SYNC=false + service restart",
+                "ENABLED" if PHRASE_SYNC_ENABLED else "DISABLED",
+                PHRASE_SYNC_MIN_MS, PHRASE_SYNC_MAX_MS, PHRASE_SYNC_CF_MS,
+            )
+
             segment_start_abs = dialogue_turns[0].get("start", 0.0)
             insertions: list[tuple[int, int]] = []  # (cut_ms_in_original, silence_ms)
+
+            # ── Per-turn table ────────────────────────────────────────────────
+            # Log every turn so it's easy to see what's happening in the journal.
+            # Format: turn | EN start→end (dur) | RU start→end (dur) | drift | action
+            logger.info("PHRASE_SYNC turn breakdown (EN=English, RU=TTD output):")
+            logger.info("  %-4s  %-20s  %-20s  %-9s  %s",
+                        "turn", "EN start→end (dur)", "RU start→end (dur)", "drift", "action")
 
             for i in range(1, len(dialogue_turns)):
                 # English reference: when this turn should start (relative to segment)
                 en_start_i = dialogue_turns[i].get("start", 0.0) - segment_start_abs
+                en_end_i   = dialogue_turns[i].get("end",   0.0) - segment_start_abs
+                en_dur_i   = max(0.0, en_end_i - en_start_i)
 
-                # TTD raw start (before any offsets)
-                tts_raw_i = segment_timing_raw.get(i, {}).get("start", 0.0) + leading_sec
+                # TTD raw timing for this turn
+                tts_raw_start = segment_timing_raw.get(i, {}).get("start", 0.0) + leading_sec
+                tts_raw_end   = segment_timing_raw.get(i, {}).get("end",   0.0) + leading_sec
+                tts_dur_i     = max(0.0, tts_raw_end - tts_raw_start)
 
                 # Where this turn currently lands in output after prior insertions
-                output_pos_i = tts_raw_i + cumulative_offset
+                output_pos_i = tts_raw_start + cumulative_offset
 
                 silence_needed_sec = en_start_i - output_pos_i
 
                 if PHRASE_SYNC_ENABLED and silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS:
                     silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
-                    cut_ms = int(tts_raw_i * 1000)
+                    cut_ms = int(tts_raw_start * 1000)
                     insertions.append((cut_ms, silence_ms))
                     cumulative_offset += silence_ms / 1000.0
-                    logger.info(
-                        "PHRASE_SYNC turn %d: en=%.2fs tts_out=%.2fs → +%.0fms silence",
-                        i, en_start_i, output_pos_i, silence_ms,
-                    )
+                    action = f"+{silence_ms}ms pause ✓"
+                elif silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS and not PHRASE_SYNC_ENABLED:
+                    action = f"SYNC OFF (would +{int(silence_needed_sec*1000)}ms)"
+                elif silence_needed_sec < -0.1:
+                    action = f"RU longer by {int(-silence_needed_sec*1000)}ms — skip"
                 else:
-                    if PHRASE_SYNC_ENABLED and silence_needed_sec < -0.1:
-                        logger.debug(
-                            "PHRASE_SYNC turn %d: Russian %.0fms LONGER than English — no pause inserted",
-                            i, -silence_needed_sec * 1000,
-                        )
+                    action = "in sync"
+
+                logger.info(
+                    "  %-4d  %5.2f→%5.2f (%4.2fs)   %5.2f→%5.2f (%4.2fs)  %+6.0fms  %s",
+                    i,
+                    en_start_i, en_end_i, en_dur_i,
+                    output_pos_i, output_pos_i + tts_dur_i, tts_dur_i,
+                    silence_needed_sec * 1000,
+                    action,
+                )
 
                 turn_offsets[i] = cumulative_offset
 
-            # Apply insertions sequentially into the audio with crossfade splicing.
-            # We track how much silence was already added (offset_ms) to adjust
-            # subsequent cut positions in the growing audio buffer.
+            # ── Apply insertions with crossfade ───────────────────────────────
             if insertions:
                 logger.info(
-                    "PHRASE_SYNC: Inserting %d pauses, total +%.2fs",
+                    "PHRASE_SYNC: Applying %d pause(s), total +%.2fs",
                     len(insertions), sum(s for _, s in insertions) / 1000.0,
                 )
                 offset_ms = 0
                 for cut_ms_orig, silence_ms in insertions:
-                    # Actual position in the already-modified audio
                     cut_ms = cut_ms_orig + offset_ms
 
                     before = audio[:cut_ms]
                     after  = audio[cut_ms:]
 
-                    # Crossfade: smooth the splice to avoid click artifacts
                     cf = min(PHRASE_SYNC_CF_MS, max(0, len(before) // 2 - 1), max(0, len(after) // 2 - 1))
                     if cf > 5:
                         before = before.fade_out(cf)
@@ -2881,9 +2901,11 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
                 audio_before_sec = (len(audio) - offset_ms) / 1000.0
                 logger.info(
-                    "PHRASE_SYNC: Done. %.2fs → %.2fs (+%.2fs)",
+                    "PHRASE_SYNC: Done. %.2fs → %.2fs (+%.2fs total)",
                     audio_before_sec, len(audio) / 1000.0, offset_ms / 1000.0,
                 )
+            else:
+                logger.info("PHRASE_SYNC: No pauses inserted (all turns in sync or Russian longer)")
         
         # Add trailing silence buffer to prevent last word from being cut off
         # ElevenLabs sometimes returns audio shorter than the last voice segment end time
