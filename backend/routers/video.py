@@ -1487,6 +1487,28 @@ def _process_segments_task(
                             "tts_words": tts_words,
                         }]
             
+            # Trim TTS audio silent tail: ElevenLabs sometimes generates audio longer
+            # than the actual speech. Find the last word's end time and trim to that + 0.5s.
+            if has_dialogue and segment.get('dialogue'):
+                last_word_end = 0.0
+                for turn in segment['dialogue']:
+                    for w in turn.get("tts_words", []):
+                        last_word_end = max(last_word_end, w.get("end", 0.0))
+                if last_word_end > 0:
+                    try:
+                        _pre_trim = AudioSegment.from_file(audio_path)
+                        _pre_trim_dur = _pre_trim.duration_seconds
+                        _trim_to = last_word_end + 0.5  # 500ms buffer after last word
+                        if _pre_trim_dur > _trim_to + 0.5:  # Only trim if saving > 0.5s
+                            _trimmed = _pre_trim[:int(_trim_to * 1000)]
+                            _trimmed.export(audio_path, format="wav")
+                            logger.info(
+                                "Trimmed TTS audio tail for %s: %.2fs → %.2fs (last word end: %.2fs)",
+                                segment['id'], _pre_trim_dur, _trim_to, last_word_end,
+                            )
+                    except Exception as _trim_err:
+                        logger.warning("TTS audio tail trim failed for %s: %s", segment['id'], _trim_err)
+
             segment['audio_path'] = audio_path
             try:
                 audio_segment = AudioSegment.from_file(audio_path)
