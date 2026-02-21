@@ -3002,11 +3002,16 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     current = current + dur + INTERP_GAP
                 
                 idx = group_end + 1
+            
+            # Phase 3: assign word-level timestamps to ALL turns
+            for idx in range(num_inputs):
+                turn = dialogue_turns[idx]
+                offset = turn_offsets[idx] if idx < len(turn_offsets) else 0.0
+                start_time = turn.get("tts_start_offset", 0)
+                end_time = turn.get("tts_end_offset", 0)
+                turn_duration = end_time - start_time
                 
-                # Add word-level timestamps if available
                 if idx in words_by_input:
-                    # Adjust word timestamps for leading silence + inserted silences
-                    # Note: words are already fixed for bunched timestamps during quality check
                     tts_words = []
                     for w in words_by_input[idx]:
                         tts_words.append({
@@ -3026,14 +3031,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         tts_words[-1]["end"] if tts_words else 0,
                     )
                     
-                    # Log in Yandex transcription format (JSON) for easy comparison
                     turn_text_ru = turn.get("text_ru") or turn.get("text", "")
-                    # Remove emotion tags for clean text
                     clean_text = re.sub(r'\[[\w]+\]\s*', '', turn_text_ru)
                     yandex_format = {
                         "text": clean_text,
                         "words": tts_words,
-                        "duration": turn.get("tts_end_offset", 0) - turn.get("tts_start_offset", 0),
+                        "duration": turn_duration,
                         "language": "ru"
                     }
                     logger.info(
@@ -3042,9 +3045,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         json.dumps(yandex_format, ensure_ascii=False, indent=2)
                     )
                 else:
-                    # Generate estimated word timestamps for turns without API timing
                     text = inputs[idx]["text"] if idx < len(inputs) else ""
-                    # Remove emotion tags before splitting
                     clean_text = re.sub(r'\[[\w]+\]\s*', '', text)
                     words = clean_text.split()
                     if words and turn_duration > 0:
@@ -3064,7 +3065,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             idx, len(tts_words), start_time, end_time
                         )
                         
-                        # Log in Yandex transcription format (JSON) for easy comparison
                         yandex_format = {
                             "text": clean_text,
                             "words": tts_words,
@@ -3077,22 +3077,11 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             json.dumps(yandex_format, ensure_ascii=False, indent=2)
                         )
                 
-                logger.debug(
-                    "TTD subtitle turn %d: %.2f-%.2fs (%.2fs, %d words) [from API]",
-                    idx,
-                    turn["tts_start_offset"],
-                    turn["tts_end_offset"],
-                    turn["tts_duration"],
-                    len(turn.get("tts_words", [])),
-                )
-                
-                # Log word-level timestamps (like Yandex format) for comparison
                 tts_words = turn.get("tts_words", [])
                 if tts_words:
-                    # Format: word [start-end] (like Yandex JSON)
                     words_str = ", ".join([
                         f'"{w["word"]}" [{w["start"]:.3f}-{w["end"]:.3f}]'
-                        for w in tts_words[:20]  # First 20 words to avoid log spam
+                        for w in tts_words[:20]
                     ])
                     if len(tts_words) > 20:
                         words_str += f" ... (+{len(tts_words) - 20} more)"
