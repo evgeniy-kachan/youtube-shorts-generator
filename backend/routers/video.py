@@ -744,6 +744,51 @@ def _speed_match_audio_duration(
         logger.warning("Tempo adjustment failed for %s: %s", audio_path, stderr.strip())
         temp_path.unlink(missing_ok=True)
         return False
+def _extract_guest_name(video_id: str) -> str:
+    """
+    Extract podcast guest name from video_id/filename.
+    
+    Patterns:
+      "Chris Williamson_ Fix This One Habit..."  → "Chris Williamson"
+      "Why We Stopped Progressing _ Peter Thiel _ EP 541" → "Peter Thiel"
+      "Peter Thiel on Stagnation _ Lex Fridman"  → "Peter Thiel"
+    
+    Strategy: take the part before the first underscore/pipe separator,
+    or after if it looks like "Topic _ Guest _ EP N" format.
+    Returns empty string if no clear guest name found.
+    """
+    import re
+    
+    name = video_id.strip()
+    # Remove file extension if present
+    name = re.sub(r'\.[a-zA-Z0-9]+$', '', name)
+    
+    # Pattern: "Name_ something" — name is before first underscore
+    # e.g. "Chris Williamson_ Fix This..." → "Chris Williamson"
+    m = re.match(r'^([A-Z][a-zA-Z\s\-\.\']{3,40})_', name)
+    if m:
+        candidate = m.group(1).strip()
+        # Must look like a name: 2+ words or known single surname
+        words = candidate.split()
+        if 2 <= len(words) <= 4:
+            return candidate
+    
+    # Pattern: "... _ Name _ EP N" or "... _ Name" at end
+    # e.g. "Why We Stopped Progressing _ Peter Thiel _ EP 541"
+    parts = re.split(r'\s*[_|]\s*', name)
+    for part in reversed(parts):
+        part = part.strip()
+        # Skip episode markers like "EP 541", "E541", "#541"
+        if re.match(r'^(EP|E|#|episode)\s*\d+', part, re.IGNORECASE):
+            continue
+        words = part.split()
+        # A name has 2-3 capitalized words
+        if 2 <= len(words) <= 3 and all(w[0].isupper() for w in words if w):
+            return part
+    
+    return ""
+
+
 def _generate_thumbnail(video_path: str, video_id: str, timestamp: float = 5.0) -> Optional[str]:
     """Generate a single thumbnail frame for preview."""
     thumbnails_dir = Path(config.TEMP_DIR) / "thumbnails"
@@ -1492,12 +1537,16 @@ def _process_segments_task(
                 if not text_en and segment.get('dialogue'):
                     text_en = ' '.join(turn.get('text', '') for turn in segment['dialogue'])
                 
+                # Extract guest name from video_id (e.g. "Chris Williamson_ Fix This..." → "Chris Williamson")
+                guest_name = _extract_guest_name(video_id)
+                
                 deepseek_client = DeepSeekClient()
                 description_data = deepseek_client.generate_shorts_description(
                     text_en=text_en,
                     text_ru=segment.get('text_ru', ''),
                     duration=segment.get('duration', 60),
                     highlight_score=segment.get('highlight_score', 0),
+                    guest_name=guest_name,
                 )
                 deepseek_client.close()
             except httpx.HTTPStatusError as http_exc:
@@ -1509,7 +1558,7 @@ def _process_segments_task(
                     "category": "другое",
                     "title": "Интересный момент",
                     "description": "Смотрите до конца! 🔥",
-                    "hashtags": ["#kachan.cuts_другое", "#подкаст", "#мудрость"]
+                    "hashtags": ["#kachancuts_другое", "#подкаст", "#мудрость"]
                 }
             except Exception as desc_exc:
                 logger.warning("Failed to generate description for %s: %s", segment_id, desc_exc)
@@ -1517,7 +1566,7 @@ def _process_segments_task(
                     "category": "другое",
                     "title": "Интересный момент",
                     "description": "Смотрите до конца! 🔥",
-                    "hashtags": ["#kachan.cuts_другое", "#подкаст", "#мудрость"]
+                    "hashtags": ["#kachancuts_другое", "#подкаст", "#мудрость"]
                 }
             
             relative_path = os.path.join(video_id, f"{segment_id}.mp4")

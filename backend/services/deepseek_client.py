@@ -156,6 +156,7 @@ class DeepSeekClient:
         text_ru: str,
         duration: float,
         highlight_score: float = 0.0,
+        guest_name: str = "",
     ) -> Dict[str, Any]:
         """
         Generate a catchy title, description, and hashtags for a short-form video.
@@ -164,21 +165,28 @@ class DeepSeekClient:
             {
                 "title": "Catchy hook title",
                 "description": "2-3 sentence description",
-                "hashtags": ["#shorts", "#viral", ...]
+                "guest_bio": "1-3 sentences about guest (if guest_name provided)",
+                "hashtags": ["#kachancuts_category", ...]
             }
         """
         # Log input data for debugging
         logger.info(
-            "generate_shorts_description: text_en=%d chars, text_ru=%d chars, duration=%.1f",
-            len(text_en or ""), len(text_ru or ""), duration
+            "generate_shorts_description: text_en=%d chars, text_ru=%d chars, duration=%.1f, guest=%s",
+            len(text_en or ""), len(text_ru or ""), duration, guest_name or "none"
         )
+        
+        guest_block = ""
+        guest_json_field = ""
+        if guest_name:
+            guest_block = f"\nГОСТЬ ПОДКАСТА: {guest_name}\n"
+            guest_json_field = '\n  "guest_bio": "1-3 предложения о госте на русском языке",'
         
         prompt = f"""Ты — SMM-специалист, создающий вирусные описания для коротких видео (Shorts/Reels/TikTok).
 
 КОНТЕНТ ВИДЕО:
 Английский текст: {text_en[:1500]}
 Русский перевод: {text_ru[:1500]}
-Длительность: {duration:.0f} сек
+Длительность: {duration:.0f} сек{guest_block}
 
 ЗАДАЧА:
 Создай описание для этого видео на РУССКОМ языке.
@@ -199,10 +207,15 @@ class DeepSeekClient:
    - 2-3 коротких предложения
    - Интрига + призыв досмотреть
    - Эмодзи уместны (1-2 штуки)
-
-4. ХЭШТЕГИ (hashtags):
+{f"""
+4. ИНФОРМАЦИЯ О ГОСТЕ (guest_bio):
+   - 1-3 предложения о госте "{guest_name}" на русском языке
+   - Кто он, чем известен, что делает
+   - Факты из открытых источников, без выдумок
+   - Если не знаешь этого человека, напиши пустую строку ""
+""" if guest_name else ""}
+{4 if not guest_name else 5}. ХЭШТЕГИ (hashtags):
    - 5-7 релевантных хэштегов
-   - Первый всегда #shorts
    - Микс популярных и нишевых
    - На русском языке
 
@@ -210,8 +223,8 @@ class DeepSeekClient:
 {{
   "category": "продуктивность",
   "title": "Заголовок видео",
-  "description": "Описание видео с эмодзи",
-  "hashtags": ["#shorts", "#тема", "#ниша", "#viral", "#рекомендации"]
+  "description": "Описание видео с эмодзи",{guest_json_field}
+  "hashtags": ["#тема", "#ниша", "#viral", "#рекомендации"]
 }}"""
 
         messages = [
@@ -249,7 +262,7 @@ class DeepSeekClient:
                 "category": "другое",
                 "title": "Интересный момент из видео",
                 "description": "Смотрите до конца! 🔥",
-                "hashtags": ["#kachan.cuts_другое", "#подкаст", "#мудрость"]
+                "hashtags": ["#kachancuts_другое", "#подкаст", "#мудрость"]
             }
         
         try:
@@ -265,7 +278,7 @@ class DeepSeekClient:
                     "category": "другое",
                     "title": "Интересный момент из видео",
                     "description": "Смотрите до конца! 🔥",
-                    "hashtags": ["#kachan.cuts_другое", "#подкаст", "#мудрость"]
+                    "hashtags": ["#kachancuts_другое", "#подкаст", "#мудрость"]
                 }
         
         # Ensure hashtags is a list
@@ -276,9 +289,9 @@ class DeepSeekClient:
         if "category" not in result or not result.get("category"):
             result["category"] = "другое"
         
-        # Build final hashtags: #kachan.cuts_category + 2 relevant ones
+        # Build final hashtags: #kachancuts_category + 2 relevant ones
         category = result.get("category", "другое").lower().replace(" ", "_")
-        brand_hashtag = f"#kachan.cuts_{category}"
+        brand_hashtag = f"#kachancuts_{category}"
         
         # Pick 2 best hashtags from DeepSeek response (skip generic ones)
         generic_tags = {"#shorts", "#viral", "#рекомендации", "#интересное", "#факты", "#trending", "#fyp"}
@@ -351,7 +364,7 @@ class DeepSeekClient:
                 result["description"] = "Смотрите до конца! 🔥"
             if "hashtags" not in result:
                 category = result.get("category", "другое").lower().replace(" ", "_")
-                result["hashtags"] = [f"#kachan.cuts_{category}", "#подкаст", "#мудрость"]
+                result["hashtags"] = [f"#kachancuts_{category}", "#подкаст", "#мудрость"]
             return result
         
         return None
