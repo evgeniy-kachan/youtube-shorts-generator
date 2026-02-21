@@ -25,6 +25,11 @@ def main():
     parser.add_argument("--min_speakers", type=int, default=1, help="Min speakers for auto-detect mode")
     parser.add_argument("--max_speakers", type=int, default=4, help="Max speakers for auto-detect mode")
     parser.add_argument("--hf_token", default=None, help="HuggingFace token for diarization")
+    parser.add_argument(
+        "--forced-segments-json", default=None,
+        help="Path to JSON with pre-known segments [{text, start, end}]. "
+             "When provided, skips transcription and runs forced alignment only."
+    )
     args = parser.parse_args()
 
     # Get HF token from env if not provided
@@ -34,38 +39,62 @@ def main():
         import whisperx
         import torch
 
-        print(f"[transcribe.py] Loading model={args.model}, device={args.device}", file=sys.stderr)
-        
-        # Load model
-        model = whisperx.load_model(
-            args.model,
-            device=args.device,
-            compute_type=args.compute_type,
-            language=args.language,
-        )
-
-        # Load audio
+        # Load audio first (needed in both modes)
         print(f"[transcribe.py] Loading audio: {args.audio}", file=sys.stderr)
         audio = whisperx.load_audio(args.audio)
 
-        # Transcribe
-        print("[transcribe.py] Transcribing...", file=sys.stderr)
-        result = model.transcribe(audio, batch_size=16, language=args.language)
+        # ── FORCED ALIGNMENT MODE ─────────────────────────────────────────────
+        # When --forced-segments-json is provided, skip transcription entirely.
+        # We align the pre-known text directly to the audio (wav2vec2).
+        # This avoids word-mismatch and is ~20-30s faster.
+        if args.forced_segments_json:
+            print(f"[transcribe.py] Forced-alignment mode from {args.forced_segments_json}", file=sys.stderr)
+            with open(args.forced_segments_json, "r", encoding="utf-8") as _f:
+                forced_data = json.load(_f)
+            known_segments = forced_data.get("segments", [])
+            print(f"[transcribe.py] Loaded {len(known_segments)} known segments", file=sys.stderr)
 
-        # Align for word-level timestamps
-        print("[transcribe.py] Aligning...", file=sys.stderr)
-        model_a, metadata = whisperx.load_align_model(
-            language_code=args.language,
-            device=args.device
-        )
-        result = whisperx.align(
-            result["segments"],
-            model_a,
-            metadata,
-            audio,
-            device=args.device,
-            return_char_alignments=False,
-        )
+            print("[transcribe.py] Loading alignment model...", file=sys.stderr)
+            model_a, metadata = whisperx.load_align_model(
+                language_code=args.language,
+                device=args.device,
+            )
+            print("[transcribe.py] Running forced alignment...", file=sys.stderr)
+            result = whisperx.align(
+                known_segments,
+                model_a,
+                metadata,
+                audio,
+                device=args.device,
+                return_char_alignments=False,
+            )
+
+        # ── NORMAL TRANSCRIPTION MODE ─────────────────────────────────────────
+        else:
+            print(f"[transcribe.py] Loading model={args.model}, device={args.device}", file=sys.stderr)
+            model = whisperx.load_model(
+                args.model,
+                device=args.device,
+                compute_type=args.compute_type,
+                language=args.language,
+            )
+
+            print("[transcribe.py] Transcribing...", file=sys.stderr)
+            result = model.transcribe(audio, batch_size=16, language=args.language)
+
+            print("[transcribe.py] Aligning...", file=sys.stderr)
+            model_a, metadata = whisperx.load_align_model(
+                language_code=args.language,
+                device=args.device,
+            )
+            result = whisperx.align(
+                result["segments"],
+                model_a,
+                metadata,
+                audio,
+                device=args.device,
+                return_char_alignments=False,
+            )
 
         # Run WhisperX BUILT-IN diarization (much better than separate Pyannote!)
         diarize_segments = None

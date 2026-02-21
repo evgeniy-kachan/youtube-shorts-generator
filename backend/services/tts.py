@@ -2365,28 +2365,38 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         audio_path: str,
         dialogue_turns: list[dict],
         inputs: list[dict],
+        segment_timing: dict[int, dict] | None = None,
+        leading_sec: float = 0.0,
     ) -> dict[int, list[dict]]:
         """
-        Get word-level timestamps by running Whisper on the generated TTD audio.
-        
-        This is more accurate than ElevenLabs TTD alignment which often has
-        "bunched" timestamps (multiple words with same start time).
-        
+        Get word-level timestamps by running WhisperX on the generated TTD audio.
+
+        Preferred mode: FORCED ALIGNMENT — when segment_timing is available we pass
+        the known Russian text with approximate turn boundaries straight to
+        whisperx.align (wav2vec2).  This skips model.transcribe(), avoids
+        word-mismatch risk, and is ~20-30 s faster.
+
+        Fallback mode: full transcription (model=large-v3) when segment_timing is
+        absent or the alignment-only binary path is unavailable.
+
         Args:
-            audio_path: Path to the generated TTD audio file
-            dialogue_turns: Original dialogue turns with text_ru
-            inputs: TTD API inputs (with text after emotion tags)
-            
+            audio_path:      Path to the generated TTD audio file.
+            dialogue_turns:  Original dialogue turns with text_ru.
+            inputs:          TTD API inputs (text after emotion-tag stripping).
+            segment_timing:  Dict {turn_idx: {start, end}} from TTD voice_segments.
+                             When provided enables forced-alignment mode.
+            leading_sec:     Seconds of leading silence prepended to the audio.
+
         Returns:
-            Dict mapping turn index to list of word dicts:
+            Dict mapping turn index → list of word dicts
             {0: [{"word": "Привет", "start": 0.1, "end": 0.5}, ...], ...}
         """
         import json
         import subprocess
         import tempfile
-        
+
         logger.info("TTD WHISPER: Getting timestamps via WhisperX for %s", audio_path)
-        
+
         # Get paths from environment (same as transcription_runner.py)
         python_path = os.getenv(
             "EXTERNAL_ASR_PY",
@@ -2396,7 +2406,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             "EXTERNAL_ASR_SCRIPT",
             "/opt/youtube-shorts-generator/backend/tools/transcribe.py"
         )
-        
+
         # Check if external transcription is available
         if not os.path.exists(python_path) or not os.path.exists(script_path):
             logger.warning(
@@ -2404,28 +2414,80 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 python_path, script_path
             )
             return {}
-        
+
+        # ── Build forced-alignment segments when we know the turn timing ──────
+        forced_segments_path: str | None = None
+        use_forced = bool(segment_timing)
+
+        if use_forced:
+            # Build a segment list from known text + voice_segment boundaries.
+            # Whisperx.align will find exact word positions within these windows.
+            segments_for_align = []
+            num_inputs = min(len(inputs), len(dialogue_turns))
+            for idx in range(num_inputs):
+                text = inputs[idx].get("text", "").strip() if idx < len(inputs) else ""
+                if not text:
+                    continue
+                timing = segment_timing.get(idx, {})
+                seg_start = timing.get("start", 0.0) + leading_sec
+                seg_end   = timing.get("end",   0.0) + leading_sec
+                # Fallback: cover full audio if timing missing for this turn
+                if seg_end <= seg_start:
+                    seg_end = seg_start + max(1.0, len(text) * 0.06)
+                segments_for_align.append({
+                    "text":  text,
+                    "start": round(seg_start, 3),
+                    "end":   round(seg_end, 3),
+                })
+
+            if segments_for_align:
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix="_forced.json", delete=False, encoding="utf-8"
+                ) as tmp_forced:
+                    json.dump({"segments": segments_for_align}, tmp_forced, ensure_ascii=False)
+                    forced_segments_path = tmp_forced.name
+                logger.info(
+                    "TTD WHISPER: Forced-alignment mode — %d segments prepared",
+                    len(segments_for_align),
+                )
+            else:
+                use_forced = False
+                logger.warning("TTD WHISPER: No segments for forced alignment, falling back to transcription")
+
         # Create temp file for output
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False, encoding="utf-8"
         ) as tmp_out:
             output_json_path = tmp_out.name
-        
+
         try:
-            # Run WhisperX on the generated audio (Russian language)
-            cmd = [
-                python_path,
-                script_path,
-                "--audio", audio_path,
-                "--model", "large-v3",
-                "--language", "ru",
-                "--device", "cuda",
-                "--compute_type", "float16",
-                "--output", output_json_path,
-                # No diarization needed - we know the turn structure
-            ]
-            
-            logger.info("TTD WHISPER: Running WhisperX...")
+            if use_forced and forced_segments_path:
+                # ── FORCED ALIGNMENT: skip model.transcribe() ─────────────────
+                cmd = [
+                    python_path,
+                    script_path,
+                    "--audio", audio_path,
+                    "--language", "ru",
+                    "--device", "cuda",
+                    "--compute_type", "float16",
+                    "--output", output_json_path,
+                    "--forced-segments-json", forced_segments_path,
+                ]
+                logger.info("TTD WHISPER: Running forced alignment (no transcription)...")
+            else:
+                # ── FULL TRANSCRIPTION fallback ───────────────────────────────
+                cmd = [
+                    python_path,
+                    script_path,
+                    "--audio", audio_path,
+                    "--model", "large-v3",
+                    "--language", "ru",
+                    "--device", "cuda",
+                    "--compute_type", "float16",
+                    "--output", output_json_path,
+                ]
+                logger.info("TTD WHISPER: Running full WhisperX transcription...")
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -2482,11 +2544,15 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             logger.error("TTD WHISPER: Unexpected error: %s", e)
             return {}
         finally:
-            # Cleanup temp file
             try:
                 os.unlink(output_json_path)
             except Exception:
                 pass
+            if forced_segments_path:
+                try:
+                    os.unlink(forced_segments_path)
+                except Exception:
+                    pass
 
     def _match_whisper_words_to_turns(
         self,
@@ -2899,10 +2965,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 
                 # Check quality of fixed timestamps
                 if not self._check_timing_quality(temp_words_by_input, dialogue_turns, inputs):
-                    # Quality is poor - use Whisper fallback
+                    # Quality is poor - use Whisper fallback (forced alignment when possible)
                     logger.warning("TTD: TTD alignment quality is poor, using Whisper fallback")
                     whisper_words = self._get_timestamps_via_whisper(
-                        str(output_path), dialogue_turns, inputs
+                        str(output_path), dialogue_turns, inputs,
+                        segment_timing=segment_timing,
+                        leading_sec=leading_sec,
                     )
                     
                     if whisper_words:
