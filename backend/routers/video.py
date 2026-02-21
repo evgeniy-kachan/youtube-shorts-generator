@@ -126,6 +126,7 @@ def get_tts_service(provider: str):
 
 
 VOICE_MIX_PRESETS = {
+    "auto": ["male", "male", "male"],       # fallback when NeMo F0 not available
     "male_duo": ["male", "male", "male"],
     "mixed_duo": ["male", "female", "male"],
     "female_duo": ["female", "female", "female"],

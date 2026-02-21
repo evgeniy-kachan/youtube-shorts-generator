@@ -307,7 +307,7 @@ const SegmentsList = ({
   const speakerColorMode = 'colored'; // Always use colored mode
   
   const [ttsProvider, setTtsProvider] = useState('elevenlabs');
-  const [voiceMix, setVoiceMix] = useState('male_duo');
+  const [voiceMix, setVoiceMix] = useState('auto');
   const [preserveBackgroundAudio, setPreserveBackgroundAudio] = useState(true);
   const [numSpeakers, setNumSpeakers] = useState(0); // 0 = auto-detect, 1-3 = fixed
   const [speakerChangeTime, setSpeakerChangeTime] = useState(''); // Time in seconds when speaker changes (e.g., "15" or "15,30")
@@ -727,12 +727,17 @@ const SegmentsList = ({
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
                   Состав голосов (для ElevenLabs)
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {[
+                    {
+                      id: 'auto',
+                      label: '🤖 Авто',
+                      description: 'NeMo F0 определит пол',
+                    },
                     {
                       id: 'male_duo',
                       label: '2 мужских',
-                      description: 'Интервью с мужчинами',
+                      description: 'Оба мужчины',
                     },
                     {
                       id: 'mixed_duo',
@@ -742,7 +747,7 @@ const SegmentsList = ({
                     {
                       id: 'female_duo',
                       label: '2 женских',
-                      description: 'Интервью с женщинами',
+                      description: 'Обе женщины',
                     },
                   ].map((option) => (
                     <button
@@ -770,8 +775,8 @@ const SegmentsList = ({
                   ))}
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  По умолчанию назначаются мужские голоса. Выберите другой
-                  вариант, если есть спикер-женщина.
+                  <b>Авто</b> — NeMo определяет пол голосом (F0 pitch). Выберите
+                  вручную, если NeMo не запускался или результат неверный.
                 </p>
               </div>
 
