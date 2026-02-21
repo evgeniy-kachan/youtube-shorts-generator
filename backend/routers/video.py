@@ -790,9 +790,10 @@ def _extract_guest_name(video_id: str) -> str:
     m = re.match(r'^([A-Z][a-zA-Z\s\-\.\']{3,40})_', name)
     if m:
         candidate = m.group(1).strip()
-        # Must look like a name: 2+ words or known single surname
+        # Must look like a person's name: exactly 2-3 words (First Last / First Middle Last)
+        # 4+ words is likely a title, not a name
         words = candidate.split()
-        if 2 <= len(words) <= 4:
+        if 2 <= len(words) <= 3:
             return candidate
     
     # Pattern: "... _ Name _ EP N" or "... _ Name" at end

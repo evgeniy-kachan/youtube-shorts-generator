@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { getDownloadUrl, getTranscriptionDownloadUrl, generateDescription } from '../services/api';
 
 const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments }) => {
@@ -7,6 +7,7 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
   );
   const [copiedField, setCopiedField] = useState(null);
   const [regeneratingId, setRegeneratingId] = useState(null);
+  const [showDescMenu, setShowDescMenu] = useState(false);
   
   const segmentCount = segments.length;
 
@@ -34,42 +35,78 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
     });
   };
 
-  const downloadAllDescriptions = () => {
-    const lines = segments.map((segment, index) => {
+  const buildDescriptionsHtml = () => {
+    const cards = segments.map((segment) => {
       const desc = segment.description;
-      const segLabel = `Segment ${segment.segment_id} — ${segment.filename}`;
-      const separator = '='.repeat(segLabel.length);
+      if (!desc) return `<div class="card"><h2>${segment.filename}</h2><p class="empty">Описание не сгенерировано</p></div>`;
 
-      if (!desc) {
-        return `${separator}\n${segLabel}\n${separator}\n\nОписание не сгенерировано\n`;
-      }
+      return `<div class="card">
+        <h2>${segment.filename}</h2>
+        ${desc.category ? `<p class="badge">${desc.category}</p>` : ''}
+        ${desc.title ? `<h3>${desc.title}</h3>` : ''}
+        ${desc.description ? `<p class="desc">${desc.description.replace(/\n/g, '<br>')}</p>` : ''}
+        ${desc.guest_bio ? `<div class="guest"><strong>О госте:</strong><br>${desc.guest_bio.replace(/\n/g, '<br>')}</div>` : ''}
+        ${desc.hashtags?.length ? `<p class="tags">${desc.hashtags.join(' ')}</p>` : ''}
+      </div>`;
+    }).join('\n');
 
-      const parts = [
-        `${separator}`,
-        `${segLabel}`,
-        `${separator}`,
-        '',
-      ];
+    return `<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Описания — ${videoId || 'kachan.cuts'}</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f7;margin:0;padding:16px;color:#1d1d1f}
+  .card{background:#fff;border-radius:16px;padding:20px 24px;margin-bottom:20px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+  h2{font-size:14px;color:#888;font-weight:500;margin:0 0 8px}
+  h3{font-size:18px;font-weight:700;margin:4px 0 12px;color:#1d1d1f}
+  .badge{display:inline-block;background:#f0e6ff;color:#7c3aed;border-radius:20px;padding:2px 12px;font-size:12px;font-weight:600;margin-bottom:10px}
+  .desc{font-size:15px;line-height:1.6;color:#333;margin:0 0 12px}
+  .guest{font-size:14px;line-height:1.6;color:#555;background:#f9f9fb;border-radius:10px;padding:12px;margin-bottom:12px}
+  .tags{font-size:13px;color:#7c3aed;margin:0;font-weight:500}
+  .empty{color:#aaa;font-style:italic}
+  @media(prefers-color-scheme:dark){body{background:#1c1c1e;color:#f5f5f7}.card{background:#2c2c2e}.desc{color:#e0e0e0}.guest{background:#3a3a3c;color:#ccc}.badge{background:#3d2a5a}}
+</style></head><body>
+<h1 style="font-size:22px;margin-bottom:20px">🎬 ${videoId || 'kachan.cuts'}</h1>
+${cards}
+</body></html>`;
+  };
 
-      if (desc.category) parts.push(`Категория: ${desc.category}`, '');
-      if (desc.title)    parts.push(`Заголовок: ${desc.title}`, '');
-      if (desc.description) parts.push(`Описание:\n${desc.description}`, '');
-      if (desc.guest_bio)   parts.push(`О госте:\n${desc.guest_bio}`, '');
-      if (desc.hashtags?.length) parts.push(`Хэштеги: ${desc.hashtags.join(' ')}`, '');
-
-      return parts.join('\n');
-    });
-
-    const content = lines.join('\n\n');
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `descriptions_${videoId || 'all'}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+  const downloadAllDescriptions = (format = 'html') => {
+    if (format === 'html') {
+      const html = buildDescriptionsHtml();
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `descriptions_${videoId || 'all'}.html`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } else {
+      const lines = segments.map((segment) => {
+        const desc = segment.description;
+        const segLabel = `Segment ${segment.segment_id} — ${segment.filename}`;
+        const separator = '='.repeat(segLabel.length);
+        if (!desc) return `${separator}\n${segLabel}\n${separator}\n\nОписание не сгенерировано\n`;
+        const parts = [separator, segLabel, separator, ''];
+        if (desc.category) parts.push(`Категория: ${desc.category}`, '');
+        if (desc.title)    parts.push(`Заголовок: ${desc.title}`, '');
+        if (desc.description) parts.push(`Описание:\n${desc.description}`, '');
+        if (desc.guest_bio)   parts.push(`О госте:\n${desc.guest_bio}`, '');
+        if (desc.hashtags?.length) parts.push(`Хэштеги: ${desc.hashtags.join(' ')}`, '');
+        return parts.join('\n');
+      });
+      const content = lines.join('\n\n');
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `descriptions_${videoId || 'all'}.txt`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handleDownloadTranscription = () => {
@@ -325,15 +362,43 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
             </svg>
             Скачать все ({segmentCount})
           </button>
-          <button
-            onClick={downloadAllDescriptions}
-            className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-sm font-medium rounded-lg text-white bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-sm transition"
-          >
-            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            Скачать описания (.txt)
-          </button>
+          <div className="relative flex-1">
+            <div className="flex rounded-lg overflow-hidden shadow-sm">
+              <button
+                onClick={() => downloadAllDescriptions('html')}
+                className="flex-1 inline-flex items-center justify-center px-4 py-2.5 text-sm font-medium text-white bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 transition"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Описания (.html)
+              </button>
+              <button
+                onClick={() => setShowDescMenu(v => !v)}
+                className="px-2 py-2.5 text-white bg-teal-600 hover:bg-teal-700 border-l border-teal-400 transition"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+            {showDescMenu && (
+              <div className="absolute bottom-full mb-1 right-0 bg-white border border-gray-200 rounded-lg shadow-lg z-10 min-w-[140px]">
+                <button
+                  onClick={() => { downloadAllDescriptions('html'); setShowDescMenu(false); }}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 text-gray-700"
+                >
+                  📄 Скачать .html
+                </button>
+                <button
+                  onClick={() => { downloadAllDescriptions('txt'); setShowDescMenu(false); }}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 text-gray-700"
+                >
+                  📝 Скачать .txt
+                </button>
+              </div>
+            )}
+          </div>
           <button
             onClick={onBackToSegments}
             className="btn-secondary"
