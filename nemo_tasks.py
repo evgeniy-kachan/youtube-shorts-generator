@@ -100,6 +100,80 @@ def _parse_rttm(rttm_path: str) -> List[Dict]:
     return sorted(segments, key=lambda x: x["start"])
 
 
+def _detect_speaker_genders(wav_path: str, segments: List[Dict]) -> Dict[str, str]:
+    """
+    Detect gender for each speaker using fundamental frequency (F0) analysis.
+
+    Male voices:   median F0 ~85–165 Hz
+    Female voices: median F0 ~165–255 Hz
+    Threshold: 165 Hz
+
+    Returns dict: {speaker_id: "male"/"female"/"unknown"}
+    """
+    try:
+        import librosa
+        import numpy as np
+
+        audio, sr = librosa.load(wav_path, sr=16000, mono=True)
+        total_dur = len(audio) / sr
+
+        # Collect F0 samples per speaker
+        speaker_f0: Dict[str, list] = {}
+        for seg in segments:
+            spk = seg["speaker"]
+            start = seg["start"]
+            end = min(seg["end"], total_dur)
+            dur = end - start
+            if dur < 0.3:
+                continue
+
+            # Extract audio chunk for this segment
+            s = int(start * sr)
+            e = int(end * sr)
+            chunk = audio[s:e]
+
+            # Compute F0 with pyin (robust for speech)
+            try:
+                f0, voiced_flag, _ = librosa.pyin(
+                    chunk,
+                    fmin=60.0,
+                    fmax=400.0,
+                    sr=sr,
+                    frame_length=2048,
+                )
+                voiced_f0 = f0[voiced_flag & ~np.isnan(f0)]
+                if len(voiced_f0) > 0:
+                    speaker_f0.setdefault(spk, []).extend(voiced_f0.tolist())
+            except Exception:
+                pass
+
+        # Classify each speaker
+        genders: Dict[str, str] = {}
+        THRESHOLD_HZ = 165.0
+        for spk, f0_vals in speaker_f0.items():
+            if not f0_vals:
+                genders[spk] = "unknown"
+                continue
+            median_f0 = float(np.median(f0_vals))
+            gender = "female" if median_f0 >= THRESHOLD_HZ else "male"
+            genders[spk] = gender
+            logger.info(
+                "Gender detection: %s → median F0=%.1f Hz → %s",
+                spk, median_f0, gender
+            )
+
+        # Speakers with no voiced frames → unknown
+        all_speakers = set(s["speaker"] for s in segments)
+        for spk in all_speakers:
+            genders.setdefault(spk, "unknown")
+
+        return genders
+
+    except Exception as e:
+        logger.warning("Gender detection failed: %s", e)
+        return {s["speaker"]: "unknown" for s in segments}
+
+
 def _get_multiscale_params(duration: float, gpu_memory_gb: float = 6.0):
     """
     Choose multi-scale parameters based on audio duration and GPU memory.
@@ -371,6 +445,11 @@ def nemo_diarize_task(
             if not segments:
                 raise RuntimeError("NeMo RTTM file is empty — no speech segments found")
             
+            # Detect speaker genders via F0 analysis
+            logger.info("Running gender detection via F0 analysis...")
+            speaker_genders = _detect_speaker_genders(wav_path, segments)
+            logger.info(f"Gender results: {speaker_genders}")
+            
             # Statistics
             speakers = set(s["speaker"] for s in segments)
             total_speech = sum(s["end"] - s["start"] for s in segments)
@@ -384,6 +463,7 @@ def nemo_diarize_task(
                 "segments": segments,
                 "num_speakers": len(speakers),
                 "total_speech_duration": total_speech,
+                "speaker_genders": speaker_genders,
             }
     
     except torch.cuda.OutOfMemoryError as oom:

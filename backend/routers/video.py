@@ -148,7 +148,12 @@ def _extract_unique_speakers(segments: list[dict]) -> list[str]:
     return order
 
 
-def _build_voice_plan(segments: list[dict], mix: str, num_speakers: int = 0) -> dict[str, str]:
+def _build_voice_plan(
+    segments: list[dict],
+    mix: str,
+    num_speakers: int = 0,
+    speaker_genders: dict[str, str] | None = None,
+) -> dict[str, str]:
     pattern = VOICE_MIX_PRESETS.get(mix, VOICE_MIX_PRESETS["male_duo"])
     male_pool = config.ELEVENLABS_VOICE_IDS_MALE or [config.ELEVENLABS_VOICE_ID]
     female_pool = config.ELEVENLABS_VOICE_IDS_FEMALE or [config.ELEVENLABS_VOICE_ID]
@@ -157,21 +162,38 @@ def _build_voice_plan(segments: list[dict], mix: str, num_speakers: int = 0) -> 
 
     plan: dict[str, str] = {}
     speakers = _extract_unique_speakers(segments)
-    
+
     # If user specified num_speakers, ensure we have voice mappings for all potential speakers
     if num_speakers >= 2:
-        # Add speaker names that might be assigned during processing
         for i in range(num_speakers):
             speaker_name = f"SPEAKER_{i:02d}"
             if speaker_name not in speakers:
                 speakers.append(speaker_name)
 
+    nemo_genders = speaker_genders or {}
+    gender_source = "NeMo F0" if nemo_genders else "voice mix preset"
+    logger.info("Building voice plan using %s for %d speakers", gender_source, len(speakers))
+
     for idx, speaker_id in enumerate(speakers):
-        desired_gender = pattern[min(idx, len(pattern) - 1)]
+        # Priority: NeMo gender detection > voice mix preset
+        detected = nemo_genders.get(speaker_id, "unknown")
+        if detected == "female":
+            desired_gender = "female"
+        elif detected == "male":
+            desired_gender = "male"
+        else:
+            # Fallback to preset pattern
+            desired_gender = pattern[min(idx, len(pattern) - 1)]
+
         if desired_gender == "female":
             plan[speaker_id] = next(female_iter)
         else:
             plan[speaker_id] = next(male_iter)
+
+        logger.info(
+            "  %s → gender=%s (detected=%s) → voice=%s",
+            speaker_id, desired_gender, detected, plan[speaker_id]
+        )
 
     plan["__default__"] = plan.get(speakers[0], config.ELEVENLABS_VOICE_ID) if speakers else config.ELEVENLABS_VOICE_ID
     return plan
@@ -1200,7 +1222,13 @@ def _process_segments_task(
         tts_service = get_tts_service(tts_provider)
         voice_plan = None
         if (tts_provider or "").lower() == "elevenlabs":
-            voice_plan = _build_voice_plan(segments_to_process, voice_mix, num_speakers)
+            # Use NeMo gender detection if available
+            nemo_diar = cached_data.get("nemo_diarization", {})
+            nemo_speaker_genders = nemo_diar.get("speaker_genders", {}) if nemo_diar else {}
+            voice_plan = _build_voice_plan(
+                segments_to_process, voice_mix, num_speakers,
+                speaker_genders=nemo_speaker_genders,
+            )
         output_dir = get_output_dir(video_id)
         
         for segment in segments_to_process:
@@ -2616,6 +2644,7 @@ def _nemo_diarization_task(
         speaker_stats = nemo_result.get("speaker_stats", {})
         num_speakers_detected = nemo_result.get("num_speakers", len(speaker_stats))
         total_speech = nemo_result.get("total_speech_duration", 0)
+        speaker_genders = nemo_result.get("speaker_genders", {})
         
         tasks[task_id] = {"status": "processing", "progress": 0.8, "message": "Обработка результатов диаризации..."}
         
@@ -2647,8 +2676,11 @@ def _nemo_diarization_task(
                 "num_speakers": num_speakers_detected,
                 "speaker_stats": speaker_stats,
                 "total_speech_duration": total_speech,
+                "speaker_genders": speaker_genders,
                 "timestamp": datetime.now().isoformat(),
             }
+            if speaker_genders:
+                logger.info("NeMo speaker genders: %s", speaker_genders)
             
             # Apply NeMo diarization to segment dialogues
             if "segments" in cached:
