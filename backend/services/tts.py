@@ -2796,92 +2796,94 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             vs.get("end_time_seconds", 0)
                         )
             
-            # Calculate how much silence to insert between each turn
-            # Gap[i] = original pause before turn i (from original video timing)
-            # We need to insert (gap[i] - actual_gap[i]) silence
+            # ── PHRASE-LEVEL SYNC ─────────────────────────────────────────────
+            # Align each turn's START time with the original English start time.
+            # When Russian TTS finishes a phrase faster than English, we insert
+            # a pause so the NEXT phrase starts together with English.
             #
-            # DISABLED: Silence insertion causes audio artifacts (stuttering/cutting)
-            # because ElevenLabs TTD generates continuous audio without gaps.
-            # When we cut and insert silence, we may cut in the middle of a word.
-            # Instead, we rely on FFmpeg tempo adjustment to match timing.
-            ENABLE_SILENCE_INSERTION = False
-            
-            inserted_silences = []
+            # Rollback: set env var  TTD_PHRASE_SYNC=false  (no restart needed if
+            # the service reads env at call-time; restart service to apply).
+            #
+            # Algorithm:
+            #   en_start_i   = dialogue_turns[i]["start"] - segment_start   (English ref)
+            #   tts_raw_i    = segment_timing_raw[i]["start"] + leading_sec  (TTD audio)
+            #   output_pos_i = tts_raw_i + cumulative_offset                 (where it lands)
+            #   silence      = en_start_i - output_pos_i   (positive → Russian was faster)
+            #
+            # We only insert silence when:
+            #   • Russian was faster (silence > 0)
+            #   • Gain is significant (> PHRASE_SYNC_MIN_MS)
+            #   • Not the very last turn (no point inserting silence at the end)
+            #
+            PHRASE_SYNC_ENABLED = os.getenv("TTD_PHRASE_SYNC", "true").lower() in ("true", "1", "yes")
+            PHRASE_SYNC_MIN_MS  = 150   # Ignore micro-gaps below 150 ms
+            PHRASE_SYNC_CF_MS   = 30    # Crossfade duration at splice points (ms)
+            PHRASE_SYNC_MAX_MS  = 3000  # Cap single insertion at 3 s to avoid runaway
+
+            segment_start_abs = dialogue_turns[0].get("start", 0.0)
+            insertions: list[tuple[int, int]] = []  # (cut_ms_in_original, silence_ms)
+
             for i in range(1, len(dialogue_turns)):
-                if i >= len(gaps):
-                    break
-                
-                original_gap = gaps[i]  # Gap from original video
-                
-                # Calculate actual gap in TTS audio
-                prev_timing = segment_timing_raw.get(i - 1, {})
-                curr_timing = segment_timing_raw.get(i, {})
-                prev_end = prev_timing.get("end", 0)
-                curr_start = curr_timing.get("start", prev_end)
-                actual_gap = max(0, curr_start - prev_end)
-                
-                # How much extra silence do we need?
-                extra_silence = max(0, original_gap - actual_gap)
-                
-                if extra_silence > 0.1 and ENABLE_SILENCE_INSERTION:  # Only insert if > 100ms
-                    inserted_silences.append((i, extra_silence, original_gap, actual_gap))
-                    cumulative_offset += extra_silence
-                    
-                turn_offsets[i] = cumulative_offset
-            
-            # Actually insert silences into audio
-            if inserted_silences and ENABLE_SILENCE_INSERTION:
-                logger.info(
-                    "TTD SYNC: Inserting %d silences (total %.2fs) to match original timing",
-                    len(inserted_silences),
-                    sum(s[1] for s in inserted_silences),
-                )
-                
-                # Rebuild audio with inserted silences
-                # We need to cut and splice the audio
-                new_audio = AudioSegment.empty()
-                last_cut_ms = 0
-                
-                for turn_idx, extra_sec, orig_gap, actual_gap in inserted_silences:
-                    # Get timing for PREVIOUS turn and CURRENT turn
-                    prev_timing = segment_timing_raw.get(turn_idx - 1, {})
-                    curr_timing = segment_timing_raw.get(turn_idx, {})
-                    
-                    prev_end_sec = prev_timing.get("end", 0) + leading_sec
-                    curr_start_sec = curr_timing.get("start", 0) + leading_sec
-                    
-                    # The gap in original TTS audio between prev turn end and curr turn start
-                    tts_gap_sec = max(0, curr_start_sec - prev_end_sec)
-                    
-                    # We want to insert silence BETWEEN turns, not cut audio
-                    # Strategy: include all audio up to curr_start, then insert silence
-                    # This preserves any audio "tail" from the previous turn
-                    
-                    cut_point_ms = int(curr_start_sec * 1000)
-                    
-                    # Add audio from last cut to current turn start
-                    if cut_point_ms > last_cut_ms:
-                        new_audio += audio[last_cut_ms:cut_point_ms]
-                    
-                    # Insert the required silence
-                    silence_ms = int(extra_sec * 1000)
-                    new_audio += AudioSegment.silent(duration=silence_ms, frame_rate=self.sample_rate)
-                    
+                # English reference: when this turn should start (relative to segment)
+                en_start_i = dialogue_turns[i].get("start", 0.0) - segment_start_abs
+
+                # TTD raw start (before any offsets)
+                tts_raw_i = segment_timing_raw.get(i, {}).get("start", 0.0) + leading_sec
+
+                # Where this turn currently lands in output after prior insertions
+                output_pos_i = tts_raw_i + cumulative_offset
+
+                silence_needed_sec = en_start_i - output_pos_i
+
+                if PHRASE_SYNC_ENABLED and silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS:
+                    silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
+                    cut_ms = int(tts_raw_i * 1000)
+                    insertions.append((cut_ms, silence_ms))
+                    cumulative_offset += silence_ms / 1000.0
                     logger.info(
-                        "  Turn %d: cut at %.2fs, inserted %.2fs silence (prev_end=%.2fs, curr_start=%.2fs, tts_gap=%.2fs, orig_gap=%.2fs)",
-                        turn_idx, curr_start_sec, extra_sec, prev_end_sec, curr_start_sec, tts_gap_sec, orig_gap
+                        "PHRASE_SYNC turn %d: en=%.2fs tts_out=%.2fs → +%.0fms silence",
+                        i, en_start_i, output_pos_i, silence_ms,
                     )
-                    
-                    # Continue from curr_start (we've already included audio up to this point)
-                    last_cut_ms = cut_point_ms
-                
-                # Add remaining audio
-                if last_cut_ms < len(audio):
-                    new_audio += audio[last_cut_ms:]
-                
-                audio = new_audio
-                logger.info("TTD SYNC: Audio extended from %.2fs to %.2fs", 
-                           len(audio) / 1000.0 - cumulative_offset, len(audio) / 1000.0)
+                else:
+                    if PHRASE_SYNC_ENABLED and silence_needed_sec < -0.1:
+                        logger.debug(
+                            "PHRASE_SYNC turn %d: Russian %.0fms LONGER than English — no pause inserted",
+                            i, -silence_needed_sec * 1000,
+                        )
+
+                turn_offsets[i] = cumulative_offset
+
+            # Apply insertions sequentially into the audio with crossfade splicing.
+            # We track how much silence was already added (offset_ms) to adjust
+            # subsequent cut positions in the growing audio buffer.
+            if insertions:
+                logger.info(
+                    "PHRASE_SYNC: Inserting %d pauses, total +%.2fs",
+                    len(insertions), sum(s for _, s in insertions) / 1000.0,
+                )
+                offset_ms = 0
+                for cut_ms_orig, silence_ms in insertions:
+                    # Actual position in the already-modified audio
+                    cut_ms = cut_ms_orig + offset_ms
+
+                    before = audio[:cut_ms]
+                    after  = audio[cut_ms:]
+
+                    # Crossfade: smooth the splice to avoid click artifacts
+                    cf = min(PHRASE_SYNC_CF_MS, max(0, len(before) // 2 - 1), max(0, len(after) // 2 - 1))
+                    if cf > 5:
+                        before = before.fade_out(cf)
+                        after  = after.fade_in(cf)
+
+                    silence = AudioSegment.silent(duration=silence_ms, frame_rate=audio.frame_rate)
+                    audio = before + silence + after
+                    offset_ms += silence_ms
+
+                audio_before_sec = (len(audio) - offset_ms) / 1000.0
+                logger.info(
+                    "PHRASE_SYNC: Done. %.2fs → %.2fs (+%.2fs)",
+                    audio_before_sec, len(audio) / 1000.0, offset_ms / 1000.0,
+                )
         
         # Add trailing silence buffer to prevent last word from being cut off
         # ElevenLabs sometimes returns audio shorter than the last voice segment end time
