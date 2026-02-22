@@ -2888,8 +2888,36 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     len(insertions), sum(s for _, s in insertions) / 1000.0,
                 )
                 offset_ms = 0
-                for cut_ms_orig, silence_ms in insertions:
+                for idx_ins, (cut_ms_orig, silence_ms) in enumerate(insertions):
                     cut_ms = cut_ms_orig + offset_ms
+
+                    # ── Diagnostic: verify cut is in the inter-turn gap ──────────
+                    # Find which turn pair this cut belongs to (1-based insertion index)
+                    # turn_i is the turn AFTER the cut
+                    turn_i_for_cut = None
+                    for chk_i in range(1, len(dialogue_turns)):
+                        pr_end = segment_timing_raw.get(chk_i - 1, {}).get("end", 0.0) + leading_sec
+                        expected_cut = int((pr_end + 0.05) * 1000)
+                        if expected_cut == cut_ms_orig:
+                            turn_i_for_cut = chk_i
+                            break
+                    if turn_i_for_cut is not None:
+                        prev_end_ms = int((segment_timing_raw.get(turn_i_for_cut - 1, {}).get("end", 0.0) + leading_sec) * 1000)
+                        next_start_ms = int((segment_timing_raw.get(turn_i_for_cut, {}).get("start", 0.0) + leading_sec) * 1000)
+                        gap_ms = next_start_ms - prev_end_ms
+                        safe = prev_end_ms <= cut_ms_orig <= next_start_ms
+                        safe_str = "✓ in gap" if safe else "⚠ OUTSIDE GAP"
+                        logger.info(
+                            "PHRASE_SYNC cut #%d: pos=%.3fs  prev_turn_end=%.3fs  next_turn_start=%.3fs  gap=%dms  %s  +%dms silence",
+                            idx_ins + 1,
+                            cut_ms_orig / 1000.0,
+                            prev_end_ms / 1000.0,
+                            next_start_ms / 1000.0,
+                            gap_ms,
+                            safe_str,
+                            silence_ms,
+                        )
+                    # ────────────────────────────────────────────────────────────
 
                     before = audio[:cut_ms]
                     after  = audio[cut_ms:]
