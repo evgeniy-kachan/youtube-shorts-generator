@@ -2825,6 +2825,19 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             segment_timing_raw[input_idx]["end"],
                             vs.get("end_time_seconds", 0)
                         )
+
+            # Pre-parse word-level timestamps so PHRASE_SYNC can use the real
+            # last-word end time per turn instead of the unreliable voice_segment
+            # end_time_seconds (ElevenLabs often inflates it by 1-3 seconds).
+            try:
+                _early_words = self._parse_alignment_to_words(alignment, voice_segments)
+            except Exception:
+                _early_words = {}
+            # last_word_end_by_turn[i] = last word's end time for turn i (seconds, raw)
+            last_word_end_by_turn: dict[int, float] = {}
+            for _ti, _wds in _early_words.items():
+                if _wds:
+                    last_word_end_by_turn[_ti] = _wds[-1].get("end", 0.0)
             
             # ── PHRASE-LEVEL SYNC ─────────────────────────────────────────────
             # Align each turn's START time with the original English start time.
@@ -2885,11 +2898,22 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
                 if PHRASE_SYNC_ENABLED and silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS:
                     silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
-                    # Cut after the PREVIOUS turn ends (+50ms buffer), not at the START of
-                    # the current turn. This avoids cutting into the last word of the
-                    # previous turn when voice_segments start_time has slight imprecision.
-                    prev_raw_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
-                    cut_ms = int((prev_raw_end + 0.05) * 1000)
+                    # Use the real last-word end time for the cut position.
+                    # voice_segments end_time_seconds is often inflated by 1-3s and
+                    # would place the cut inside the next turn's first word.
+                    # Fallback to segment_timing_raw only when word timestamps unavailable.
+                    if (i - 1) in last_word_end_by_turn:
+                        prev_raw_end = last_word_end_by_turn[i - 1] + leading_sec
+                        logger.info(
+                            "PHRASE_SYNC turn %d: cut based on last word end=%.3fs "
+                            "(segment_timing_raw was %.3fs)",
+                            i,
+                            prev_raw_end,
+                            segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec,
+                        )
+                    else:
+                        prev_raw_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
+                    cut_ms = int((prev_raw_end + 0.20) * 1000)  # 200ms buffer after last word
                     insertions.append((cut_ms, silence_ms))
                     cumulative_offset += silence_ms / 1000.0
                     action = f"+{silence_ms}ms pause ✓"
