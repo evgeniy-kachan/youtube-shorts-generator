@@ -2637,6 +2637,7 @@ def _nemo_diarization_task(
             audio_path=video_path,
             num_speakers=num_speakers,
             max_speakers=max_speakers,
+            voice_mix=voice_mix,
         )
         
         tasks[task_id] = {"status": "processing", "progress": 0.2, "message": "🧠 NeMo анализирует спикеров на GPU (1-3 мин)..."}

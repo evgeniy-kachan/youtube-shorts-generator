@@ -182,6 +182,7 @@ class TaskQueue:
         audio_path: str,
         num_speakers: int = 0,
         max_speakers: int = 8,
+        voice_mix: str = "male_duo",
         timeout: int = 3600,  # 1 hour for long videos
     ) -> JobWrapper:
         """
@@ -191,6 +192,7 @@ class TaskQueue:
         This prevents CUDA context conflicts - nemo-worker has its own CUDA context.
         
         Returns full diarization result with speaker stats.
+        voice_mix controls whether gender detection runs (only for "mixed_duo").
         """
         # Use separate nemo_tasks queue - processed by remote Selectel nemo-worker
         # The remote worker has nemo_tasks.py in /opt/nemo-worker/
@@ -199,6 +201,7 @@ class TaskQueue:
             audio_path=audio_path,
             num_speakers=num_speakers,
             max_speakers=max_speakers,
+            voice_mix=voice_mix,
             job_timeout=timeout,
         )
         

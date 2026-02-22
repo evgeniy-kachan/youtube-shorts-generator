@@ -231,6 +231,7 @@ def nemo_diarize_task(
     audio_path: str,
     num_speakers: int = 0,
     max_speakers: int = 8,
+    voice_mix: str = "male_duo",
 ) -> Dict[str, Any]:
     """
     NeMo MSDD diarization task.
@@ -239,6 +240,7 @@ def nemo_diarize_task(
         audio_path: Path or filename of audio on main server
         num_speakers: Fixed number of speakers (0 for auto-detect)
         max_speakers: Maximum speakers for auto-detection
+        voice_mix: Voice mix mode. Gender detection only runs when "mixed_duo".
     
     Returns:
         Dict with segments, num_speakers, etc.
@@ -445,10 +447,14 @@ def nemo_diarize_task(
             if not segments:
                 raise RuntimeError("NeMo RTTM file is empty — no speech segments found")
             
-            # Detect speaker genders via F0 analysis
-            logger.info("Running gender detection via F0 analysis...")
-            speaker_genders = _detect_speaker_genders(wav_path, segments)
-            logger.info(f"Gender results: {speaker_genders}")
+            # Detect speaker genders via F0 analysis — only for mixed_duo mode
+            if voice_mix == "mixed_duo":
+                logger.info("Running gender detection via F0 analysis (voice_mix=mixed_duo)...")
+                speaker_genders = _detect_speaker_genders(wav_path, segments)
+                logger.info(f"Gender results: {speaker_genders}")
+            else:
+                logger.info(f"Skipping gender detection (voice_mix={voice_mix}, only runs for mixed_duo)")
+                speaker_genders = {}
             
             # Statistics
             speakers = set(s["speaker"] for s in segments)

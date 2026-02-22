@@ -100,35 +100,126 @@ def _parse_rttm(rttm_path: str) -> List[Dict]:
     return sorted(segments, key=lambda x: x["start"])
 
 
+def _detect_speaker_genders(wav_path: str, segments: List[Dict]) -> Dict[str, str]:
+    """
+    Detect gender for each speaker using fundamental frequency (F0) analysis.
+
+    Male voices:   median F0 ~85–165 Hz
+    Female voices: median F0 ~165–255 Hz
+    Threshold: 165 Hz
+
+    Returns dict: {speaker_id: "male"/"female"/"unknown"}
+    """
+    try:
+        import librosa
+        import numpy as np
+
+        audio, sr = librosa.load(wav_path, sr=16000, mono=True)
+        total_dur = len(audio) / sr
+
+        # Collect F0 samples per speaker
+        speaker_f0: Dict[str, list] = {}
+        for seg in segments:
+            spk = seg["speaker"]
+            start = seg["start"]
+            end = min(seg["end"], total_dur)
+            dur = end - start
+            if dur < 0.3:
+                continue
+
+            # Extract audio chunk for this segment
+            s = int(start * sr)
+            e = int(end * sr)
+            chunk = audio[s:e]
+
+            # Compute F0 with pyin (robust for speech)
+            try:
+                f0, voiced_flag, _ = librosa.pyin(
+                    chunk,
+                    fmin=60.0,
+                    fmax=400.0,
+                    sr=sr,
+                    frame_length=2048,
+                )
+                voiced_f0 = f0[voiced_flag & ~np.isnan(f0)]
+                if len(voiced_f0) > 0:
+                    speaker_f0.setdefault(spk, []).extend(voiced_f0.tolist())
+            except Exception:
+                pass
+
+        # Classify each speaker
+        genders: Dict[str, str] = {}
+        THRESHOLD_HZ = 165.0
+        for spk, f0_vals in speaker_f0.items():
+            if not f0_vals:
+                genders[spk] = "unknown"
+                continue
+            median_f0 = float(np.median(f0_vals))
+            gender = "female" if median_f0 >= THRESHOLD_HZ else "male"
+            genders[spk] = gender
+            logger.info(
+                "Gender detection: %s → median F0=%.1f Hz → %s",
+                spk, median_f0, gender
+            )
+
+        # Speakers with no voiced frames → unknown
+        all_speakers = set(s["speaker"] for s in segments)
+        for spk in all_speakers:
+            genders.setdefault(spk, "unknown")
+
+        return genders
+
+    except Exception as e:
+        logger.warning("Gender detection failed: %s", e)
+        return {s["speaker"]: "unknown" for s in segments}
+
+
 def _get_multiscale_params(duration: float, gpu_memory_gb: float = 6.0):
     """
     Choose multi-scale parameters based on audio duration and GPU memory.
     
-    For long files on small GPUs (e.g. RTX A2000 6GB), reduce scales
-    to prevent CUDA OOM during clustering (affinity matrix N×N).
+    The affinity matrix is N×N where N ~ segments count (duration / min_window).
+    For long audio this grows quadratically, causing OOM even on T4 (16GB).
     
-    - Short (<30min): 5 scales (best quality)
-    - Medium (30-90min): 3 scales (good quality, safe for 6GB)
-    - Long (>90min): 2 scales (acceptable quality, minimal memory)
+    Strategy:
+    - Short  (<30min):            5 scales (best quality, any GPU)
+    - Medium (30-90min):          5 scales for >=12GB, 3 scales for smaller
+    - Long   (90-120min):         3 scales for any GPU
+    - Very long (>120min):        2 scales for any GPU
     """
     duration_min = duration / 60.0
     
-    if duration_min <= 30 or gpu_memory_gb >= 12:
-        # Full 5-scale for short audio or large GPUs
+    if duration_min <= 30:
+        # Full 5-scale for short audio on any GPU
         return {
             "window_length_in_sec": [1.5, 1.25, 1.0, 0.75, 0.5],
             "shift_length_in_sec": [0.75, 0.625, 0.5, 0.375, 0.25],
             "multiscale_weights": [1, 1, 1, 1, 1],
         }
     elif duration_min <= 90:
-        # 3 scales for medium audio on 6GB GPU
+        if gpu_memory_gb >= 12:
+            # 5 scales for medium audio on T4/large GPU
+            return {
+                "window_length_in_sec": [1.5, 1.25, 1.0, 0.75, 0.5],
+                "shift_length_in_sec": [0.75, 0.625, 0.5, 0.375, 0.25],
+                "multiscale_weights": [1, 1, 1, 1, 1],
+            }
+        else:
+            # 3 scales for medium audio on small GPU
+            return {
+                "window_length_in_sec": [1.5, 1.0, 0.5],
+                "shift_length_in_sec": [0.75, 0.5, 0.25],
+                "multiscale_weights": [1, 1, 1],
+            }
+    elif duration_min <= 120:
+        # 3 scales for long audio (90-120min) on any GPU
         return {
             "window_length_in_sec": [1.5, 1.0, 0.5],
             "shift_length_in_sec": [0.75, 0.5, 0.25],
             "multiscale_weights": [1, 1, 1],
         }
     else:
-        # 2 scales for very long audio (>90 min) on 6GB GPU
+        # 2 scales for very long audio (>120 min) on any GPU
         return {
             "window_length_in_sec": [1.5, 0.75],
             "shift_length_in_sec": [0.75, 0.375],
@@ -140,6 +231,7 @@ def nemo_diarize_task(
     audio_path: str,
     num_speakers: int = 0,
     max_speakers: int = 8,
+    voice_mix: str = "male_duo",
 ) -> Dict[str, Any]:
     """
     NeMo MSDD diarization task.
@@ -148,6 +240,7 @@ def nemo_diarize_task(
         audio_path: Path or filename of audio on main server
         num_speakers: Fixed number of speakers (0 for auto-detect)
         max_speakers: Maximum speakers for auto-detection
+        voice_mix: Voice mix mode. Gender detection only runs when "mixed_duo".
     
     Returns:
         Dict with segments, num_speakers, etc.
@@ -186,7 +279,29 @@ def nemo_diarize_task(
             torch.cuda.empty_cache()
             torch.cuda.set_device(0)
             
-            gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            total_mem = torch.cuda.get_device_properties(0).total_memory
+            free_mem, _ = torch.cuda.mem_get_info(0)
+            gpu_memory_gb = total_mem / (1024**3)
+            free_gb = free_mem / (1024**3)
+            
+            logger.info(
+                f"CUDA device: {torch.cuda.get_device_name(0)}, "
+                f"VRAM total: {gpu_memory_gb:.1f} GB, free: {free_gb:.1f} GB"
+            )
+            
+            if free_gb < 2.0:
+                logger.warning(
+                    f"Low GPU memory before start ({free_gb:.1f} GB free). "
+                    f"Forcing full cache clear..."
+                )
+                # Aggressive cleanup: run gc several times to free cyclic refs
+                for _ in range(3):
+                    gc.collect()
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                free_mem, _ = torch.cuda.mem_get_info(0)
+                free_gb = free_mem / (1024**3)
+                logger.info(f"After aggressive cleanup: {free_gb:.1f} GB free")
             
             # Warm up cuBLAS with realistic matrix size
             a = torch.randn(64, 64, device='cuda')
@@ -332,6 +447,15 @@ def nemo_diarize_task(
             if not segments:
                 raise RuntimeError("NeMo RTTM file is empty — no speech segments found")
             
+            # Detect speaker genders via F0 analysis — only for mixed_duo mode
+            if voice_mix == "mixed_duo":
+                logger.info("Running gender detection via F0 analysis (voice_mix=mixed_duo)...")
+                speaker_genders = _detect_speaker_genders(wav_path, segments)
+                logger.info(f"Gender results: {speaker_genders}")
+            else:
+                logger.info(f"Skipping gender detection (voice_mix={voice_mix}, only runs for mixed_duo)")
+                speaker_genders = {}
+            
             # Statistics
             speakers = set(s["speaker"] for s in segments)
             total_speech = sum(s["end"] - s["start"] for s in segments)
@@ -345,6 +469,7 @@ def nemo_diarize_task(
                 "segments": segments,
                 "num_speakers": len(speakers),
                 "total_speech_duration": total_speech,
+                "speaker_genders": speaker_genders,
             }
     
     except torch.cuda.OutOfMemoryError as oom:
