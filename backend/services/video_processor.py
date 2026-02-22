@@ -702,6 +702,7 @@ class VideoProcessor:
         target_duration: float | None = None,
         background_audio_path: str | None = None,
         background_volume_db: float = -20.0,
+        dialogue: list[dict] | None = None,
     ) -> str:
         """
         Add TTS audio and stylized subtitles to video.
@@ -1125,6 +1126,7 @@ class VideoProcessor:
                 target_duration=duration,
                 background_audio_path=str(background_audio_path) if background_audio_path else None,
                 background_volume_db=-20.0,
+                dialogue=dialogue_turns if dialogue_turns else None,
             )
 
             return processed_path
