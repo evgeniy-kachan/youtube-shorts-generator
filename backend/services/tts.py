@@ -3159,27 +3159,45 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     words_by_input = temp_words_by_input
             
             # Apply timing to dialogue turns (with inserted silence offsets)
-            # Two-phase approach: first assign API-timed turns, then distribute
-            # groups of consecutive non-API turns proportionally by word count
             num_inputs = min(len(dialogue_turns), len(inputs))
-            
-            # Phase 1: classify turns and assign API-timed ones
-            api_timed = [False] * num_inputs
-            for idx in range(num_inputs):
-                timing = segment_timing.get(idx, {})
-                offset = turn_offsets[idx] if idx < len(turn_offsets) else 0.0
-                s = timing.get("start", 0) + leading_sec + offset
-                e = timing.get("end", 0) + leading_sec + offset
-                if (e - s) >= 0.1:
-                    api_timed[idx] = True
-                    turn = dialogue_turns[idx]
-                    turn["tts_start_offset"] = s
-                    turn["tts_duration"] = e - s
-                    turn["tts_end_offset"] = e
-                    turn["_timing_source"] = "api"
-            
-            api_count = sum(api_timed)
-            interp_count = num_inputs - api_count
+
+            # When Whisper ran on raw audio we have authoritative word positions.
+            # Derive turn-level timing from the first/last word of each turn
+            # instead of using unreliable ElevenLabs voice_segment data.
+            if whisper_raw_words:
+                _base_w = 0.0  # Whisper timestamps are absolute
+                api_timed = [False] * num_inputs
+                for idx in range(num_inputs):
+                    offset = turn_offsets[idx] if idx < len(turn_offsets) else 0.0
+                    wds = whisper_raw_words.get(idx)
+                    if wds:
+                        s = wds[0]["start"] + _base_w + offset
+                        e = wds[-1]["end"] + _base_w + offset
+                        api_timed[idx] = True
+                        turn = dialogue_turns[idx]
+                        turn["tts_start_offset"] = s
+                        turn["tts_duration"] = e - s
+                        turn["tts_end_offset"] = e
+                        turn["_timing_source"] = "whisper"
+                api_count = sum(api_timed)
+                interp_count = num_inputs - api_count
+            else:
+                # Fallback: use ElevenLabs voice_segment timing
+                api_timed = [False] * num_inputs
+                for idx in range(num_inputs):
+                    timing = segment_timing.get(idx, {})
+                    offset = turn_offsets[idx] if idx < len(turn_offsets) else 0.0
+                    s = timing.get("start", 0) + leading_sec + offset
+                    e = timing.get("end", 0) + leading_sec + offset
+                    if (e - s) >= 0.1:
+                        api_timed[idx] = True
+                        turn = dialogue_turns[idx]
+                        turn["tts_start_offset"] = s
+                        turn["tts_duration"] = e - s
+                        turn["tts_end_offset"] = e
+                        turn["_timing_source"] = "api"
+                api_count = sum(api_timed)
+                interp_count = num_inputs - api_count
             
             # Phase 2: distribute groups of consecutive non-API turns
             INTERP_GAP = 0.05
@@ -3356,141 +3374,129 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     )
             
             # POST-PROCESSING: Fix bunched/overlapping turns
-            # ElevenLabs TTD sometimes returns multiple turns ending at the same time
-            # This causes subtitle overlaps. We need to detect and redistribute them.
-            
-            MIN_TURN_DURATION = 0.4  # Minimum 400ms per turn for subtitles
-            TURN_GAP = 0.05  # 50ms gap between turns
-            BUNCH_THRESHOLD = 0.15  # Turns ending within 150ms are "bunched"
-            
-            # Step 1: Find groups of bunched turns (same end time)
-            num_turns = min(len(dialogue_turns), len(inputs))
-            bunched_groups = []
-            i = 0
-            while i < num_turns:
-                group_start = i
-                group_end = i
-                base_end_time = dialogue_turns[i].get("tts_end_offset", 0)
-                
-                # Find all consecutive turns that end at approximately the same time
-                while group_end + 1 < num_turns:
-                    next_end_time = dialogue_turns[group_end + 1].get("tts_end_offset", 0)
-                    if abs(next_end_time - base_end_time) < BUNCH_THRESHOLD:
-                        group_end += 1
+            # Skip entirely when Whisper provided authoritative timestamps —
+            # the ElevenLabs-based bunched detection would only corrupt them.
+            if not whisper_raw_words:
+                MIN_TURN_DURATION = 0.4
+                TURN_GAP = 0.05
+                BUNCH_THRESHOLD = 0.15
+
+                num_turns = min(len(dialogue_turns), len(inputs))
+                bunched_groups = []
+                i = 0
+                while i < num_turns:
+                    group_start = i
+                    group_end = i
+                    base_end_time = dialogue_turns[i].get("tts_end_offset", 0)
+
+                    while group_end + 1 < num_turns:
+                        next_end_time = dialogue_turns[group_end + 1].get("tts_end_offset", 0)
+                        if abs(next_end_time - base_end_time) < BUNCH_THRESHOLD:
+                            group_end += 1
+                        else:
+                            break
+
+                    if group_end > group_start:
+                        bunched_groups.append((group_start, group_end))
+                        i = group_end + 1
                     else:
-                        break
-                
-                if group_end > group_start:  # Found a bunched group
-                    bunched_groups.append((group_start, group_end))
-                    i = group_end + 1
-                else:
-                    i += 1
-            
-            # Step 2: Redistribute each bunched group
-            total_fixes = 0
-            for group_start_idx, group_end_idx in bunched_groups:
-                group_size = group_end_idx - group_start_idx + 1
-                
-                # Window: from first turn's original start to a reasonable end
-                first_turn = dialogue_turns[group_start_idx]
-                last_turn = dialogue_turns[group_end_idx]
-                
-                window_start = first_turn.get("tts_start_offset", 0)
-                window_end = last_turn.get("tts_end_offset", 0)
-                
-                # If window is too small, extend it
-                # Check if there's a next turn to not overlap with
-                if group_end_idx + 1 < num_turns:
-                    next_turn_start = dialogue_turns[group_end_idx + 1].get("tts_start_offset", window_end + 2)
-                    max_window_end = next_turn_start - TURN_GAP
-                else:
-                    max_window_end = duration_sec  # Use total audio duration
-                
-                # Calculate required duration for all turns
-                required_duration = group_size * MIN_TURN_DURATION + (group_size - 1) * TURN_GAP
-                current_duration = window_end - window_start
-                
-                if current_duration < required_duration:
-                    # Need to extend the window
-                    new_window_end = min(window_start + required_duration, max_window_end)
+                        i += 1
+
+                total_fixes = 0
+                for group_start_idx, group_end_idx in bunched_groups:
+                    group_size = group_end_idx - group_start_idx + 1
+
+                    first_turn = dialogue_turns[group_start_idx]
+                    last_turn = dialogue_turns[group_end_idx]
+
+                    window_start = first_turn.get("tts_start_offset", 0)
+                    window_end = last_turn.get("tts_end_offset", 0)
+
+                    if group_end_idx + 1 < num_turns:
+                        next_turn_start = dialogue_turns[group_end_idx + 1].get("tts_start_offset", window_end + 2)
+                        max_window_end = next_turn_start - TURN_GAP
+                    else:
+                        max_window_end = duration_sec
+
+                    required_duration = group_size * MIN_TURN_DURATION + (group_size - 1) * TURN_GAP
+                    current_duration = window_end - window_start
+
+                    if current_duration < required_duration:
+                        new_window_end = min(window_start + required_duration, max_window_end)
+                        logger.warning(
+                            "TTD BUNCHED: turns %d-%d need %.2fs but have %.2fs, extending window to %.2fs",
+                            group_start_idx, group_end_idx, required_duration, current_duration, new_window_end - window_start
+                        )
+                        window_end = new_window_end
+
+                    total_gaps = (group_size - 1) * TURN_GAP
+                    available_for_turns = (window_end - window_start) - total_gaps
+                    per_turn_duration = max(MIN_TURN_DURATION, available_for_turns / group_size)
+
                     logger.warning(
-                        "TTD BUNCHED: turns %d-%d need %.2fs but have %.2fs, extending window to %.2fs",
-                        group_start_idx, group_end_idx, required_duration, current_duration, new_window_end - window_start
+                        "TTD BUNCHED: turns %d-%d redistributed (%.2f-%.2fs) → %.0fms/turn",
+                        group_start_idx, group_end_idx, window_start, window_end, per_turn_duration * 1000
                     )
-                    window_end = new_window_end
-                
-                # Calculate per-turn duration
-                total_gaps = (group_size - 1) * TURN_GAP
-                available_for_turns = (window_end - window_start) - total_gaps
-                per_turn_duration = max(MIN_TURN_DURATION, available_for_turns / group_size)
-                
-                logger.warning(
-                    "TTD BUNCHED: turns %d-%d redistributed (%.2f-%.2fs) → %.0fms/turn",
-                    group_start_idx, group_end_idx, window_start, window_end, per_turn_duration * 1000
-                )
-                
-                # Redistribute turns
-                current_time = window_start
-                for idx in range(group_start_idx, group_end_idx + 1):
-                    turn = dialogue_turns[idx]
-                    
-                    new_start = current_time
-                    new_end = current_time + per_turn_duration
-                    new_duration = per_turn_duration
-                    
-                    turn["tts_start_offset"] = new_start
-                    turn["tts_end_offset"] = new_end
-                    turn["tts_duration"] = new_duration
-                    
-                    # Redistribute word timestamps within the new turn window
-                    words = turn.get("tts_words", [])
-                    if words:
-                        word_count = len(words)
-                        per_word_duration = new_duration / word_count
-                        for w_idx, w in enumerate(words):
-                            w["start"] = new_start + w_idx * per_word_duration
-                            w["end"] = new_start + (w_idx + 1) * per_word_duration
-                    
-                    current_time = new_end + TURN_GAP
-                    total_fixes += 1
-            
-            # Step 3: Simple overlap fix for any remaining non-bunched overlaps
-            for idx in range(1, num_turns):
-                prev_turn = dialogue_turns[idx - 1]
-                curr_turn = dialogue_turns[idx]
-                
-                prev_end = prev_turn.get("tts_end_offset", 0)
-                curr_start = curr_turn.get("tts_start_offset", 0)
-                
-                if prev_end > curr_start + 0.01:  # Still overlapping
-                    shift = prev_end - curr_start + TURN_GAP
-                    curr_turn["tts_start_offset"] = curr_start + shift
-                    curr_turn["tts_end_offset"] = curr_turn.get("tts_end_offset", 0) + shift
-                    
-                    # Shift word timestamps
-                    for w in curr_turn.get("tts_words", []):
-                        w["start"] += shift
-                        w["end"] += shift
-                    
-                    logger.warning(
-                        "TTD OVERLAP FIX turn %d: shifted by %.2fs to avoid overlap with turn %d",
-                        idx, shift, idx - 1
-                    )
-                    total_fixes += 1
-            
-            if total_fixes > 0:
-                logger.info("TTD: Fixed %d turn timing issues (bunched/overlapping)", total_fixes)
+
+                    current_time = window_start
+                    for idx in range(group_start_idx, group_end_idx + 1):
+                        turn = dialogue_turns[idx]
+
+                        new_start = current_time
+                        new_end = current_time + per_turn_duration
+                        new_duration = per_turn_duration
+
+                        turn["tts_start_offset"] = new_start
+                        turn["tts_end_offset"] = new_end
+                        turn["tts_duration"] = new_duration
+
+                        words = turn.get("tts_words", [])
+                        if words:
+                            word_count = len(words)
+                            per_word_duration = new_duration / word_count
+                            for w_idx, w in enumerate(words):
+                                w["start"] = new_start + w_idx * per_word_duration
+                                w["end"] = new_start + (w_idx + 1) * per_word_duration
+
+                        current_time = new_end + TURN_GAP
+                        total_fixes += 1
+
+                for idx in range(1, num_turns):
+                    prev_turn = dialogue_turns[idx - 1]
+                    curr_turn = dialogue_turns[idx]
+
+                    prev_end = prev_turn.get("tts_end_offset", 0)
+                    curr_start = curr_turn.get("tts_start_offset", 0)
+
+                    if prev_end > curr_start + 0.01:
+                        shift = prev_end - curr_start + TURN_GAP
+                        curr_turn["tts_start_offset"] = curr_start + shift
+                        curr_turn["tts_end_offset"] = curr_turn.get("tts_end_offset", 0) + shift
+
+                        for w in curr_turn.get("tts_words", []):
+                            w["start"] += shift
+                            w["end"] += shift
+
+                        logger.warning(
+                            "TTD OVERLAP FIX turn %d: shifted by %.2fs to avoid overlap with turn %d",
+                            idx, shift, idx - 1
+                        )
+                        total_fixes += 1
+
+                if total_fixes > 0:
+                    logger.info("TTD: Fixed %d turn timing issues (bunched/overlapping)", total_fixes)
+            else:
+                logger.info("TTD: Whisper-timed — skipping bunched-turn post-processing")
             
             # POST-PROCESSING: Merge very short turns into previous turn for subtitle display
-            # If a turn has < 0.5s duration, its text will be merged with the previous turn
-            MIN_SUBTITLE_DURATION = 0.5  # Minimum 500ms for a readable subtitle
+            MIN_SUBTITLE_DURATION = 0.5
             merged_count = 0
-            for idx in range(len(dialogue_turns) - 1, 0, -1):  # Go backwards to avoid index issues
+            for idx in range(len(dialogue_turns) - 1, 0, -1):
                 if idx >= len(inputs):
                     continue
                 curr_turn = dialogue_turns[idx]
                 prev_turn = dialogue_turns[idx - 1]
-                
+
                 curr_duration = curr_turn.get("tts_duration", 0)
                 if curr_duration < MIN_SUBTITLE_DURATION and curr_duration > 0:
                     # This turn is too short - merge its subtitle into previous turn
