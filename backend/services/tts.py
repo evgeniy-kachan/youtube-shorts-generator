@@ -2826,18 +2826,65 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             vs.get("end_time_seconds", 0)
                         )
 
-            # Pre-parse word-level timestamps so PHRASE_SYNC can use the real
-            # last-word end time per turn instead of the unreliable voice_segment
-            # end_time_seconds (ElevenLabs often inflates it by 1-3 seconds).
+            # Run Whisper on the RAW ElevenLabs audio (before PHRASE_SYNC) to get
+            # accurate per-turn word boundaries.  ElevenLabs alignment timestamps
+            # are often "bunched" / compressed and can be off by several seconds,
+            # causing PHRASE_SYNC cuts to land inside words.  Whisper on the raw
+            # audio gives us reliable last-word-end times for each turn.
+            #
+            # The same Whisper result is reused in Phase 3 for subtitle timestamps
+            # (adjusted by the PHRASE_SYNC offsets), so we avoid running Whisper
+            # twice on the post-PHRASE_SYNC audio.
+            import tempfile as _tempfile
+
+            whisper_raw_words: dict[int, list[dict]] = {}
+            _tmp_raw_path: str | None = None
             try:
-                _early_words = self._parse_alignment_to_words(alignment, voice_segments)
-            except Exception:
-                _early_words = {}
+                with _tempfile.NamedTemporaryFile(suffix="_raw.wav", delete=False) as _tmp_raw:
+                    _tmp_raw_path = _tmp_raw.name
+                audio.export(_tmp_raw_path, format="wav")
+                _raw_result = self._get_timestamps_via_whisper(
+                    _tmp_raw_path,
+                    dialogue_turns,
+                    inputs,
+                    segment_timing=segment_timing_raw,
+                    leading_sec=leading_sec,
+                )
+                if _raw_result:
+                    whisper_raw_words = _raw_result
+                    logger.info(
+                        "PHRASE_SYNC: Whisper on raw audio succeeded — %d turns with accurate timestamps",
+                        len(whisper_raw_words),
+                    )
+                else:
+                    logger.warning("PHRASE_SYNC: Whisper on raw audio returned empty — falling back to alignment")
+            except Exception as _wh_exc:
+                logger.warning(
+                    "PHRASE_SYNC: Whisper on raw audio failed (%s) — using alignment for cut positions",
+                    _wh_exc,
+                )
+            finally:
+                if _tmp_raw_path and os.path.exists(_tmp_raw_path):
+                    try:
+                        os.unlink(_tmp_raw_path)
+                    except OSError:
+                        pass
+
             # last_word_end_by_turn[i] = last word's end time for turn i (seconds, raw)
+            # Prefer Whisper raw timestamps; fall back to ElevenLabs alignment.
             last_word_end_by_turn: dict[int, float] = {}
-            for _ti, _wds in _early_words.items():
-                if _wds:
-                    last_word_end_by_turn[_ti] = _wds[-1].get("end", 0.0)
+            if whisper_raw_words:
+                for _ti, _wds in whisper_raw_words.items():
+                    if _wds:
+                        last_word_end_by_turn[_ti] = _wds[-1].get("end", 0.0)
+            else:
+                try:
+                    _early_words = self._parse_alignment_to_words(alignment, voice_segments)
+                except Exception:
+                    _early_words = {}
+                for _ti, _wds in _early_words.items():
+                    if _wds:
+                        last_word_end_by_turn[_ti] = _wds[-1].get("end", 0.0)
             
             # ── PHRASE-LEVEL SYNC ─────────────────────────────────────────────
             # Align each turn's START time with the original English start time.
@@ -3000,9 +3047,10 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             else:
                 logger.info("PHRASE_SYNC: No pauses inserted (all turns in sync or Russian longer)")
         
-        # Add trailing silence buffer to prevent last word from being cut off
-        # ElevenLabs sometimes returns audio shorter than the last voice segment end time
-        TRAILING_SILENCE_MS = 200  # 200ms buffer at the end
+        # Add trailing silence buffer to prevent last word from being cut off.
+        # Increased to 500ms so longer final consonants (e.g. "сверхпроводимость")
+        # are never clipped by downstream audio/video processing.
+        TRAILING_SILENCE_MS = 500
         trailing_silence = AudioSegment.silent(duration=TRAILING_SILENCE_MS, frame_rate=audio.frame_rate)
         audio = audio + trailing_silence
         logger.info("TTD: Added %dms trailing silence buffer", TRAILING_SILENCE_MS)
@@ -3080,16 +3128,25 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     else:
                         temp_words_by_input[turn_idx] = words
                 
-                # Check quality of fixed timestamps
-                if not self._check_timing_quality(temp_words_by_input, dialogue_turns, inputs):
-                    # Quality is poor - use Whisper fallback (forced alignment when possible)
+                # If Whisper ran on raw audio earlier, prefer those timestamps.
+                # They are already accurate and just need the PHRASE_SYNC offsets
+                # applied (done in Phase 3 below).  This avoids a second Whisper run
+                # and eliminates the ElevenLabs alignment timestamp drift that was
+                # causing subtitles to run several seconds ahead of speech.
+                if whisper_raw_words:
+                    logger.info(
+                        "TTD: Using Whisper-raw timestamps for subtitles "
+                        "(skipping alignment quality check — Whisper is authoritative)"
+                    )
+                    words_by_input = whisper_raw_words
+                elif not self._check_timing_quality(temp_words_by_input, dialogue_turns, inputs):
+                    # Quality is poor — run Whisper on the post-PHRASE_SYNC audio
                     logger.warning("TTD: TTD alignment quality is poor, using Whisper fallback")
                     whisper_words = self._get_timestamps_via_whisper(
                         str(output_path), dialogue_turns, inputs,
                         segment_timing=segment_timing,
                         leading_sec=leading_sec,
                     )
-                    
                     if whisper_words:
                         logger.info("TTD: Whisper fallback successful, using Whisper timestamps")
                         words_by_input = whisper_words
@@ -3198,11 +3255,15 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 
                 if idx in words_by_input:
                     tts_words = []
+                    # Whisper timestamps are absolute positions in the raw audio file
+                    # (leading silence already included), so we only add the PHRASE_SYNC
+                    # offset.  Alignment-based timestamps need leading_sec added too.
+                    _base = 0.0 if whisper_raw_words else leading_sec
                     for w in words_by_input[idx]:
                         tts_words.append({
                             "word": w["word"],
-                            "start": w["start"] + leading_sec + offset,
-                            "end": w["end"] + leading_sec + offset,
+                            "start": w["start"] + _base + offset,
+                            "end": w["end"] + _base + offset,
                         })
                     
                     # Cap the last word's end time: ElevenLabs sometimes assigns

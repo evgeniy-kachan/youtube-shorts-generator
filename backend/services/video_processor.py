@@ -818,8 +818,28 @@ class VideoProcessor:
                         target_duration,
                     )
             
-            # Trim video to audio length if TTS audio is shorter than segment
-            if audio_dur and video_duration and audio_dur < video_duration - 0.5:
+            # Determine actual speech end from tts_words (more accurate than audio file
+            # duration when there is a long silent tail, e.g. TTD with PHRASE_SYNC).
+            _speech_end: float | None = None
+            if dialogue:
+                _all_w = []
+                for _turn in dialogue:
+                    _all_w.extend(_turn.get("tts_words") or [])
+                if _all_w:
+                    _speech_end = _all_w[-1].get("end")
+
+            # Prefer speech_end + 0.5s buffer as the trim target when the audio
+            # file has more than 2s of silence after the last spoken word.
+            if _speech_end and audio_dur and _speech_end + 2.0 < audio_dur:
+                _trim_target = _speech_end + 0.5
+                if video_duration and _trim_target < video_duration - 0.5:
+                    video_stream = video_stream.filter("trim", duration=_trim_target).filter("setpts", "PTS-STARTPTS")
+                    logger.info(
+                        "Trimmed video to speech end: %.2fs (last word: %.2fs, audio file: %.2fs, video: %.2fs)",
+                        _trim_target, _speech_end, audio_dur, video_duration,
+                    )
+            elif audio_dur and video_duration and audio_dur < video_duration - 0.5:
+                # Fallback: trim to audio file duration if significantly shorter
                 video_stream = video_stream.filter("trim", duration=audio_dur).filter("setpts", "PTS-STARTPTS")
                 logger.info(
                     "Trimmed video from %.2fs to %.2fs to match TTS audio (removed %.2fs silent tail)",
