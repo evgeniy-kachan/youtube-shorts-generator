@@ -790,19 +790,27 @@ class BaseTTSService:
             if diarized_end is not None:
                 relative_end_target = max(0.0, diarized_end - reference)
                 if relative_end_target > relative_start:
+                    # Add 120 ms buffer so TTS slightly longer than the slot is not clipped mid-word
+                    CLIP_BUFFER_MS = 120
+                    CLIP_FADE_MS   = 40   # smooth fade-out instead of hard cut
                     max_allowed = max(self.MIN_CHUNK_DURATION, relative_end_target - relative_start)
-                    if duration_seconds > max_allowed + 0.05:
-                        clip_ms = int(max_allowed * 1000)
-                        # Adjust word timestamps proportionally if audio is clipped
-                        clip_ratio = max_allowed / duration_seconds
-                        seg_audio = seg_audio[:clip_ms]
+                    max_allowed_with_buf = max_allowed + CLIP_BUFFER_MS / 1000.0
+                    if duration_seconds > max_allowed_with_buf:
+                        clip_ms = int(max_allowed_with_buf * 1000)
+                        fade_ms = min(CLIP_FADE_MS, clip_ms // 4)
+                        seg_audio = seg_audio[:clip_ms].fade_out(fade_ms)
                         duration_seconds = len(seg_audio) / 1000.0
+                        logger.info(
+                            "OVERLAP CLIP turn %d: allowed=%.3fs buf=+%dms clip=%.3fs (was %.3fs) fade=%dms",
+                            idx, max_allowed, CLIP_BUFFER_MS, duration_seconds,
+                            clip_ms / 1000.0 + 0.001, fade_ms,
+                        )
                         # Clip word timestamps to match clipped audio
                         for word in turn_words:
-                            if word["end"] > max_allowed:
-                                word["end"] = max_allowed
-                            if word["start"] > max_allowed:
-                                word["start"] = max_allowed
+                            if word["end"] > duration_seconds:
+                                word["end"] = duration_seconds
+                            if word["start"] > duration_seconds:
+                                word["start"] = duration_seconds
 
             turn["tts_start_offset"] = relative_start
             turn["tts_duration"] = duration_seconds
