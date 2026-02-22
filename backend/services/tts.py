@@ -2913,6 +2913,11 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         )
                     else:
                         prev_raw_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
+                        logger.warning(
+                            "PHRASE_SYNC turn %d: no word timestamps for prev turn — "
+                            "fallback to segment_timing_raw=%.3fs (may be inaccurate!)",
+                            i, prev_raw_end,
+                        )
                     cut_ms = int((prev_raw_end + 0.20) * 1000)  # 200ms buffer after last word
                     insertions.append((cut_ms, silence_ms))
                     cumulative_offset += silence_ms / 1000.0
