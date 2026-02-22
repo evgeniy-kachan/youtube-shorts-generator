@@ -2816,9 +2816,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             #   • Not the very last turn (no point inserting silence at the end)
             #
             PHRASE_SYNC_ENABLED = os.getenv("TTD_PHRASE_SYNC", "true").lower() in ("true", "1", "yes")
-            PHRASE_SYNC_MIN_MS  = 150   # Ignore micro-gaps below 150 ms
-            PHRASE_SYNC_CF_MS   = 30    # Crossfade duration at splice points (ms)
-            PHRASE_SYNC_MAX_MS  = 3000  # Cap single insertion at 3 s to avoid runaway
+            PHRASE_SYNC_MIN_MS  = 250   # Ignore micro-gaps below 250 ms
+            PHRASE_SYNC_CF_MS   = 25    # Fade-out duration at splice points (ms)
+            PHRASE_SYNC_MAX_MS  = 1500  # Cap single insertion at 1.5 s (3 s was too jarring)
 
             logger.info(
                 "PHRASE_SYNC: %s (min=%dms, max=%dms, crossfade=%dms) | "
@@ -2855,7 +2855,11 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
                 if PHRASE_SYNC_ENABLED and silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS:
                     silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
-                    cut_ms = int(tts_raw_start * 1000)
+                    # Cut after the PREVIOUS turn ends (+50ms buffer), not at the START of
+                    # the current turn. This avoids cutting into the last word of the
+                    # previous turn when voice_segments start_time has slight imprecision.
+                    prev_raw_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
+                    cut_ms = int((prev_raw_end + 0.05) * 1000)
                     insertions.append((cut_ms, silence_ms))
                     cumulative_offset += silence_ms / 1000.0
                     action = f"+{silence_ms}ms pause ✓"
@@ -2890,10 +2894,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     before = audio[:cut_ms]
                     after  = audio[cut_ms:]
 
-                    cf = min(PHRASE_SYNC_CF_MS, max(0, len(before) // 2 - 1), max(0, len(after) // 2 - 1))
+                    # Only fade-out at the cut point (smooths end of prev turn's tail).
+                    # No fade-in on `after`: silence already provides a clean break, and
+                    # fade_in(30ms) was eating the first consonant of the next word.
+                    cf = min(PHRASE_SYNC_CF_MS, max(0, len(before) // 2 - 1))
                     if cf > 5:
                         before = before.fade_out(cf)
-                        after  = after.fade_in(cf)
 
                     silence = AudioSegment.silent(duration=silence_ms, frame_rate=audio.frame_rate)
                     audio = before + silence + after
