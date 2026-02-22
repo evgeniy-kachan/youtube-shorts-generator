@@ -126,9 +126,8 @@ def get_tts_service(provider: str):
 
 
 VOICE_MIX_PRESETS = {
-    "auto": ["male", "male", "male"],       # fallback when NeMo F0 not available
-    "male_duo": ["male", "male", "male"],
-    "mixed_duo": ["male", "female", "male"],
+    "male_duo":   ["male",   "male",   "male"],
+    "mixed_duo":  ["male",   "female", "male"],
     "female_duo": ["female", "female", "female"],
 }
 
@@ -171,19 +170,28 @@ def _build_voice_plan(
             if speaker_name not in speakers:
                 speakers.append(speaker_name)
 
-    nemo_genders = speaker_genders or {}
-    gender_source = "NeMo F0" if nemo_genders else "voice mix preset"
+    # NeMo F0 gender detection is only used for mixed_duo.
+    # For male_duo / female_duo the user already knows the composition —
+    # we honour the preset exactly and ignore any F0 result.
+    use_nemo_genders = (mix == "mixed_duo") and bool(speaker_genders)
+    nemo_genders = speaker_genders if use_nemo_genders else {}
+    gender_source = "NeMo F0 (mixed_duo)" if use_nemo_genders else f"preset ({mix})"
     logger.info("Building voice plan using %s for %d speakers", gender_source, len(speakers))
 
     for idx, speaker_id in enumerate(speakers):
-        # Priority: NeMo gender detection > voice mix preset
-        detected = nemo_genders.get(speaker_id, "unknown")
-        if detected == "female":
-            desired_gender = "female"
-        elif detected == "male":
-            desired_gender = "male"
+        if use_nemo_genders:
+            # Let NeMo F0 decide who is male and who is female
+            detected = nemo_genders.get(speaker_id, "unknown")
+            if detected == "female":
+                desired_gender = "female"
+            elif detected == "male":
+                desired_gender = "male"
+            else:
+                # NeMo didn't identify this speaker — fall back to order
+                desired_gender = pattern[min(idx, len(pattern) - 1)]
         else:
-            # Fallback to preset pattern
+            # Strict preset — ignore any NeMo result
+            detected = "n/a"
             desired_gender = pattern[min(idx, len(pattern) - 1)]
 
         if desired_gender == "female":

@@ -727,27 +727,22 @@ const SegmentsList = ({
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
                   Состав голосов (для ElevenLabs)
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   {[
                     {
-                      id: 'auto',
-                      label: '🤖 Авто',
-                      description: 'NeMo F0 определит пол',
-                    },
-                    {
                       id: 'male_duo',
-                      label: '2 мужских',
+                      label: '♂ + ♂',
                       description: 'Оба мужчины',
                     },
                     {
-                      id: 'mixed_duo',
-                      label: 'Муж + Жен',
-                      description: 'Смешанная пара',
+                      id: 'female_duo',
+                      label: '♀ + ♀',
+                      description: 'Обе женщины',
                     },
                     {
-                      id: 'female_duo',
-                      label: '2 женских',
-                      description: 'Обе женщины',
+                      id: 'mixed_duo',
+                      label: '♂ + ♀',
+                      description: 'NeMo F0 определит кто кто',
                     },
                   ].map((option) => (
                     <button
@@ -775,8 +770,9 @@ const SegmentsList = ({
                   ))}
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  По умолчанию — два мужских. Если точно знаете, что есть женский голос —
-                  выберите <b>Муж + Жен</b> или <b>🤖 Авто</b> (NeMo F0 pitch определит пол сам).
+                  <b>♂+♂</b> и <b>♀+♀</b> — фиксированный состав, NeMo не влияет.
+                  <b> ♂+♀</b> — NeMo F0 pitch определит кто мужчина, кто женщина.
+                  Без NeMo назначается по порядку появления в видео.
                 </p>
               </div>
 
