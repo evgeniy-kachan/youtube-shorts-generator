@@ -743,6 +743,17 @@ class BaseTTSService:
         reference = base_start if base_start is not None else min(offsets)
         reference = float(reference)
 
+        # Single-speaker mode: TTS may run longer than the English slot without issue
+        # because the next turn starts after a pause — no real overlap to prevent.
+        # Only clip when multiple distinct voices are actually interleaved.
+        unique_speakers = {t.get("speaker") for t in dialogue_turns if t.get("speaker")}
+        is_single_speaker = len(unique_speakers) <= 1
+        if is_single_speaker:
+            logger.info(
+                "OVERLAP MODE: single-speaker (%s) — clip disabled, TTS may extend freely",
+                next(iter(unique_speakers), "unknown"),
+            )
+
         layers: list[tuple[AudioSegment, int]] = []
         max_duration_ms = 0
 
@@ -787,7 +798,7 @@ class BaseTTSService:
                     diarized_end = float(diarized_end)
                 except (TypeError, ValueError):
                     diarized_end = None
-            if diarized_end is not None:
+            if diarized_end is not None and not is_single_speaker:
                 relative_end_target = max(0.0, diarized_end - reference)
                 if relative_end_target > relative_start:
                     # Add 120 ms buffer so TTS slightly longer than the slot is not clipped mid-word
