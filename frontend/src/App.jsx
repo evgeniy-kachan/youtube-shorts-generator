@@ -735,12 +735,7 @@ function App() {
       
       setNemoTask(response.task_id);
       
-      if (autoRender) {
-        // Will be handled by polling
-        setStatusMessage('NeMo MSDD диаризация запущена...');
-      } else {
-        alert('NeMo MSDD диаризация запущена. Это может занять несколько минут...');
-      }
+      setStatusMessage('NeMo MSDD диаризация запущена...');
     } catch (error) {
       console.error('[NeMo] Error:', error);
       setNemoLoading(false);
