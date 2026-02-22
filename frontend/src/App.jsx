@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Header from './components/Header';
 import VideoInput from './components/VideoInput';
 import ProgressBar from './components/ProgressBar';
@@ -36,6 +36,7 @@ function App() {
   const [nemoAvailable, setNemoAvailable] = useState(false);
   const [nemoLoading, setNemoLoading] = useState(false);
   const [nemoTask, setNemoTask] = useState(null);
+  const nemoTaskHandled = useRef(false); // guard against double completion (async race)
 
   // Build processed segments from result
   const buildProcessedSegments = useMemo(
@@ -619,6 +620,7 @@ function App() {
   // Poll NeMo task status
   useEffect(() => {
     if (!nemoTask) return;
+    nemoTaskHandled.current = false;
     
     const pollInterval = setInterval(async () => {
       try {
@@ -635,6 +637,8 @@ function App() {
         }
         
         if (status.status === 'completed') {
+          if (nemoTaskHandled.current) return; // already handled by a concurrent tick
+          nemoTaskHandled.current = true;
           clearInterval(pollInterval);
           setNemoLoading(false);
           setNemoTask(null);
