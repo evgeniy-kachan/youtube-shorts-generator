@@ -784,6 +784,10 @@ class BaseTTSService:
                 text,
                 len(plan),
             )
+            print(
+                f"[TTS] turn {idx+1}/{len(dialogue_turns)} speaker={speaker_id} offset={offset_ms/1000:.2f}s text={text[:60]!r}",
+                flush=True,
+            )
 
             seg_audio, turn_words = self._render_turn_chunks(plan, voice, destination, idx)
             if seg_audio is None:
@@ -822,6 +826,13 @@ class BaseTTSService:
                                 word["end"] = duration_seconds
                             if word["start"] > duration_seconds:
                                 word["start"] = duration_seconds
+
+            slot_sec = (float(turn.get("end", 0)) - float(turn.get("start", 0))) if turn.get("end") else 0.0
+            print(
+                f"[TTS] turn {idx+1} done: tts={duration_seconds:.3f}s slot={slot_sec:.3f}s"
+                + (" FREE" if is_single_speaker else f" CLIP_CHECK"),
+                flush=True,
+            )
 
             turn["tts_start_offset"] = relative_start
             turn["tts_duration"] = duration_seconds

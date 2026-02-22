@@ -1,5 +1,6 @@
 """Main FastAPI application."""
 import logging
+import logging.config
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,12 +10,35 @@ from pathlib import Path
 from backend.routers import video
 from backend.config import OUTPUT_DIR
 
-# Configure logging
+# Configure logging — use dictConfig so uvicorn cannot override it
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "default",
+            "stream": "ext://sys.stdout",
+        },
+    },
+    "root": {
+        "level": LOG_LEVEL,
+        "handlers": ["console"],
+    },
+    # Silence noisy third-party loggers
+    "loggers": {
+        "uvicorn": {"level": "INFO", "propagate": True},
+        "uvicorn.access": {"level": "INFO", "propagate": True},
+        "httpx": {"level": "WARNING", "propagate": True},
+        "httpcore": {"level": "WARNING", "propagate": True},
+    },
+})
 
 logger = logging.getLogger(__name__)
 
