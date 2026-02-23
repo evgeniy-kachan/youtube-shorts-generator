@@ -838,7 +838,7 @@ class VideoProcessor:
                         )
                         _speech_end = max(0, audio_dur - 0.3)
 
-            _TRIM_AFTER_SPEECH_SEC = 0.5
+            _TRIM_AFTER_SPEECH_SEC = 0.8  # Buffer after last word (increased from 0.5 to avoid cutting)
             if _speech_end and _speech_end > 0:
                 _trim_target = _speech_end + _TRIM_AFTER_SPEECH_SEC
                 _need_trim = (

@@ -3139,12 +3139,18 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     else:
                         temp_words_by_input[turn_idx] = words
                 
-                # If Whisper ran on raw audio earlier, prefer those timestamps.
-                # They are already accurate and just need the PHRASE_SYNC offsets
-                # applied (done in Phase 3 below).  This avoids a second Whisper run
-                # and eliminates the ElevenLabs alignment timestamp drift that was
-                # causing subtitles to run several seconds ahead of speech.
-                if whisper_raw_words:
+                # EXPERIMENT: Set to True to use ElevenLabs alignment instead of Whisper.
+                # ElevenLabs gives timestamps for the audio it generated (before our mods).
+                # We apply turn_offsets (PHRASE_SYNC) and leading_sec in Phase 3.
+                USE_ELEVENLABS_ALIGNMENT = True
+                
+                if USE_ELEVENLABS_ALIGNMENT:
+                    logger.info(
+                        "TTD: Using ElevenLabs alignment for subtitles "
+                        "(USE_ELEVENLABS_ALIGNMENT=True, skipping Whisper)"
+                    )
+                    words_by_input = temp_words_by_input
+                elif whisper_raw_words:
                     logger.info(
                         "TTD: Using Whisper-raw timestamps for subtitles "
                         "(skipping alignment quality check — Whisper is authoritative)"
