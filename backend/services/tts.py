@@ -2871,12 +2871,15 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         pass
 
             # last_word_end_by_turn[i] = last word's end time for turn i (seconds, raw)
+            # first_word_start_by_turn[i] = first word's start time for turn i (seconds, raw)
             # Prefer Whisper raw timestamps; fall back to ElevenLabs alignment.
             last_word_end_by_turn: dict[int, float] = {}
+            first_word_start_by_turn: dict[int, float] = {}
             if whisper_raw_words:
                 for _ti, _wds in whisper_raw_words.items():
                     if _wds:
                         last_word_end_by_turn[_ti] = _wds[-1].get("end", 0.0)
+                        first_word_start_by_turn[_ti] = _wds[0].get("start", 0.0)
             else:
                 try:
                     _early_words = self._parse_alignment_to_words(alignment, voice_segments)
@@ -2885,6 +2888,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 for _ti, _wds in _early_words.items():
                     if _wds:
                         last_word_end_by_turn[_ti] = _wds[-1].get("end", 0.0)
+                        first_word_start_by_turn[_ti] = _wds[0].get("start", 0.0)
             
             # ── PHRASE-LEVEL SYNC ─────────────────────────────────────────────
             # Align each turn's START time with the original English start time.
@@ -2965,7 +2969,21 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             "fallback to segment_timing_raw=%.3fs (may be inaccurate!)",
                             i, prev_raw_end,
                         )
-                    cut_ms = int((prev_raw_end + 0.20) * 1000)  # 200ms buffer after last word
+                    # Cut position: after previous turn's last word, but NEVER
+                    # inside the next turn's first word.  When turns are back-to-back
+                    # the 200ms buffer would overlap the next word, causing stuttering.
+                    cut_ideal = prev_raw_end + 0.20
+                    if i in first_word_start_by_turn:
+                        next_start = first_word_start_by_turn[i] + leading_sec
+                        cut_max = next_start - 0.01  # 10ms before next word
+                        if cut_ideal > cut_max:
+                            logger.info(
+                                "PHRASE_SYNC turn %d: clamping cut %.3fs→%.3fs "
+                                "(next word starts at %.3fs)",
+                                i, cut_ideal, cut_max, next_start,
+                            )
+                            cut_ideal = cut_max
+                    cut_ms = int(max(prev_raw_end * 1000, cut_ideal * 1000))
                     insertions.append((cut_ms, silence_ms))
                     cumulative_offset += silence_ms / 1000.0
                     action = f"+{silence_ms}ms pause ✓"

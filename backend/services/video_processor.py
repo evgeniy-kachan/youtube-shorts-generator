@@ -835,12 +835,12 @@ class VideoProcessor:
                 _trim_target = _speech_end + 0.5
                 if video_duration and _trim_target < video_duration - 0.5:
                     video_stream = video_stream.filter("trim", duration=_trim_target).filter("setpts", "PTS-STARTPTS")
+                    audio_stream = audio_stream.filter("atrim", duration=_trim_target).filter("asetpts", "PTS-STARTPTS")
                     logger.info(
-                        "Trimmed video to speech end: %.2fs (last word: %.2fs, audio file: %.2fs, video: %.2fs)",
+                        "Trimmed video+audio to speech end: %.2fs (last word: %.2fs, audio file: %.2fs, video: %.2fs)",
                         _trim_target, _speech_end, audio_dur, video_duration,
                     )
             elif audio_dur and video_duration and audio_dur < video_duration - 0.5:
-                # Fallback: trim to audio file duration if significantly shorter
                 video_stream = video_stream.filter("trim", duration=audio_dur).filter("setpts", "PTS-STARTPTS")
                 logger.info(
                     "Trimmed video from %.2fs to %.2fs to match TTS audio (removed %.2fs silent tail)",
@@ -1445,38 +1445,46 @@ class VideoProcessor:
                 
                 # Validate and fix word timestamps to ensure they're within turn boundaries
                 # and in correct order (fixes issues with interpolated/short turns)
+                _PUNCT_STRIP = re.compile(r'[.,!?;:—–\-"\'()\[\]…]+')
+
                 validated_tts_words = []
                 for tw in tts_words:
                     word_start = tw.get("start", relative_start)
                     word_end = tw.get("end", relative_end)
-                    
-                    # Clamp timestamps to turn boundaries
                     word_start = max(relative_start, min(word_start, relative_end))
                     word_end = max(word_start, min(word_end, relative_end))
-                    
-                    # Ensure minimum duration (50ms per word)
-                    if word_end - word_start < 0.05:
-                        word_end = min(relative_end, word_start + 0.05)
-                    
+
+                    clean = _PUNCT_STRIP.sub("", tw.get("word", ""))
+                    min_dur = max(0.15, len(clean) * 0.055) if clean else 0.10
+                    if word_end - word_start < min_dur:
+                        word_end = min(relative_end, word_start + min_dur)
+
                     validated_tts_words.append({
                         "word": tw.get("word", ""),
                         "start": word_start,
                         "end": word_end,
                     })
-                
-                # Sort words by start time to ensure correct order
+
                 validated_tts_words.sort(key=lambda w: w["start"])
-                
-                # Fix any overlapping words by redistributing evenly
+
+                # Fix overlapping words: steal from the LONGER neighbor
                 if len(validated_tts_words) > 1:
                     for i in range(len(validated_tts_words) - 1):
-                        current_end = validated_tts_words[i]["end"]
-                        next_start = validated_tts_words[i + 1]["start"]
-                        if current_end > next_start:
-                            # Redistribute overlap evenly
-                            overlap = current_end - next_start
-                            validated_tts_words[i]["end"] = current_end - overlap / 2
-                            validated_tts_words[i + 1]["start"] = next_start + overlap / 2
+                        cur = validated_tts_words[i]
+                        nxt = validated_tts_words[i + 1]
+                        if cur["end"] > nxt["start"]:
+                            overlap = cur["end"] - nxt["start"]
+                            cur_dur = cur["end"] - cur["start"]
+                            nxt_dur = nxt["end"] - nxt["start"]
+                            total = cur_dur + nxt_dur
+                            if total > 0:
+                                cur_share = overlap * (nxt_dur / total)
+                                nxt_share = overlap * (cur_dur / total)
+                            else:
+                                cur_share = nxt_share = overlap / 2
+                            mid = cur["end"] - cur_share
+                            cur["end"] = mid
+                            nxt["start"] = mid
                 
                 # Build word entries with precise timestamps
                 # Chunk words while preserving their timestamps
