@@ -2966,48 +2966,64 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             f"last={_prev_word!r})"
                         )
                     else:
-                        silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
-                        if (i - 1) in last_word_end_by_turn:
-                            prev_raw_end = last_word_end_by_turn[i - 1] + leading_sec
-                            logger.info(
-                                "PHRASE_SYNC turn %d: cut based on last word %r end=%.3fs "
-                                "(segment_timing_raw was %.3fs)",
-                                i, _prev_word, prev_raw_end,
-                                segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec,
-                            )
-                        else:
-                            prev_raw_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
-                            logger.warning(
-                                "PHRASE_SYNC turn %d: no word timestamps for prev turn — "
-                                "fallback to segment_timing_raw=%.3fs (may be inaccurate!)",
-                                i, prev_raw_end,
-                            )
                         _WORD_TAIL_BUFFER_MS = 250
-                        prev_end_ms = int(prev_raw_end * 1000) + _WORD_TAIL_BUFFER_MS
-                        if i in first_word_start_by_turn:
-                            next_start = first_word_start_by_turn[i] + leading_sec
-                            next_start_ms = int(next_start * 1000)
-                            cut_ms = min(prev_end_ms, next_start_ms)
-                            skip_to_ms = next_start_ms
+                        _MIN_SAFE_GAP_MS = 300
+
+                        # ElevenLabs turn boundaries (authoritative)
+                        el_prev_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
+                        el_next_start = segment_timing_raw.get(i, {}).get("start", 0.0) + leading_sec
+                        el_gap_ms = int((el_next_start - el_prev_end) * 1000)
+
+                        # Whisper word-end (may be too early)
+                        if (i - 1) in last_word_end_by_turn:
+                            whisper_end = last_word_end_by_turn[i - 1] + leading_sec
+                        else:
+                            whisper_end = el_prev_end
+
+                        # Safe gap check: if ElevenLabs turns are packed tight,
+                        # there's no room to cut without damaging a word.
+                        if el_gap_ms < _MIN_SAFE_GAP_MS:
                             logger.info(
-                                "PHRASE_SYNC turn %d: cut=%.3fs (whisper_end+%dms), "
-                                "skip_to=%.3fs, gap=%dms",
-                                i, cut_ms / 1000.0, _WORD_TAIL_BUFFER_MS,
-                                skip_to_ms / 1000.0,
-                                next_start_ms - int(prev_raw_end * 1000),
+                                "PHRASE_SYNC turn %d: SKIP — ElevenLabs gap=%dms < %dms "
+                                "(prev_end=%.3fs, next_start=%.3fs, word=%r)",
+                                i, el_gap_ms, _MIN_SAFE_GAP_MS,
+                                el_prev_end, el_next_start, _prev_word,
+                            )
+                            action = (
+                                f"SKIP tiny-gap ({el_gap_ms}ms < {_MIN_SAFE_GAP_MS}ms, "
+                                f"word={_prev_word!r})"
                             )
                         else:
-                            cut_ms = prev_end_ms
-                            skip_to_ms = cut_ms
-                        cut_ms = max(0, cut_ms)
-                        discard_ms = skip_to_ms - cut_ms
-                        insertions.append((cut_ms, silence_ms, skip_to_ms))
-                        cumulative_offset += (silence_ms - discard_ms) / 1000.0
-                        action = (
-                            f"+{silence_ms}ms pause, cut@{cut_ms}ms, "
-                            f"skip_to@{skip_to_ms}ms (discard {discard_ms}ms) "
-                            f"after {_prev_word!r} ✓"
-                        )
+                            silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
+
+                            # Cut: max(whisper_end + buffer, EL turn end) but not past EL next start
+                            cut_ms = max(
+                                int(whisper_end * 1000) + _WORD_TAIL_BUFFER_MS,
+                                int(el_prev_end * 1000),
+                            )
+                            # Skip-to: ElevenLabs says where the next turn begins
+                            skip_to_ms = int(el_next_start * 1000)
+                            # Safety: cut never beyond skip_to
+                            cut_ms = min(cut_ms, skip_to_ms)
+                            cut_ms = max(0, cut_ms)
+
+                            discard_ms = skip_to_ms - cut_ms
+                            insertions.append((cut_ms, silence_ms, skip_to_ms))
+                            cumulative_offset += (silence_ms - discard_ms) / 1000.0
+
+                            logger.info(
+                                "PHRASE_SYNC turn %d: cut=%.3fs, skip_to=%.3fs "
+                                "(whisper_end=%.3fs, el_end=%.3fs, el_next=%.3fs, "
+                                "discard=%dms, +%dms) after %r ✓",
+                                i, cut_ms / 1000.0, skip_to_ms / 1000.0,
+                                whisper_end, el_prev_end, el_next_start,
+                                discard_ms, silence_ms, _prev_word,
+                            )
+                            action = (
+                                f"+{silence_ms}ms pause, cut@{cut_ms}ms, "
+                                f"skip_to@{skip_to_ms}ms (discard {discard_ms}ms) "
+                                f"after {_prev_word!r} ✓"
+                            )
                 elif silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS and not PHRASE_SYNC_ENABLED:
                     action = f"SYNC OFF (would +{int(silence_needed_sec*1000)}ms)"
                 elif silence_needed_sec < -0.1:
