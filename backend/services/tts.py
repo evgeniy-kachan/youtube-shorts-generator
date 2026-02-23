@@ -2911,14 +2911,13 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             #
             PHRASE_SYNC_ENABLED = os.getenv("TTD_PHRASE_SYNC", "true").lower() in ("true", "1", "yes")
             PHRASE_SYNC_MIN_MS  = 250   # Ignore micro-gaps below 250 ms
-            PHRASE_SYNC_CF_MS   = 25    # Fade-out duration at splice points (ms)
             PHRASE_SYNC_MAX_MS  = 1500  # Cap single insertion at 1.5 s (3 s was too jarring)
 
             logger.info(
-                "PHRASE_SYNC: %s (min=%dms, max=%dms, crossfade=%dms) | "
+                "PHRASE_SYNC: %s (min=%dms, max=%dms) | "
                 "Disable with: TTD_PHRASE_SYNC=false + service restart",
                 "ENABLED" if PHRASE_SYNC_ENABLED else "DISABLED",
-                PHRASE_SYNC_MIN_MS, PHRASE_SYNC_MAX_MS, PHRASE_SYNC_CF_MS,
+                PHRASE_SYNC_MIN_MS, PHRASE_SYNC_MAX_MS,
             )
 
             segment_start_abs = dialogue_turns[0].get("start", 0.0)
@@ -3047,10 +3046,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
                     before = audio[:cut_ms]
                     after  = audio[skip_to_ms:]
-
-                    cf = min(PHRASE_SYNC_CF_MS, max(0, len(before) // 2 - 1))
-                    if cf > 5:
-                        before = before.fade_out(cf)
 
                     silence = AudioSegment.silent(duration=silence_ms, frame_rate=audio.frame_rate)
                     audio = before + silence + after
