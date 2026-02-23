@@ -3147,10 +3147,10 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     else:
                         temp_words_by_input[turn_idx] = words
                 
-                # EXPERIMENT: Set to True to use ElevenLabs alignment instead of Whisper.
-                # ElevenLabs gives timestamps for the audio it generated (before our mods).
-                # We apply turn_offsets (PHRASE_SYNC) and leading_sec in Phase 3.
-                USE_ELEVENLABS_ALIGNMENT = True
+                # ElevenLabs TTD alignment has a confirmed bug: duplicate/frozen
+                # timestamps after ~60s of audio (github.com/elevenlabs/elevenlabs-python/issues/707).
+                # Whisper forced alignment on the raw audio is more reliable.
+                USE_ELEVENLABS_ALIGNMENT = False
                 
                 if USE_ELEVENLABS_ALIGNMENT:
                     logger.info(
