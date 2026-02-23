@@ -2241,9 +2241,7 @@ async def transcribe_audio(
         # Run WhisperX transcription with word timestamps
         from backend.services.transcription_runner import TranscriptionRunner
         
-        runner = TranscriptionRunner(
-            enable_diarization=False,  # Don't need diarization for reference
-        )
+        runner = TranscriptionRunner()
         
         result = runner.transcribe(
             audio_path=wav_path,
