@@ -1498,7 +1498,8 @@ def _process_segments_task(
             
             # Trim TTS audio silent tail: ElevenLabs sometimes generates audio longer
             # than the actual speech. Find the last word's end time and trim to that + 0.5s.
-            if has_dialogue and segment.get('dialogue'):
+            # Note: applies to both multi-speaker (TTD) and single-speaker (TTS) with tts_words
+            if segment.get('dialogue'):
                 last_word_end = 0.0
                 for turn in segment['dialogue']:
                     for w in turn.get("tts_words", []):
@@ -1543,7 +1544,12 @@ def _process_segments_task(
                     " [multi-speaker]" if has_dialogue else "",
                 )
                 
-                if _speed_match_audio_duration(audio_path, audio_duration, original_duration, max_tempo=1.35, min_tempo=0.9):
+                tempo_applied = _speed_match_audio_duration(audio_path, audio_duration, original_duration, max_tempo=1.35, min_tempo=0.9)
+                logger.info(
+                    "TEMPO CHECK %s: before=%.2fs, target=%.2fs, applied=%s",
+                    segment['id'], audio_duration, original_duration, tempo_applied,
+                )
+                if tempo_applied:
                     try:
                         audio_segment = AudioSegment.from_file(audio_path)
                         audio_duration = audio_segment.duration_seconds or original_duration
@@ -1553,8 +1559,17 @@ def _process_segments_task(
                         audio_duration = original_duration
 
                     scale = audio_duration / before_duration if before_duration else 1.0
+                    logger.info(
+                        "SCALE CHECK %s: before=%.2fs, after=%.2fs, scale=%.4f, has_dialogue=%s",
+                        segment['id'], before_duration, audio_duration, scale, bool(segment.get('dialogue')),
+                    )
                     if scale and segment.get('dialogue'):
                         _scale_dialogue_offsets(segment['dialogue'], scale)
+                else:
+                    logger.info(
+                        "TEMPO SKIPPED %s: no tempo adjustment applied",
+                        segment['id'],
+                    )
                     
                     # Only log significant tempo changes
                     if abs(scale - 1.0) > 0.1:

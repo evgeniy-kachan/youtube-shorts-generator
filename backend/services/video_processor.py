@@ -828,6 +828,15 @@ class VideoProcessor:
                     _all_w.extend(_turn.get("tts_words") or [])
                 if _all_w:
                     _speech_end = _all_w[-1].get("end")
+                    # After tempo scaling, tts_words timestamps may exceed actual audio
+                    # duration. Cap _speech_end to audio_dur to avoid trimming too late.
+                    if audio_dur and _speech_end and _speech_end > audio_dur:
+                        logger.warning(
+                            "speech_end %.2fs exceeds audio_dur %.2fs (scaled timestamps?), "
+                            "capping to audio_dur - 0.3s",
+                            _speech_end, audio_dur,
+                        )
+                        _speech_end = max(0, audio_dur - 0.3)
 
             _TRIM_AFTER_SPEECH_SEC = 0.5
             if _speech_end and _speech_end > 0:
@@ -1470,6 +1479,7 @@ class VideoProcessor:
                 _PUNCT_STRIP = re.compile(r'[.,!?;:—–\-"\'()\[\]…]+')
 
                 validated_tts_words = []
+                _MAX_WORD_DURATION = 3.0
                 for tw in tts_words:
                     word_start = tw.get("start", relative_start)
                     word_end = tw.get("end", relative_end)
@@ -1480,8 +1490,11 @@ class VideoProcessor:
                     if not clean:
                         continue
                     min_dur = max(0.15, len(clean) * 0.055)
+                    max_dur = min(_MAX_WORD_DURATION, len(clean) * 0.15 + 0.3)
                     if word_end - word_start < min_dur:
                         word_end = min(relative_end, word_start + min_dur)
+                    elif word_end - word_start > max_dur:
+                        word_end = word_start + max_dur
 
                     validated_tts_words.append({
                         "word": tw.get("word", ""),

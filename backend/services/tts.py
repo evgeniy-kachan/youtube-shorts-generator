@@ -3304,19 +3304,22 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             "end": w["end"] + _base + offset,
                         })
                     
-                    # Cap the last word's end time: ElevenLabs sometimes assigns
-                    # end = full_audio_duration to the last word, creating a huge tail.
-                    if tts_words:
-                        last_w = tts_words[-1]
-                        char_count = max(1, len(last_w["word"]))
-                        # ~100ms per char + 200ms base, max 4s
-                        natural_max = last_w["start"] + min(4.0, char_count * 0.10 + 0.2)
-                        if last_w["end"] > natural_max:
+                    # Cap ALL words with anomalously long durations.
+                    # Whisper forced alignment sometimes gives absurd results
+                    # (e.g., "что" lasting 15 seconds). Cap based on char count.
+                    _MAX_WORD_DUR = 3.0
+                    for i, tw in enumerate(tts_words):
+                        char_count = max(1, len(tw["word"]))
+                        # ~100ms per char + 200ms base, capped at 3s
+                        natural_max_dur = min(_MAX_WORD_DUR, char_count * 0.10 + 0.2)
+                        actual_dur = tw["end"] - tw["start"]
+                        if actual_dur > natural_max_dur:
+                            new_end = tw["start"] + natural_max_dur
                             logger.info(
-                                "TTD turn %d: capping last word '%s' end %.2f→%.2f",
-                                idx, last_w["word"], last_w["end"], natural_max
+                                "TTD turn %d word %d: capping '%s' duration %.2f→%.2fs",
+                                idx, i, tw["word"], actual_dur, natural_max_dur
                             )
-                            tts_words[-1] = dict(last_w, end=natural_max)
+                            tts_words[i] = dict(tw, end=new_end)
                     
                     turn["tts_words"] = tts_words
                     logger.debug(
