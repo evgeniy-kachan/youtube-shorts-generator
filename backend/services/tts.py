@@ -3069,10 +3069,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             else:
                 logger.info("PHRASE_SYNC: No pauses inserted (all turns in sync or Russian longer)")
         
-        # Add trailing silence buffer to prevent last word from being cut off.
-        # Increased to 500ms so longer final consonants (e.g. "сверхпроводимость")
-        # are never clipped by downstream audio/video processing.
-        TRAILING_SILENCE_MS = 500
+        # Trailing silence so the last word's acoustic tail isn't clipped.
+        # video_processor trims to speech_end + 0.5s, so 300ms here is enough.
+        TRAILING_SILENCE_MS = 300
         trailing_silence = AudioSegment.silent(duration=TRAILING_SILENCE_MS, frame_rate=audio.frame_rate)
         audio = audio + trailing_silence
         logger.info("TTD: Added %dms trailing silence buffer", TRAILING_SILENCE_MS)
