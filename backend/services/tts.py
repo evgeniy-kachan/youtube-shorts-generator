@@ -2872,14 +2872,17 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
             # last_word_end_by_turn[i] = last word's end time for turn i (seconds, raw)
             # first_word_start_by_turn[i] = first word's start time for turn i (seconds, raw)
+            # last_word_text_by_turn[i] = text of the last word in turn i
             # Prefer Whisper raw timestamps; fall back to ElevenLabs alignment.
             last_word_end_by_turn: dict[int, float] = {}
             first_word_start_by_turn: dict[int, float] = {}
+            last_word_text_by_turn: dict[int, str] = {}
             if whisper_raw_words:
                 for _ti, _wds in whisper_raw_words.items():
                     if _wds:
                         last_word_end_by_turn[_ti] = _wds[-1].get("end", 0.0)
                         first_word_start_by_turn[_ti] = _wds[0].get("start", 0.0)
+                        last_word_text_by_turn[_ti] = _wds[-1].get("word", "")
             else:
                 try:
                     _early_words = self._parse_alignment_to_words(alignment, voice_segments)
@@ -2889,6 +2892,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     if _wds:
                         last_word_end_by_turn[_ti] = _wds[-1].get("end", 0.0)
                         first_word_start_by_turn[_ti] = _wds[0].get("start", 0.0)
+                        last_word_text_by_turn[_ti] = _wds[-1].get("word", "")
             
             # ── PHRASE-LEVEL SYNC ─────────────────────────────────────────────
             # Align each turn's START time with the original English start time.
@@ -2947,63 +2951,69 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 silence_needed_sec = en_start_i - output_pos_i
 
                 if PHRASE_SYNC_ENABLED and silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS:
-                    silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
-                    # Use the real last-word end time for the cut position.
-                    # voice_segments end_time_seconds is often inflated by 1-3s and
-                    # would place the cut inside the next turn's first word.
-                    # Fallback to segment_timing_raw only when word timestamps unavailable.
-                    if (i - 1) in last_word_end_by_turn:
-                        prev_raw_end = last_word_end_by_turn[i - 1] + leading_sec
+                    _prev_word = last_word_text_by_turn.get(i - 1, "")
+                    _is_sentence_end = bool(
+                        _prev_word and _prev_word.rstrip()[-1:] in ".!?…"
+                    )
+                    if not _is_sentence_end:
                         logger.info(
-                            "PHRASE_SYNC turn %d: cut based on last word end=%.3fs "
-                            "(segment_timing_raw was %.3fs)",
-                            i,
-                            prev_raw_end,
-                            segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec,
+                            "PHRASE_SYNC turn %d: SKIP — prev word %r not sentence-end "
+                            "(need +%dms but unsafe to cut mid-speech)",
+                            i, _prev_word, int(silence_needed_sec * 1000),
+                        )
+                        action = (
+                            f"SKIP mid-speech (would +{int(silence_needed_sec*1000)}ms, "
+                            f"last={_prev_word!r})"
                         )
                     else:
-                        prev_raw_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
-                        logger.warning(
-                            "PHRASE_SYNC turn %d: no word timestamps for prev turn — "
-                            "fallback to segment_timing_raw=%.3fs (may be inaccurate!)",
-                            i, prev_raw_end,
-                        )
-                    # Cut position: preserve BOTH words fully.
-                    #  - "before" ends at prev word's Whisper end
-                    #  - "after" starts at next word's Whisper start
-                    # When they overlap (prev_end > next_start), cut at
-                    # next_start to protect the onset of the next word.
-                    prev_end_ms = int(prev_raw_end * 1000)
-                    if i in first_word_start_by_turn:
-                        next_start = first_word_start_by_turn[i] + leading_sec
-                        next_start_ms = int(next_start * 1000)
-                        cut_ms = min(prev_end_ms, next_start_ms)
-                        skip_to_ms = max(cut_ms, next_start_ms)
-                        if prev_end_ms > next_start_ms:
+                        silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
+                        if (i - 1) in last_word_end_by_turn:
+                            prev_raw_end = last_word_end_by_turn[i - 1] + leading_sec
                             logger.info(
-                                "PHRASE_SYNC turn %d: overlap — cut at next onset %.3fs "
-                                "(prev end %.3fs, sacrifice %dms tail)",
-                                i, next_start, prev_raw_end,
-                                prev_end_ms - next_start_ms,
+                                "PHRASE_SYNC turn %d: cut based on last word %r end=%.3fs "
+                                "(segment_timing_raw was %.3fs)",
+                                i, _prev_word, prev_raw_end,
+                                segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec,
                             )
                         else:
-                            logger.info(
-                                "PHRASE_SYNC turn %d: clean gap — cut at prev end %.3fs, "
-                                "skip to next onset %.3fs (discard %dms gap)",
-                                i, prev_raw_end, next_start,
-                                next_start_ms - prev_end_ms,
+                            prev_raw_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
+                            logger.warning(
+                                "PHRASE_SYNC turn %d: no word timestamps for prev turn — "
+                                "fallback to segment_timing_raw=%.3fs (may be inaccurate!)",
+                                i, prev_raw_end,
                             )
-                    else:
-                        cut_ms = prev_end_ms
-                        skip_to_ms = cut_ms
-                    cut_ms = max(0, cut_ms)
-                    discard_ms = skip_to_ms - cut_ms
-                    insertions.append((cut_ms, silence_ms, skip_to_ms))
-                    cumulative_offset += (silence_ms - discard_ms) / 1000.0
-                    action = (
-                        f"+{silence_ms}ms pause, cut@{cut_ms}ms, "
-                        f"skip_to@{skip_to_ms}ms (discard {discard_ms}ms remnant) ✓"
-                    )
+                        prev_end_ms = int(prev_raw_end * 1000)
+                        if i in first_word_start_by_turn:
+                            next_start = first_word_start_by_turn[i] + leading_sec
+                            next_start_ms = int(next_start * 1000)
+                            cut_ms = min(prev_end_ms, next_start_ms)
+                            skip_to_ms = max(cut_ms, next_start_ms)
+                            if prev_end_ms > next_start_ms:
+                                logger.info(
+                                    "PHRASE_SYNC turn %d: overlap — cut at next onset %.3fs "
+                                    "(prev end %.3fs, sacrifice %dms tail)",
+                                    i, next_start, prev_raw_end,
+                                    prev_end_ms - next_start_ms,
+                                )
+                            else:
+                                logger.info(
+                                    "PHRASE_SYNC turn %d: clean gap — cut at prev end %.3fs, "
+                                    "skip to next onset %.3fs (discard %dms gap)",
+                                    i, prev_raw_end, next_start,
+                                    next_start_ms - prev_end_ms,
+                                )
+                        else:
+                            cut_ms = prev_end_ms
+                            skip_to_ms = cut_ms
+                        cut_ms = max(0, cut_ms)
+                        discard_ms = skip_to_ms - cut_ms
+                        insertions.append((cut_ms, silence_ms, skip_to_ms))
+                        cumulative_offset += (silence_ms - discard_ms) / 1000.0
+                        action = (
+                            f"+{silence_ms}ms pause, cut@{cut_ms}ms, "
+                            f"skip_to@{skip_to_ms}ms (discard {discard_ms}ms) "
+                            f"after {_prev_word!r} ✓"
+                        )
                 elif silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS and not PHRASE_SYNC_ENABLED:
                     action = f"SYNC OFF (would +{int(silence_needed_sec*1000)}ms)"
                 elif silence_needed_sec < -0.1:
