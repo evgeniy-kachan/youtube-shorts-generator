@@ -2408,7 +2408,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
         Fallback mode: full transcription (model=large-v3) when segment_timing is
         absent or the alignment-only binary path is unavailable.
-
+        
         Args:
             audio_path:      Path to the generated TTD audio file.
             dialogue_turns:  Original dialogue turns with text_ru.
@@ -2416,7 +2416,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             segment_timing:  Dict {turn_idx: {start, end}} from TTD voice_segments.
                              When provided enables forced-alignment mode.
             leading_sec:     Seconds of leading silence prepended to the audio.
-
+            
         Returns:
             Dict mapping turn index → list of word dicts
             {0: [{"word": "Привет", "start": 0.1, "end": 0.5}, ...], ...}
@@ -2424,9 +2424,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         import json
         import subprocess
         import tempfile
-
+        
         logger.info("TTD WHISPER: Getting timestamps via WhisperX for %s", audio_path)
-
+        
         # Get paths from environment (same as transcription_runner.py)
         python_path = os.getenv(
             "EXTERNAL_ASR_PY",
@@ -2436,7 +2436,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             "EXTERNAL_ASR_SCRIPT",
             "/opt/youtube-shorts-generator/backend/tools/transcribe.py"
         )
-
+        
         # Check if external transcription is available
         if not os.path.exists(python_path) or not os.path.exists(script_path):
             logger.warning(
@@ -2444,7 +2444,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 python_path, script_path
             )
             return {}
-
+        
         # ── Build forced-alignment segments when we know the turn timing ──────
         forced_segments_path: str | None = None
         use_forced = bool(segment_timing)
@@ -2489,7 +2489,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             mode="w", suffix=".json", delete=False, encoding="utf-8"
         ) as tmp_out:
             output_json_path = tmp_out.name
-
+        
         try:
             if use_forced and forced_segments_path:
                 # ── FORCED ALIGNMENT: skip model.transcribe() ─────────────────
@@ -2506,18 +2506,18 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 logger.info("TTD WHISPER: Running forced alignment (no transcription)...")
             else:
                 # ── FULL TRANSCRIPTION fallback ───────────────────────────────
-                cmd = [
-                    python_path,
-                    script_path,
-                    "--audio", audio_path,
-                    "--model", "large-v3",
-                    "--language", "ru",
-                    "--device", "cuda",
-                    "--compute_type", "float16",
-                    "--output", output_json_path,
-                ]
+            cmd = [
+                python_path,
+                script_path,
+                "--audio", audio_path,
+                "--model", "large-v3",
+                "--language", "ru",
+                "--device", "cuda",
+                "--compute_type", "float16",
+                "--output", output_json_path,
+            ]
                 logger.info("TTD WHISPER: Running full WhisperX transcription...")
-
+            
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -2581,8 +2581,8 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             if forced_segments_path:
                 try:
                     os.unlink(forced_segments_path)
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
     def _match_whisper_words_to_turns(
         self,
@@ -2825,7 +2825,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             segment_timing_raw[input_idx]["end"],
                             vs.get("end_time_seconds", 0)
                         )
-
+            
             # Run Whisper on the RAW ElevenLabs audio (before PHRASE_SYNC) to get
             # accurate per-turn word boundaries.  ElevenLabs alignment timestamps
             # are often "bunched" / compressed and can be off by several seconds,
@@ -2910,7 +2910,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             PHRASE_SYNC_CF_MS   = 25    # Fade-out duration at splice points (ms)
             PHRASE_SYNC_MAX_MS  = 1500  # Cap single insertion at 1.5 s (3 s was too jarring)
 
-            logger.info(
+                logger.info(
                 "PHRASE_SYNC: %s (min=%dms, max=%dms, crossfade=%dms) | "
                 "Disable with: TTD_PHRASE_SYNC=false + service restart",
                 "ENABLED" if PHRASE_SYNC_ENABLED else "DISABLED",
@@ -2989,7 +2989,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
             # ── Apply insertions with crossfade ───────────────────────────────
             if insertions:
-                logger.info(
+                    logger.info(
                     "PHRASE_SYNC: Applying %d pause(s), total +%.2fs",
                     len(insertions), sum(s for _, s in insertions) / 1000.0,
                 )
@@ -3158,6 +3158,15 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     logger.info("TTD: TTD alignment quality is acceptable after fixes")
                     words_by_input = temp_words_by_input
             
+            # FALLBACK: alignment parsing returned empty but Whisper ran
+            # successfully on the raw audio.  Use Whisper timestamps directly.
+            if not words_by_input and whisper_raw_words:
+                logger.info(
+                    "TTD: No usable alignment from API — using Whisper-raw timestamps directly (%d turns)",
+                    len(whisper_raw_words),
+                )
+                words_by_input = whisper_raw_words
+            
             # Apply timing to dialogue turns (with inserted silence offsets)
             num_inputs = min(len(dialogue_turns), len(inputs))
 
@@ -3185,8 +3194,8 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 # Fallback: use ElevenLabs voice_segment timing
                 api_timed = [False] * num_inputs
                 for idx in range(num_inputs):
-                    timing = segment_timing.get(idx, {})
-                    offset = turn_offsets[idx] if idx < len(turn_offsets) else 0.0
+                timing = segment_timing.get(idx, {})
+                offset = turn_offsets[idx] if idx < len(turn_offsets) else 0.0
                     s = timing.get("start", 0) + leading_sec + offset
                     e = timing.get("end", 0) + leading_sec + offset
                     if (e - s) >= 0.1:
@@ -3237,7 +3246,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     total_words += wc
                 
                 if available_speech < group_size * 0.3:
-                    logger.warning(
+                            logger.warning(
                         "TTD INTERPOLATE: turns %d-%d only %.2fs for %d turns (%d words)",
                         group_start, group_end, available, group_size, total_words
                     )
@@ -3381,110 +3390,110 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 TURN_GAP = 0.05
                 BUNCH_THRESHOLD = 0.15
 
-                num_turns = min(len(dialogue_turns), len(inputs))
-                bunched_groups = []
-                i = 0
-                while i < num_turns:
-                    group_start = i
-                    group_end = i
-                    base_end_time = dialogue_turns[i].get("tts_end_offset", 0)
-
-                    while group_end + 1 < num_turns:
-                        next_end_time = dialogue_turns[group_end + 1].get("tts_end_offset", 0)
-                        if abs(next_end_time - base_end_time) < BUNCH_THRESHOLD:
-                            group_end += 1
-                        else:
-                            break
-
+            num_turns = min(len(dialogue_turns), len(inputs))
+            bunched_groups = []
+            i = 0
+            while i < num_turns:
+                group_start = i
+                group_end = i
+                base_end_time = dialogue_turns[i].get("tts_end_offset", 0)
+                
+                while group_end + 1 < num_turns:
+                    next_end_time = dialogue_turns[group_end + 1].get("tts_end_offset", 0)
+                    if abs(next_end_time - base_end_time) < BUNCH_THRESHOLD:
+                        group_end += 1
+                    else:
+                        break
+                
                     if group_end > group_start:
-                        bunched_groups.append((group_start, group_end))
-                        i = group_end + 1
-                    else:
-                        i += 1
-
-                total_fixes = 0
-                for group_start_idx, group_end_idx in bunched_groups:
-                    group_size = group_end_idx - group_start_idx + 1
-
-                    first_turn = dialogue_turns[group_start_idx]
-                    last_turn = dialogue_turns[group_end_idx]
-
-                    window_start = first_turn.get("tts_start_offset", 0)
-                    window_end = last_turn.get("tts_end_offset", 0)
-
-                    if group_end_idx + 1 < num_turns:
-                        next_turn_start = dialogue_turns[group_end_idx + 1].get("tts_start_offset", window_end + 2)
-                        max_window_end = next_turn_start - TURN_GAP
-                    else:
+                    bunched_groups.append((group_start, group_end))
+                    i = group_end + 1
+                else:
+                    i += 1
+            
+            total_fixes = 0
+            for group_start_idx, group_end_idx in bunched_groups:
+                group_size = group_end_idx - group_start_idx + 1
+                
+                first_turn = dialogue_turns[group_start_idx]
+                last_turn = dialogue_turns[group_end_idx]
+                
+                window_start = first_turn.get("tts_start_offset", 0)
+                window_end = last_turn.get("tts_end_offset", 0)
+                
+                if group_end_idx + 1 < num_turns:
+                    next_turn_start = dialogue_turns[group_end_idx + 1].get("tts_start_offset", window_end + 2)
+                    max_window_end = next_turn_start - TURN_GAP
+                else:
                         max_window_end = duration_sec
-
-                    required_duration = group_size * MIN_TURN_DURATION + (group_size - 1) * TURN_GAP
-                    current_duration = window_end - window_start
-
-                    if current_duration < required_duration:
-                        new_window_end = min(window_start + required_duration, max_window_end)
-                        logger.warning(
-                            "TTD BUNCHED: turns %d-%d need %.2fs but have %.2fs, extending window to %.2fs",
-                            group_start_idx, group_end_idx, required_duration, current_duration, new_window_end - window_start
-                        )
-                        window_end = new_window_end
-
-                    total_gaps = (group_size - 1) * TURN_GAP
-                    available_for_turns = (window_end - window_start) - total_gaps
-                    per_turn_duration = max(MIN_TURN_DURATION, available_for_turns / group_size)
-
+                
+                required_duration = group_size * MIN_TURN_DURATION + (group_size - 1) * TURN_GAP
+                current_duration = window_end - window_start
+                
+                if current_duration < required_duration:
+                    new_window_end = min(window_start + required_duration, max_window_end)
                     logger.warning(
-                        "TTD BUNCHED: turns %d-%d redistributed (%.2f-%.2fs) → %.0fms/turn",
-                        group_start_idx, group_end_idx, window_start, window_end, per_turn_duration * 1000
+                        "TTD BUNCHED: turns %d-%d need %.2fs but have %.2fs, extending window to %.2fs",
+                        group_start_idx, group_end_idx, required_duration, current_duration, new_window_end - window_start
                     )
-
-                    current_time = window_start
-                    for idx in range(group_start_idx, group_end_idx + 1):
-                        turn = dialogue_turns[idx]
-
-                        new_start = current_time
-                        new_end = current_time + per_turn_duration
-                        new_duration = per_turn_duration
-
-                        turn["tts_start_offset"] = new_start
-                        turn["tts_end_offset"] = new_end
-                        turn["tts_duration"] = new_duration
-
-                        words = turn.get("tts_words", [])
-                        if words:
-                            word_count = len(words)
-                            per_word_duration = new_duration / word_count
-                            for w_idx, w in enumerate(words):
-                                w["start"] = new_start + w_idx * per_word_duration
-                                w["end"] = new_start + (w_idx + 1) * per_word_duration
-
-                        current_time = new_end + TURN_GAP
-                        total_fixes += 1
-
-                for idx in range(1, num_turns):
-                    prev_turn = dialogue_turns[idx - 1]
-                    curr_turn = dialogue_turns[idx]
-
-                    prev_end = prev_turn.get("tts_end_offset", 0)
-                    curr_start = curr_turn.get("tts_start_offset", 0)
-
+                    window_end = new_window_end
+                
+                total_gaps = (group_size - 1) * TURN_GAP
+                available_for_turns = (window_end - window_start) - total_gaps
+                per_turn_duration = max(MIN_TURN_DURATION, available_for_turns / group_size)
+                
+                logger.warning(
+                    "TTD BUNCHED: turns %d-%d redistributed (%.2f-%.2fs) → %.0fms/turn",
+                    group_start_idx, group_end_idx, window_start, window_end, per_turn_duration * 1000
+                )
+                
+                current_time = window_start
+                for idx in range(group_start_idx, group_end_idx + 1):
+                    turn = dialogue_turns[idx]
+                    
+                    new_start = current_time
+                    new_end = current_time + per_turn_duration
+                    new_duration = per_turn_duration
+                    
+                    turn["tts_start_offset"] = new_start
+                    turn["tts_end_offset"] = new_end
+                    turn["tts_duration"] = new_duration
+                    
+                    words = turn.get("tts_words", [])
+                    if words:
+                        word_count = len(words)
+                        per_word_duration = new_duration / word_count
+                        for w_idx, w in enumerate(words):
+                            w["start"] = new_start + w_idx * per_word_duration
+                            w["end"] = new_start + (w_idx + 1) * per_word_duration
+                    
+                    current_time = new_end + TURN_GAP
+                    total_fixes += 1
+            
+            for idx in range(1, num_turns):
+                prev_turn = dialogue_turns[idx - 1]
+                curr_turn = dialogue_turns[idx]
+                
+                prev_end = prev_turn.get("tts_end_offset", 0)
+                curr_start = curr_turn.get("tts_start_offset", 0)
+                
                     if prev_end > curr_start + 0.01:
-                        shift = prev_end - curr_start + TURN_GAP
-                        curr_turn["tts_start_offset"] = curr_start + shift
-                        curr_turn["tts_end_offset"] = curr_turn.get("tts_end_offset", 0) + shift
-
-                        for w in curr_turn.get("tts_words", []):
-                            w["start"] += shift
-                            w["end"] += shift
-
-                        logger.warning(
-                            "TTD OVERLAP FIX turn %d: shifted by %.2fs to avoid overlap with turn %d",
-                            idx, shift, idx - 1
-                        )
-                        total_fixes += 1
-
-                if total_fixes > 0:
-                    logger.info("TTD: Fixed %d turn timing issues (bunched/overlapping)", total_fixes)
+                    shift = prev_end - curr_start + TURN_GAP
+                    curr_turn["tts_start_offset"] = curr_start + shift
+                    curr_turn["tts_end_offset"] = curr_turn.get("tts_end_offset", 0) + shift
+                    
+                    for w in curr_turn.get("tts_words", []):
+                        w["start"] += shift
+                        w["end"] += shift
+                    
+                    logger.warning(
+                        "TTD OVERLAP FIX turn %d: shifted by %.2fs to avoid overlap with turn %d",
+                        idx, shift, idx - 1
+                    )
+                    total_fixes += 1
+            
+            if total_fixes > 0:
+                logger.info("TTD: Fixed %d turn timing issues (bunched/overlapping)", total_fixes)
             else:
                 logger.info("TTD: Whisper-timed — skipping bunched-turn post-processing")
             
@@ -3496,7 +3505,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     continue
                 curr_turn = dialogue_turns[idx]
                 prev_turn = dialogue_turns[idx - 1]
-
+                
                 curr_duration = curr_turn.get("tts_duration", 0)
                 if curr_duration < MIN_SUBTITLE_DURATION and curr_duration > 0:
                     # This turn is too short - merge its subtitle into previous turn
