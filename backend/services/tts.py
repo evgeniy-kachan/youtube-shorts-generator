@@ -2966,26 +2966,17 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             f"last={_prev_word!r})"
                         )
                     else:
-                        _WORD_TAIL_BUFFER_MS = 250
                         _MIN_SAFE_GAP_MS = 300
 
-                        # ElevenLabs turn boundaries (authoritative)
+                        # ElevenLabs turn boundaries (authoritative source of truth)
                         el_prev_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
                         el_next_start = segment_timing_raw.get(i, {}).get("start", 0.0) + leading_sec
                         el_gap_ms = int((el_next_start - el_prev_end) * 1000)
 
-                        # Whisper word-end (may be too early)
-                        if (i - 1) in last_word_end_by_turn:
-                            whisper_end = last_word_end_by_turn[i - 1] + leading_sec
-                        else:
-                            whisper_end = el_prev_end
-
-                        # Safe gap check: if ElevenLabs turns are packed tight,
-                        # there's no room to cut without damaging a word.
                         if el_gap_ms < _MIN_SAFE_GAP_MS:
                             logger.info(
-                                "PHRASE_SYNC turn %d: SKIP — ElevenLabs gap=%dms < %dms "
-                                "(prev_end=%.3fs, next_start=%.3fs, word=%r)",
+                                "PHRASE_SYNC turn %d: SKIP — gap=%dms < %dms "
+                                "(el_end=%.3fs, el_next=%.3fs, word=%r)",
                                 i, el_gap_ms, _MIN_SAFE_GAP_MS,
                                 el_prev_end, el_next_start, _prev_word,
                             )
@@ -2995,17 +2986,8 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             )
                         else:
                             silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
-
-                            # Cut: max(whisper_end + buffer, EL turn end) but not past EL next start
-                            cut_ms = max(
-                                int(whisper_end * 1000) + _WORD_TAIL_BUFFER_MS,
-                                int(el_prev_end * 1000),
-                            )
-                            # Skip-to: ElevenLabs says where the next turn begins
+                            cut_ms = max(0, int(el_prev_end * 1000))
                             skip_to_ms = int(el_next_start * 1000)
-                            # Safety: cut never beyond skip_to
-                            cut_ms = min(cut_ms, skip_to_ms)
-                            cut_ms = max(0, cut_ms)
 
                             discard_ms = skip_to_ms - cut_ms
                             insertions.append((cut_ms, silence_ms, skip_to_ms))
@@ -3013,11 +2995,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
                             logger.info(
                                 "PHRASE_SYNC turn %d: cut=%.3fs, skip_to=%.3fs "
-                                "(whisper_end=%.3fs, el_end=%.3fs, el_next=%.3fs, "
-                                "discard=%dms, +%dms) after %r ✓",
+                                "(gap=%dms, discard=%dms, +%dms) after %r ✓",
                                 i, cut_ms / 1000.0, skip_to_ms / 1000.0,
-                                whisper_end, el_prev_end, el_next_start,
-                                discard_ms, silence_ms, _prev_word,
+                                el_gap_ms, discard_ms, silence_ms, _prev_word,
                             )
                             action = (
                                 f"+{silence_ms}ms pause, cut@{cut_ms}ms, "
