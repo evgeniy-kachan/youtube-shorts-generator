@@ -2969,31 +2969,35 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             "fallback to segment_timing_raw=%.3fs (may be inaccurate!)",
                             i, prev_raw_end,
                         )
-                    # Cut position: between turns, preserving at least 80ms
-                    # before the next word's onset.  When Whisper timestamps
-                    # overlap (prev end > next start), we sacrifice the previous
-                    # word's tail rather than clipping the next word's onset —
-                    # word onsets are much more perceptually important.
-                    cut_ideal = prev_raw_end + 0.10
+                    # Cut position: preserve BOTH words fully.
+                    #  - "before" ends at prev word's Whisper end
+                    #  - "after" starts at next word's Whisper start
+                    # When they overlap (prev_end > next_start), cut at
+                    # next_start to protect the onset of the next word.
+                    prev_end_ms = int(prev_raw_end * 1000)
                     if i in first_word_start_by_turn:
                         next_start = first_word_start_by_turn[i] + leading_sec
-                        cut_ceil = next_start - 0.08  # 80ms before next word
-                        if cut_ideal > cut_ceil:
+                        next_start_ms = int(next_start * 1000)
+                        cut_ms = min(prev_end_ms, next_start_ms)
+                        skip_to_ms = max(cut_ms, next_start_ms)
+                        if prev_end_ms > next_start_ms:
                             logger.info(
-                                "PHRASE_SYNC turn %d: clamping cut %.3fs→%.3fs "
-                                "(next word starts at %.3fs, prev end %.3fs)",
-                                i, cut_ideal, cut_ceil, next_start, prev_raw_end,
+                                "PHRASE_SYNC turn %d: overlap — cut at next onset %.3fs "
+                                "(prev end %.3fs, sacrifice %dms tail)",
+                                i, next_start, prev_raw_end,
+                                prev_end_ms - next_start_ms,
                             )
-                            cut_ideal = cut_ceil
-                    cut_ms = int(max(0, cut_ideal * 1000))
-                    # skip_to_ms: where the "after" piece starts — at the next
-                    # word's onset so that the remnant of the previous word's
-                    # tail (the stutter source) is discarded.
-                    if i in first_word_start_by_turn:
-                        skip_to_ms = int((first_word_start_by_turn[i] + leading_sec) * 1000)
-                        skip_to_ms = max(cut_ms, skip_to_ms)
+                        else:
+                            logger.info(
+                                "PHRASE_SYNC turn %d: clean gap — cut at prev end %.3fs, "
+                                "skip to next onset %.3fs (discard %dms gap)",
+                                i, prev_raw_end, next_start,
+                                next_start_ms - prev_end_ms,
+                            )
                     else:
+                        cut_ms = prev_end_ms
                         skip_to_ms = cut_ms
+                    cut_ms = max(0, cut_ms)
                     discard_ms = skip_to_ms - cut_ms
                     insertions.append((cut_ms, silence_ms, skip_to_ms))
                     cumulative_offset += (silence_ms - discard_ms) / 1000.0
