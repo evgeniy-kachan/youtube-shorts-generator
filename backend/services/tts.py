@@ -2982,26 +2982,20 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                                 "fallback to segment_timing_raw=%.3fs (may be inaccurate!)",
                                 i, prev_raw_end,
                             )
-                        prev_end_ms = int(prev_raw_end * 1000)
+                        _WORD_TAIL_BUFFER_MS = 250
+                        prev_end_ms = int(prev_raw_end * 1000) + _WORD_TAIL_BUFFER_MS
                         if i in first_word_start_by_turn:
                             next_start = first_word_start_by_turn[i] + leading_sec
                             next_start_ms = int(next_start * 1000)
                             cut_ms = min(prev_end_ms, next_start_ms)
-                            skip_to_ms = max(cut_ms, next_start_ms)
-                            if prev_end_ms > next_start_ms:
-                                logger.info(
-                                    "PHRASE_SYNC turn %d: overlap — cut at next onset %.3fs "
-                                    "(prev end %.3fs, sacrifice %dms tail)",
-                                    i, next_start, prev_raw_end,
-                                    prev_end_ms - next_start_ms,
-                                )
-                            else:
-                                logger.info(
-                                    "PHRASE_SYNC turn %d: clean gap — cut at prev end %.3fs, "
-                                    "skip to next onset %.3fs (discard %dms gap)",
-                                    i, prev_raw_end, next_start,
-                                    next_start_ms - prev_end_ms,
-                                )
+                            skip_to_ms = next_start_ms
+                            logger.info(
+                                "PHRASE_SYNC turn %d: cut=%.3fs (whisper_end+%dms), "
+                                "skip_to=%.3fs, gap=%dms",
+                                i, cut_ms / 1000.0, _WORD_TAIL_BUFFER_MS,
+                                skip_to_ms / 1000.0,
+                                next_start_ms - int(prev_raw_end * 1000),
+                            )
                         else:
                             cut_ms = prev_end_ms
                             skip_to_ms = cut_ms
