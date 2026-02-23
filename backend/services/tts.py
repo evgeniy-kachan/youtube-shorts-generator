@@ -2506,16 +2506,16 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 logger.info("TTD WHISPER: Running forced alignment (no transcription)...")
             else:
                 # ── FULL TRANSCRIPTION fallback ───────────────────────────────
-            cmd = [
-                python_path,
-                script_path,
-                "--audio", audio_path,
-                "--model", "large-v3",
-                "--language", "ru",
-                "--device", "cuda",
-                "--compute_type", "float16",
-                "--output", output_json_path,
-            ]
+                cmd = [
+                    python_path,
+                    script_path,
+                    "--audio", audio_path,
+                    "--model", "large-v3",
+                    "--language", "ru",
+                    "--device", "cuda",
+                    "--compute_type", "float16",
+                    "--output", output_json_path,
+                ]
                 logger.info("TTD WHISPER: Running full WhisperX transcription...")
             
             result = subprocess.run(
