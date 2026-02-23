@@ -832,7 +832,7 @@ class VideoProcessor:
             # Prefer speech_end + 0.5s buffer as the trim target when the audio
             # file has more than 2s of silence after the last spoken word.
             if _speech_end and audio_dur and _speech_end + 2.0 < audio_dur:
-                _trim_target = _speech_end + 0.5
+                _trim_target = _speech_end + 1.0
                 if video_duration and _trim_target < video_duration - 0.5:
                     video_stream = video_stream.filter("trim", duration=_trim_target).filter("setpts", "PTS-STARTPTS")
                     audio_stream = audio_stream.filter("atrim", duration=_trim_target).filter("asetpts", "PTS-STARTPTS")

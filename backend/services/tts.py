@@ -2969,21 +2969,23 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             "fallback to segment_timing_raw=%.3fs (may be inaccurate!)",
                             i, prev_raw_end,
                         )
-                    # Cut position: after previous turn's last word, but NEVER
-                    # inside the next turn's first word.  When turns are back-to-back
-                    # the 200ms buffer would overlap the next word, causing stuttering.
-                    cut_ideal = prev_raw_end + 0.20
+                    # Cut position: between turns, preserving at least 80ms
+                    # before the next word's onset.  When Whisper timestamps
+                    # overlap (prev end > next start), we sacrifice the previous
+                    # word's tail rather than clipping the next word's onset —
+                    # word onsets are much more perceptually important.
+                    cut_ideal = prev_raw_end + 0.10
                     if i in first_word_start_by_turn:
                         next_start = first_word_start_by_turn[i] + leading_sec
-                        cut_max = next_start - 0.01  # 10ms before next word
-                        if cut_ideal > cut_max:
+                        cut_ceil = next_start - 0.08  # 80ms before next word
+                        if cut_ideal > cut_ceil:
                             logger.info(
                                 "PHRASE_SYNC turn %d: clamping cut %.3fs→%.3fs "
-                                "(next word starts at %.3fs)",
-                                i, cut_ideal, cut_max, next_start,
+                                "(next word starts at %.3fs, prev end %.3fs)",
+                                i, cut_ideal, cut_ceil, next_start, prev_raw_end,
                             )
-                            cut_ideal = cut_max
-                    cut_ms = int(max(prev_raw_end * 1000, cut_ideal * 1000))
+                            cut_ideal = cut_ceil
+                    cut_ms = int(max(0, cut_ideal * 1000))
                     insertions.append((cut_ms, silence_ms))
                     cumulative_offset += silence_ms / 1000.0
                     action = f"+{silence_ms}ms pause ✓"
