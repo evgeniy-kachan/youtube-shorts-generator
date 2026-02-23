@@ -2986,9 +2986,21 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             )
                             cut_ideal = cut_ceil
                     cut_ms = int(max(0, cut_ideal * 1000))
-                    insertions.append((cut_ms, silence_ms))
-                    cumulative_offset += silence_ms / 1000.0
-                    action = f"+{silence_ms}ms pause ✓"
+                    # skip_to_ms: where the "after" piece starts — at the next
+                    # word's onset so that the remnant of the previous word's
+                    # tail (the stutter source) is discarded.
+                    if i in first_word_start_by_turn:
+                        skip_to_ms = int((first_word_start_by_turn[i] + leading_sec) * 1000)
+                        skip_to_ms = max(cut_ms, skip_to_ms)
+                    else:
+                        skip_to_ms = cut_ms
+                    discard_ms = skip_to_ms - cut_ms
+                    insertions.append((cut_ms, silence_ms, skip_to_ms))
+                    cumulative_offset += (silence_ms - discard_ms) / 1000.0
+                    action = (
+                        f"+{silence_ms}ms pause, cut@{cut_ms}ms, "
+                        f"skip_to@{skip_to_ms}ms (discard {discard_ms}ms remnant) ✓"
+                    )
                 elif silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS and not PHRASE_SYNC_ENABLED:
                     action = f"SYNC OFF (would +{int(silence_needed_sec*1000)}ms)"
                 elif silence_needed_sec < -0.1:
@@ -3011,53 +3023,34 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             if insertions:
                 logger.info(
                     "PHRASE_SYNC: Applying %d pause(s), total +%.2fs",
-                    len(insertions), sum(s for _, s in insertions) / 1000.0,
+                    len(insertions), sum(s for _, s, _ in insertions) / 1000.0,
                 )
                 offset_ms = 0
-                for idx_ins, (cut_ms_orig, silence_ms) in enumerate(insertions):
+                for idx_ins, (cut_ms_orig, silence_ms, skip_to_ms_orig) in enumerate(insertions):
                     cut_ms = cut_ms_orig + offset_ms
+                    skip_to_ms = skip_to_ms_orig + offset_ms
+                    discarded_ms = skip_to_ms_orig - cut_ms_orig
 
-                    # ── Diagnostic: verify cut is in the inter-turn gap ──────────
-                    # Find which turn pair this cut belongs to (1-based insertion index)
-                    # turn_i is the turn AFTER the cut
-                    turn_i_for_cut = None
-                    for chk_i in range(1, len(dialogue_turns)):
-                        pr_end = segment_timing_raw.get(chk_i - 1, {}).get("end", 0.0) + leading_sec
-                        expected_cut = int((pr_end + 0.05) * 1000)
-                        if expected_cut == cut_ms_orig:
-                            turn_i_for_cut = chk_i
-                            break
-                    if turn_i_for_cut is not None:
-                        prev_end_ms = int((segment_timing_raw.get(turn_i_for_cut - 1, {}).get("end", 0.0) + leading_sec) * 1000)
-                        next_start_ms = int((segment_timing_raw.get(turn_i_for_cut, {}).get("start", 0.0) + leading_sec) * 1000)
-                        gap_ms = next_start_ms - prev_end_ms
-                        safe = prev_end_ms <= cut_ms_orig <= next_start_ms
-                        safe_str = "✓ in gap" if safe else "⚠ OUTSIDE GAP"
-                        logger.info(
-                            "PHRASE_SYNC cut #%d: pos=%.3fs  prev_turn_end=%.3fs  next_turn_start=%.3fs  gap=%dms  %s  +%dms silence",
-                            idx_ins + 1,
-                            cut_ms_orig / 1000.0,
-                            prev_end_ms / 1000.0,
-                            next_start_ms / 1000.0,
-                            gap_ms,
-                            safe_str,
-                            silence_ms,
-                        )
-                    # ────────────────────────────────────────────────────────────
+                    logger.info(
+                        "PHRASE_SYNC cut #%d: before=%.3fs, after_from=%.3fs, "
+                        "discard=%dms, silence=+%dms",
+                        idx_ins + 1,
+                        cut_ms / 1000.0,
+                        skip_to_ms / 1000.0,
+                        discarded_ms,
+                        silence_ms,
+                    )
 
                     before = audio[:cut_ms]
-                    after  = audio[cut_ms:]
+                    after  = audio[skip_to_ms:]
 
-                    # Only fade-out at the cut point (smooths end of prev turn's tail).
-                    # No fade-in on `after`: silence already provides a clean break, and
-                    # fade_in(30ms) was eating the first consonant of the next word.
                     cf = min(PHRASE_SYNC_CF_MS, max(0, len(before) // 2 - 1))
                     if cf > 5:
                         before = before.fade_out(cf)
 
                     silence = AudioSegment.silent(duration=silence_ms, frame_rate=audio.frame_rate)
                     audio = before + silence + after
-                    offset_ms += silence_ms
+                    offset_ms += silence_ms - discarded_ms
 
                 audio_before_sec = (len(audio) - offset_ms) / 1000.0
                 logger.info(

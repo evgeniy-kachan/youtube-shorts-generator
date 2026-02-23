@@ -831,8 +831,8 @@ class VideoProcessor:
 
             # Prefer speech_end + 0.5s buffer as the trim target when the audio
             # file has more than 2s of silence after the last spoken word.
-            if _speech_end and audio_dur and _speech_end + 2.0 < audio_dur:
-                _trim_target = _speech_end + 1.0
+            if _speech_end and audio_dur and _speech_end + 1.5 < audio_dur:
+                _trim_target = _speech_end + 1.5
                 if video_duration and _trim_target < video_duration - 0.5:
                     video_stream = video_stream.filter("trim", duration=_trim_target).filter("setpts", "PTS-STARTPTS")
                     audio_stream = audio_stream.filter("atrim", duration=_trim_target).filter("asetpts", "PTS-STARTPTS")
@@ -845,6 +845,13 @@ class VideoProcessor:
                 logger.info(
                     "Trimmed video from %.2fs to %.2fs to match TTS audio (removed %.2fs silent tail)",
                     video_duration, audio_dur, video_duration - audio_dur,
+                )
+            else:
+                logger.info(
+                    "No trim applied: speech_end=%.2fs, audio=%.2fs, video=%.2fs, "
+                    "tail_after_speech=%.2fs (need >1.5s to trim)",
+                    _speech_end or 0, audio_dur or 0, video_duration or 0,
+                    (audio_dur - _speech_end) if (_speech_end and audio_dur) else 0,
                 )
             
             # Apply gradient overlay before subtitles (so subtitles appear on top)
