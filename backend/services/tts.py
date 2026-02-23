@@ -2584,6 +2584,143 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 except Exception:
                     pass
 
+    def _get_timestamps_via_forced_alignment(
+        self,
+        audio_path: str,
+        dialogue_turns: list[dict],
+        inputs: list[dict],
+        segment_timing: dict[int, dict],
+        leading_sec: float = 0.0,
+        turn_offsets: list[float] | None = None,
+    ) -> dict[int, list[dict]]:
+        """
+        Get word-level timestamps using ElevenLabs Forced Alignment API.
+
+        Sends the post-PHRASE_SYNC audio together with concatenated Russian text
+        to ``/v1/forced-alignment``.  The API returns word-level timestamps
+        aligned to the *actual* audio — no extra offsets required.
+
+        Returns:
+            Dict mapping turn index -> list of word dicts
+            {0: [{"word": "Привет", "start": 0.1, "end": 0.5}, ...], ...}
+            or empty dict on failure.
+        """
+        import re
+
+        num_inputs = min(len(inputs), len(dialogue_turns))
+        if num_inputs == 0:
+            return {}
+
+        # Build per-turn text (strip emotion tags) and concatenate
+        turn_texts: list[str] = []
+        for idx in range(num_inputs):
+            raw = inputs[idx].get("text", "").strip()
+            clean = re.sub(r"\[[\w]+\]\s*", "", raw).strip()
+            turn_texts.append(clean)
+
+        full_text = " ".join(turn_texts)
+        if not full_text.strip():
+            logger.warning("FA: No text to align")
+            return {}
+
+        logger.info(
+            "FA: Calling ElevenLabs Forced Alignment API (%d turns, %d chars)",
+            num_inputs, len(full_text),
+        )
+
+        # Call the API
+        url = f"{self.base_url}/forced-alignment"
+        try:
+            with open(audio_path, "rb") as audio_file:
+                resp = httpx.post(
+                    url,
+                    headers={"xi-api-key": self.api_key},
+                    files={"file": ("audio.wav", audio_file, "audio/wav")},
+                    data={"text": full_text},
+                    timeout=120.0,
+                )
+            resp.raise_for_status()
+            fa_data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "FA: API returned %s: %s",
+                exc.response.status_code,
+                exc.response.text[:300] if exc.response.text else "",
+            )
+            return {}
+        except Exception as exc:
+            logger.error("FA: API call failed: %s", exc)
+            return {}
+
+        fa_words_raw = fa_data.get("words", [])
+        overall_loss = fa_data.get("loss", -1)
+        logger.info(
+            "FA: Got %d words, overall loss=%.3f",
+            len(fa_words_raw), overall_loss,
+        )
+        if not fa_words_raw:
+            return {}
+
+        # Convert to standard format
+        fa_words = []
+        for w in fa_words_raw:
+            text = w.get("text", "").strip()
+            start = w.get("start", 0.0)
+            end = w.get("end", 0.0)
+            if text and end > start:
+                fa_words.append({"word": text, "start": start, "end": end})
+
+        if not fa_words:
+            logger.warning("FA: All words filtered out")
+            return {}
+
+        # Map words to turns using segment boundaries.
+        # FA was run on post-PHRASE_SYNC audio, so turn boundaries need
+        # leading_sec and turn_offsets applied.
+        turn_boundaries: list[tuple[float, float]] = []
+        for idx in range(num_inputs):
+            timing = segment_timing.get(idx, {})
+            t_start = timing.get("start", 0.0) + leading_sec
+            t_end = timing.get("end", 0.0) + leading_sec
+            if turn_offsets and idx < len(turn_offsets):
+                t_start += turn_offsets[idx]
+                t_end += turn_offsets[idx]
+            turn_boundaries.append((t_start, t_end))
+
+        # Assign words to turns: word belongs to the turn whose boundaries
+        # contain its midpoint.  Fallback: nearest turn.
+        words_by_input: dict[int, list[dict]] = {i: [] for i in range(num_inputs)}
+        for w in fa_words:
+            mid = (w["start"] + w["end"]) / 2
+            best_turn = 0
+            best_dist = float("inf")
+            for idx, (tb_start, tb_end) in enumerate(turn_boundaries):
+                if tb_start <= mid <= tb_end:
+                    best_turn = idx
+                    best_dist = 0
+                    break
+                dist = min(abs(mid - tb_start), abs(mid - tb_end))
+                if dist < best_dist:
+                    best_dist = dist
+                    best_turn = idx
+            words_by_input[best_turn].append(w)
+
+        # Log summary
+        for idx in range(num_inputs):
+            wds = words_by_input[idx]
+            if wds:
+                logger.info(
+                    "FA turn %d: %d words [%.2f-%.2fs] first='%s' last='%s'",
+                    idx, len(wds), wds[0]["start"], wds[-1]["end"],
+                    wds[0]["word"], wds[-1]["word"],
+                )
+            else:
+                logger.warning("FA turn %d: no words assigned", idx)
+
+        # Remove empty turns
+        words_by_input = {k: v for k, v in words_by_input.items() if v}
+        return words_by_input
+
     def _match_whisper_words_to_turns(
         self,
         whisper_words: list[dict],
@@ -3120,12 +3257,45 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 len(words_by_input) if words_by_input else 0,
                 len(voice_segments) if voice_segments else 0,
             )
+            # ── Choose word-level timestamp source ──────────────────────
+            # Priority:
+            #   1. ElevenLabs Forced Alignment API (best: word-level, on real audio)
+            #   2. Whisper forced alignment (good: on raw audio, needs offsets)
+            #   3. ElevenLabs TTD alignment (last resort: known bug after ~60s)
+
             _el_alignment_active = False
-            if words_by_input:
-                # Calculate turn timings for quality check (before applying offsets).
-                # Use RAW ElevenLabs coordinates (without leading_sec) so that
-                # _fix_bunched_word_timestamps stays in the same coordinate space
-                # as the parsed alignment words.  leading_sec is added in Phase 3.
+            _fa_alignment_active = False
+
+            # 1. Try ElevenLabs Forced Alignment API on post-PHRASE_SYNC audio
+            fa_words = self._get_timestamps_via_forced_alignment(
+                str(output_path),
+                dialogue_turns,
+                inputs,
+                segment_timing=segment_timing,
+                leading_sec=leading_sec,
+                turn_offsets=turn_offsets,
+            )
+            if fa_words:
+                logger.info(
+                    "TTD: Using ElevenLabs Forced Alignment API for subtitles (%d turns)",
+                    len(fa_words),
+                )
+                words_by_input = fa_words
+                _fa_alignment_active = True
+
+            # 2. Fallback: Whisper on raw audio
+            elif whisper_raw_words:
+                logger.info(
+                    "TTD: FA API failed — using Whisper-raw timestamps (%d turns)",
+                    len(whisper_raw_words),
+                )
+                words_by_input = whisper_raw_words
+
+            # 3. Last resort: ElevenLabs TTD alignment (bunched fix)
+            elif words_by_input:
+                logger.warning(
+                    "TTD: FA API + Whisper unavailable — using TTD alignment (may be inaccurate after 60s)"
+                )
                 temp_turn_timings = {}
                 for turn_idx in words_by_input.keys():
                     if turn_idx < len(inputs):
@@ -3134,73 +3304,37 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             "start": timing.get("start", 0),
                             "end": timing.get("end", 0),
                         }
-                
-                # Apply fixes for bunched words
-                temp_words_by_input = {}
-                for turn_idx, words in words_by_input.items():
+                for turn_idx, words in list(words_by_input.items()):
                     if turn_idx in temp_turn_timings:
-                        turn_timing = temp_turn_timings[turn_idx]
-                        fixed_words = self._fix_bunched_word_timestamps(
-                            words, turn_timing["start"], turn_timing["end"]
+                        tt = temp_turn_timings[turn_idx]
+                        words_by_input[turn_idx] = self._fix_bunched_word_timestamps(
+                            words, tt["start"], tt["end"]
                         )
-                        temp_words_by_input[turn_idx] = fixed_words
-                    else:
-                        temp_words_by_input[turn_idx] = words
-                
-                # ElevenLabs TTD alignment has a confirmed bug: duplicate/frozen
-                # timestamps after ~60s of audio (github.com/elevenlabs/elevenlabs-python/issues/707).
-                # Whisper forced alignment on the raw audio is more reliable.
-                USE_ELEVENLABS_ALIGNMENT = False
-                
-                if USE_ELEVENLABS_ALIGNMENT:
-                    logger.info(
-                        "TTD: Using ElevenLabs alignment for subtitles "
-                        "(USE_ELEVENLABS_ALIGNMENT=True, skipping Whisper)"
-                    )
-                    words_by_input = temp_words_by_input
-                    _el_alignment_active = True
-                elif whisper_raw_words:
-                    logger.info(
-                        "TTD: Using Whisper-raw timestamps for subtitles "
-                        "(skipping alignment quality check — Whisper is authoritative)"
-                    )
-                    words_by_input = whisper_raw_words
-                elif not self._check_timing_quality(temp_words_by_input, dialogue_turns, inputs):
-                    # Quality is poor — run Whisper on the post-PHRASE_SYNC audio
-                    logger.warning("TTD: TTD alignment quality is poor, using Whisper fallback")
-                    whisper_words = self._get_timestamps_via_whisper(
-                        str(output_path), dialogue_turns, inputs,
-                        segment_timing=segment_timing,
-                        leading_sec=leading_sec,
-                    )
-                    if whisper_words:
-                        logger.info("TTD: Whisper fallback successful, using Whisper timestamps")
-                        words_by_input = whisper_words
-                    else:
-                        logger.warning("TTD: Whisper fallback failed, using fixed TTD alignment")
-                        words_by_input = temp_words_by_input
-                else:
-                    # Quality is acceptable - use fixed TTD alignment
-                    logger.info("TTD: TTD alignment quality is acceptable after fixes")
-                    words_by_input = temp_words_by_input
-            
-            # FALLBACK: alignment parsing returned empty but Whisper ran
-            # successfully on the raw audio.  Use Whisper timestamps directly.
-            if not words_by_input and whisper_raw_words:
-                logger.info(
-                    "TTD: No usable alignment from API — using Whisper-raw timestamps directly (%d turns)",
-                    len(whisper_raw_words),
-                )
-                words_by_input = whisper_raw_words
+                _el_alignment_active = True
             
             # Apply timing to dialogue turns (with inserted silence offsets)
             num_inputs = min(len(dialogue_turns), len(inputs))
 
-            # When Whisper ran on raw audio we have authoritative word positions.
-            # Derive turn-level timing from the first/last word of each turn
-            # instead of using unreliable ElevenLabs voice_segment data.
-            if whisper_raw_words:
-                _base_w = 0.0  # Whisper timestamps are absolute
+            # Derive turn-level timing from word positions.
+            # FA timestamps are absolute (post-PHRASE_SYNC), no offsets needed.
+            # Whisper timestamps are absolute in raw audio, need turn_offsets.
+            if _fa_alignment_active and fa_words:
+                api_timed = [False] * num_inputs
+                for idx in range(num_inputs):
+                    wds = fa_words.get(idx)
+                    if wds:
+                        s = wds[0]["start"]
+                        e = wds[-1]["end"]
+                        api_timed[idx] = True
+                        turn = dialogue_turns[idx]
+                        turn["tts_start_offset"] = s
+                        turn["tts_duration"] = e - s
+                        turn["tts_end_offset"] = e
+                        turn["_timing_source"] = "forced_alignment"
+                api_count = sum(api_timed)
+                interp_count = num_inputs - api_count
+            elif whisper_raw_words:
+                _base_w = 0.0
                 api_timed = [False] * num_inputs
                 for idx in range(num_inputs):
                     offset = turn_offsets[idx] if idx < len(turn_offsets) else 0.0
@@ -3299,14 +3433,25 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 idx = group_end + 1
             
             # Phase 3: assign word-level timestamps to ALL turns
-            _base = leading_sec if (_el_alignment_active or not whisper_raw_words) else 0.0
+            # FA timestamps are already absolute (post-PHRASE_SYNC audio) → no offsets.
+            # Whisper raw timestamps need turn_offsets. EL alignment needs leading_sec.
+            if _fa_alignment_active:
+                _base = 0.0
+            elif _el_alignment_active or not whisper_raw_words:
+                _base = leading_sec
+            else:
+                _base = 0.0
             logger.info(
-                "TTD Phase 3: _base=%.3fs (el_align=%s, whisper=%s, leading=%.3fs)",
-                _base, _el_alignment_active, bool(whisper_raw_words), leading_sec,
+                "TTD Phase 3: _base=%.3fs (fa=%s, el_align=%s, whisper=%s, leading=%.3fs)",
+                _base, _fa_alignment_active, _el_alignment_active,
+                bool(whisper_raw_words), leading_sec,
             )
             for idx in range(num_inputs):
                 turn = dialogue_turns[idx]
-                offset = turn_offsets[idx] if idx < len(turn_offsets) else 0.0
+                # FA: offsets already baked into timestamps. Others: apply turn_offsets.
+                offset = 0.0 if _fa_alignment_active else (
+                    turn_offsets[idx] if idx < len(turn_offsets) else 0.0
+                )
                 start_time = turn.get("tts_start_offset", 0)
                 end_time = turn.get("tts_end_offset", 0)
                 turn_duration = end_time - start_time
