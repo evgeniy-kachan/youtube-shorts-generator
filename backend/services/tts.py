@@ -3060,7 +3060,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 logger.info("PHRASE_SYNC: No pauses inserted (all turns in sync or Russian longer)")
         
         # Trailing silence so the last word's acoustic tail isn't clipped.
-        # video_processor trims to speech_end + 0.5s, so 300ms here is enough.
+        # video_processor trims to speech_end + 1.5s; 300ms here is enough.
         TRAILING_SILENCE_MS = 300
         trailing_silence = AudioSegment.silent(duration=TRAILING_SILENCE_MS, frame_rate=audio.frame_rate)
         audio = audio + trailing_silence
@@ -3115,16 +3115,24 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 )
             
             # Apply fixes for bunched words and check quality
+            logger.info(
+                "TTD alignment check: words_by_input=%s turns, voice_segments=%s",
+                len(words_by_input) if words_by_input else 0,
+                len(voice_segments) if voice_segments else 0,
+            )
+            _el_alignment_active = False
             if words_by_input:
-                # Calculate turn timings for quality check (before applying offsets)
+                # Calculate turn timings for quality check (before applying offsets).
+                # Use RAW ElevenLabs coordinates (without leading_sec) so that
+                # _fix_bunched_word_timestamps stays in the same coordinate space
+                # as the parsed alignment words.  leading_sec is added in Phase 3.
                 temp_turn_timings = {}
                 for turn_idx in words_by_input.keys():
                     if turn_idx < len(inputs):
                         timing = segment_timing.get(turn_idx, {})
-                        # Use timing without offsets for quality check
                         temp_turn_timings[turn_idx] = {
-                            "start": timing.get("start", 0) + leading_sec,
-                            "end": timing.get("end", 0) + leading_sec,
+                            "start": timing.get("start", 0),
+                            "end": timing.get("end", 0),
                         }
                 
                 # Apply fixes for bunched words
@@ -3150,6 +3158,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         "(USE_ELEVENLABS_ALIGNMENT=True, skipping Whisper)"
                     )
                     words_by_input = temp_words_by_input
+                    _el_alignment_active = True
                 elif whisper_raw_words:
                     logger.info(
                         "TTD: Using Whisper-raw timestamps for subtitles "
@@ -3290,6 +3299,11 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 idx = group_end + 1
             
             # Phase 3: assign word-level timestamps to ALL turns
+            _base = leading_sec if (_el_alignment_active or not whisper_raw_words) else 0.0
+            logger.info(
+                "TTD Phase 3: _base=%.3fs (el_align=%s, whisper=%s, leading=%.3fs)",
+                _base, _el_alignment_active, bool(whisper_raw_words), leading_sec,
+            )
             for idx in range(num_inputs):
                 turn = dialogue_turns[idx]
                 offset = turn_offsets[idx] if idx < len(turn_offsets) else 0.0
@@ -3299,10 +3313,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 
                 if idx in words_by_input:
                     tts_words = []
-                    # Whisper timestamps are absolute positions in the raw audio file
-                    # (leading silence already included), so we only add the PHRASE_SYNC
-                    # offset.  Alignment-based timestamps need leading_sec added too.
-                    _base = 0.0 if whisper_raw_words else leading_sec
                     for w in words_by_input[idx]:
                         tts_words.append({
                             "word": w["word"],

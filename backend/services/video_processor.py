@@ -838,12 +838,15 @@ class VideoProcessor:
                         )
                         _speech_end = max(0, audio_dur - 0.3)
 
-            _TRIM_AFTER_SPEECH_SEC = 0.8  # Buffer after last word (increased from 0.5 to avoid cutting)
+            # Buffer after last word. Atempo scaling is non-linear, so actual speech
+            # may end later than scaled timestamps suggest. Use generous buffer.
+            _TRIM_AFTER_SPEECH_SEC = 1.5
             if _speech_end and _speech_end > 0:
                 _trim_target = _speech_end + _TRIM_AFTER_SPEECH_SEC
+                # Only trim if we'd save at least 2 seconds (avoid micro-trims that risk cutting speech)
                 _need_trim = (
-                    (audio_dur and _trim_target < audio_dur - 0.05)
-                    or (video_duration and _trim_target < video_duration - 0.05)
+                    (audio_dur and _trim_target < audio_dur - 2.0)
+                    or (video_duration and _trim_target < video_duration - 2.0)
                 )
                 if _need_trim:
                     video_stream = video_stream.filter(
@@ -1489,7 +1492,7 @@ class VideoProcessor:
                     clean = _PUNCT_STRIP.sub("", tw.get("word", ""))
                     if not clean:
                         continue
-                    min_dur = max(0.15, len(clean) * 0.055)
+                    min_dur = max(0.25, len(clean) * 0.08)
                     max_dur = min(_MAX_WORD_DURATION, len(clean) * 0.15 + 0.3)
                     if word_end - word_start < min_dur:
                         word_end = min(relative_end, word_start + min_dur)
@@ -1523,6 +1526,16 @@ class VideoProcessor:
                             cur["end"] = mid
                             nxt["start"] = mid
                 
+                # Log final word durations for diagnostics
+                for _vi, _vw in enumerate(validated_tts_words):
+                    _vdur = _vw["end"] - _vw["start"]
+                    if _vdur < 0.3:
+                        logger.warning(
+                            "SUBTITLE short word [%d] '%s': %.0fms (%.2f-%.2f)",
+                            _vi, _vw.get("word", ""), _vdur * 1000,
+                            _vw["start"], _vw["end"],
+                        )
+
                 # Build word entries with precise timestamps
                 # Chunk words while preserving their timestamps
                 word_idx = 0

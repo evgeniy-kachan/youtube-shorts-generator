@@ -1508,7 +1508,7 @@ def _process_segments_task(
                     try:
                         _pre_trim = AudioSegment.from_file(audio_path)
                         _pre_trim_dur = _pre_trim.duration_seconds
-                        _trim_to = last_word_end + 0.5  # 500ms buffer after last word
+                        _trim_to = last_word_end + 1.5  # 1.5s buffer — timestamps underestimate long words
                         if _pre_trim_dur > _trim_to + 0.5:  # Only trim if saving > 0.5s
                             _trimmed = _pre_trim[:int(_trim_to * 1000)]
                             _trimmed.export(audio_path, format="wav")
