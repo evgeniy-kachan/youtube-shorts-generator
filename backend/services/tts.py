@@ -3614,9 +3614,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             # ── Choose word-level timestamp source ──────────────────────
             # Priority:
             #   1. ElevenLabs Forced Alignment API (word-level, aligned to actual audio)
-            #   2. ElevenLabs TTD character-level alignment (fallback, parsed to words)
-            #   3. [DISABLED] Whisper post-PHRASE_SYNC (kept for future use)
-            #   4. [DISABLED] Whisper on raw audio (legacy fallback)
+            #   2. [DISABLED] ElevenLabs TTD character-level alignment
+            #   3. [DISABLED] Whisper post-PHRASE_SYNC
+            #   4. [DISABLED] Whisper on raw audio
 
             _el_alignment_active = False
             _fa_alignment_active = False
@@ -3638,28 +3638,28 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             else:
                 logger.warning("TTD: Forced Alignment API returned no data — falling back to TTD character alignment")
 
-            # 2. ElevenLabs TTD character-level alignment (fallback)
-            if not _fa_alignment_active and words_by_input:
-                quality_ok = self._check_timing_quality(
-                    words_by_input, dialogue_turns, inputs
-                )
-                if not quality_ok:
-                    logger.info(
-                        "TTD: ElevenLabs char alignment quality poor — applying bunched fix"
-                    )
-                    for turn_idx, words in list(words_by_input.items()):
-                        if turn_idx < len(inputs):
-                            timing = segment_timing.get(turn_idx, {})
-                            words_by_input[turn_idx] = self._fix_bunched_word_timestamps(
-                                words, timing.get("start", 0), timing.get("end", 0)
-                            )
-                else:
-                    logger.info("TTD: ElevenLabs char alignment quality OK")
-                logger.info(
-                    "TTD: Using ElevenLabs TTD char alignment for subtitles (%d turns)",
-                    len(words_by_input),
-                )
-                _el_alignment_active = True
+            # 2. [DISABLED] ElevenLabs TTD character-level alignment (fallback)
+            # if not _fa_alignment_active and words_by_input:
+            #     quality_ok = self._check_timing_quality(
+            #         words_by_input, dialogue_turns, inputs
+            #     )
+            #     if not quality_ok:
+            #         logger.info(
+            #             "TTD: ElevenLabs char alignment quality poor — applying bunched fix"
+            #         )
+            #         for turn_idx, words in list(words_by_input.items()):
+            #             if turn_idx < len(inputs):
+            #                 timing = segment_timing.get(turn_idx, {})
+            #                 words_by_input[turn_idx] = self._fix_bunched_word_timestamps(
+            #                     words, timing.get("start", 0), timing.get("end", 0)
+            #                 )
+            #     else:
+            #         logger.info("TTD: ElevenLabs char alignment quality OK")
+            #     logger.info(
+            #         "TTD: Using ElevenLabs TTD char alignment for subtitles (%d turns)",
+            #         len(words_by_input),
+            #     )
+            #     _el_alignment_active = True
 
             # 3. [DISABLED] Whisper on POST-PHRASE_SYNC audio
             #    Kept for future use — enable by uncommenting.
