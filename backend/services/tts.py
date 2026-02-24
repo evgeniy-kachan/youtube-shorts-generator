@@ -2795,7 +2795,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 continue
             for i in range(len(words)):
                 w = words[i]
-                # Fix overlap: word must not start before previous word ends
                 if i > 0:
                     prev_end = words[i - 1]["end"]
                     if w["start"] < prev_end:
@@ -2827,6 +2826,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         bwd = min(deficit, max(0.0, new_start - start_limit))
                         new_start -= bwd
 
+                    logger.info(
+                        "_fix_whisper_overlaps: turn %d word %d '%s' %.0fms→%.0fms "
+                        "(fwd=%.0fms bwd=%.0fms target=%.0fms)",
+                        turn_idx, i, raw, dur * 1000,
+                        (new_end - new_start) * 1000,
+                        fwd * 1000, (w["start"] - new_start) * 1000,
+                        target_dur * 1000,
+                    )
                     words[i] = dict(w, start=new_start, end=new_end)
                     total_fixes += 1
 
@@ -3867,7 +3874,45 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                                 idx, i, tw["word"], actual_dur, natural_max_dur
                             )
                             tts_words[i] = dict(tw, end=new_end)
-                    
+
+                    # Safety net: expand micro-duration words into neighbouring gaps.
+                    # Mirrors _fix_whisper_overlaps but runs on final tts_words
+                    # (after _base/offset/scaling), catching any words that slipped
+                    # through earlier stages.
+                    _PHASE3_MIN_DUR = 0.15
+                    _PHASE3_CHAR_RATE = 0.035
+                    _PHASE3_PUNCT = re.compile(r'^[\W_]+$')
+                    _phase3_fixes = 0
+                    for i, tw in enumerate(tts_words):
+                        if _PHASE3_PUNCT.match(tw["word"]):
+                            continue
+                        clean = re.sub(r'[^\w]', '', tw["word"])
+                        target = max(_PHASE3_MIN_DUR, len(clean) * _PHASE3_CHAR_RATE)
+                        dur = tw["end"] - tw["start"]
+                        if dur >= target:
+                            continue
+                        deficit = target - dur
+                        ns, ne = tw["start"], tw["end"]
+                        # Expand forward
+                        end_lim = tts_words[i + 1]["start"] if i + 1 < len(tts_words) else ne + deficit
+                        fwd = min(deficit, max(0.0, end_lim - ne))
+                        ne += fwd
+                        deficit -= fwd
+                        # Expand backward
+                        if deficit > 0:
+                            start_lim = tts_words[i - 1]["end"] if i > 0 else ns - deficit
+                            bwd = min(deficit, max(0.0, ns - start_lim))
+                            ns -= bwd
+                        if ne - ns > dur + 0.001:
+                            logger.info(
+                                "TTD Phase3 expand turn %d word %d '%s': %.0fms→%.0fms (target %.0fms)",
+                                idx, i, tw["word"], dur * 1000, (ne - ns) * 1000, target * 1000,
+                            )
+                            tts_words[i] = dict(tw, start=ns, end=ne)
+                            _phase3_fixes += 1
+                    if _phase3_fixes:
+                        logger.info("TTD Phase3: expanded %d micro-duration words in turn %d", _phase3_fixes, idx)
+
                     turn["tts_words"] = tts_words
                     logger.debug(
                         "TTD turn %d: %d words with timestamps (first: %.2f-%.2fs, last: %.2f-%.2fs)",

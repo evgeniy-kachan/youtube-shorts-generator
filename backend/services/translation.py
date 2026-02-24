@@ -18,6 +18,38 @@ from backend.services.deepseek_client import DeepSeekClient
 logger = logging.getLogger(__name__)
 
 # ============================================================================
+# POST-PROCESSING: deterministic false-friend corrections
+# ============================================================================
+# LLMs often ignore negative examples in prompts.  These phrase-level
+# replacements guarantee that known calques are fixed regardless of model.
+
+_FALSE_FRIEND_PHRASES: list[tuple[str, str]] = [
+    # 'extreme delusion' — all declension forms
+    ("крайняя иллюзия", "глубочайшее заблуждение"),
+    ("крайней иллюзии", "глубочайшего заблуждения"),
+    ("крайнюю иллюзию", "глубочайшее заблуждение"),
+    ("крайние иллюзии", "глубочайшие заблуждения"),
+    ("крайних иллюзий", "глубочайших заблуждений"),
+    # 'delusion' alone translated as 'иллюзия' (should be 'заблуждение')
+    ("страдает от иллюзии", "страдает от заблуждения"),
+    ("его иллюзия:", "его заблуждение:"),
+    ("Его иллюзия:", "Его заблуждение:"),
+]
+
+
+def _fix_false_friends(text: str) -> str:
+    """Apply deterministic false-friend replacements (case-sensitive phrases)."""
+    if not text:
+        return text
+    original = text
+    for bad, good in _FALSE_FRIEND_PHRASES:
+        text = text.replace(bad, good)
+    if text != original:
+        logger.info("FALSE-FRIEND FIX: '%s' → '%s'", original[:120], text[:120])
+    return text
+
+
+# ============================================================================
 # ISOCHRONIC TRANSLATION PROMPTS v3.0 (with dynamic timing)
 # ============================================================================
 
@@ -337,7 +369,9 @@ class Translator:
             segment_id = f"segment_{idx}"
             data = results_map.get(segment_id)
             if data and isinstance(data.get("subtitle_text"), str):
-                translations.append(data["subtitle_text"].strip())
+                translations.append(
+                    _fix_false_friends(data["subtitle_text"].strip())
+                )
             else:
                 if data is None:
                     logger.warning(
@@ -630,7 +664,7 @@ class Translator:
             # Apply translations and check against target word counts
             for item in translations:
                 turn_idx = item.get("turn")
-                text_ru = item.get("text_ru", "")
+                text_ru = _fix_false_friends(item.get("text_ru", ""))
                 if turn_idx is not None and 0 <= turn_idx < len(dialogue_turns):
                     dialogue_turns[turn_idx]["text_ru"] = text_ru
                     
@@ -698,7 +732,9 @@ Respond with ONLY the Russian translation, no JSON, no quotes, just the text."""
                             max_tokens=200,
                         )
                         
-                        translated = retry_response.choices[0].message.content.strip()
+                        translated = _fix_false_friends(
+                            retry_response.choices[0].message.content.strip()
+                        )
                         if translated:
                             turn["text_ru"] = translated
                             logger.info(
