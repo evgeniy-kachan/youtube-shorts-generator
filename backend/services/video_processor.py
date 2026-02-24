@@ -1492,7 +1492,7 @@ class VideoProcessor:
                     clean = _PUNCT_STRIP.sub("", tw.get("word", ""))
                     if not clean:
                         continue
-                    min_dur = max(0.25, len(clean) * 0.08)
+                    min_dur = max(0.40, len(clean) * 0.12)
                     max_dur = min(_MAX_WORD_DURATION, len(clean) * 0.15 + 0.3)
                     if word_end - word_start < min_dur:
                         word_end = min(relative_end, word_start + min_dur)
@@ -2032,13 +2032,32 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # Animations that benefit from extended visibility (like fade)
         EXTENDED_VISIBILITY_ANIMATIONS = ('fade', 'fade_short', 'highlight', 'boxed', 'bounce_word', 'readable')
         
-        # Word timing logs disabled to reduce noise (enable for debugging)
-        
+        # Pre-compute adjusted start times: enforce minimum gap between
+        # consecutive word highlights so no word flashes faster than readable.
+        _MIN_HL_GAP_MS = 300.0
+        chunk_ms = chunk_duration * 1000
+        raw_starts = [max(0.0, (w.get('start', chunk_start) - chunk_start) * 1000) for w in words]
+        raw_ends = [max(rs + 200.0, (w.get('end', chunk_start) - chunk_start) * 1000)
+                     for rs, w in zip(raw_starts, words)]
+
+        adj_starts = list(raw_starts)
+        for _k in range(1, len(adj_starts)):
+            adj_starts[_k] = max(adj_starts[_k], adj_starts[_k - 1] + _MIN_HL_GAP_MS)
+
+        if len(adj_starts) > 1 and adj_starts[-1] > chunk_ms:
+            overshoot = adj_starts[-1] - chunk_ms
+            total_shift = adj_starts[-1] - raw_starts[-1]
+            if total_shift > 0:
+                scale = max(0.0, 1.0 - overshoot / total_shift)
+                for _k in range(1, len(adj_starts)):
+                    shift = adj_starts[_k] - raw_starts[_k]
+                    adj_starts[_k] = raw_starts[_k] + shift * scale
+
         for idx, word in enumerate(words):
-            rel_start = max(0.0, (word.get('start', chunk_start) - chunk_start) * 1000)
-            rel_end = max(rel_start + 200.0, (word.get('end', chunk_start) - chunk_start) * 1000)
+            rel_start = adj_starts[idx]
+            rel_end = max(rel_start + 200.0, raw_ends[idx])
             highlight_start = int(rel_start)
-            highlight_mid = int(min(rel_start + 160.0, chunk_duration * 1000))
+            highlight_mid = int(min(rel_start + 160.0, chunk_ms))
             
             # Extend visibility for words that need more reading time:
             # 1. Last word of chunk: +700ms buffer
