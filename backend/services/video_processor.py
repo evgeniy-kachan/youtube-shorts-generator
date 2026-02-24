@@ -1492,7 +1492,7 @@ class VideoProcessor:
                     clean = _PUNCT_STRIP.sub("", tw.get("word", ""))
                     if not clean:
                         continue
-                    min_dur = max(0.35, len(clean) * 0.10)
+                    min_dur = max(0.25, len(clean) * 0.08)
                     max_dur = min(_MAX_WORD_DURATION, len(clean) * 0.15 + 0.3)
                     if word_end - word_start < min_dur:
                         word_end = min(relative_end, word_start + min_dur)
