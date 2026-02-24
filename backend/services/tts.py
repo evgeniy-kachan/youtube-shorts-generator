@@ -2721,6 +2721,50 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         words_by_input = {k: v for k, v in words_by_input.items() if v}
         return words_by_input
 
+    @staticmethod
+    def _fix_whisper_overlaps(
+        words_by_input: dict[int, list[dict]],
+    ) -> tuple[dict[int, list[dict]], int]:
+        """Fix overlapping and micro-duration words from WhisperX forced alignment.
+
+        WhisperX wav2vec2 alignment sometimes produces:
+        - Overlapping timestamps (word N starts before word N-1 ends)
+        - Micro-duration words (< 30ms)
+
+        After atempo scaling these become negative durations, causing
+        video_processor to reject the entire turn.
+
+        Returns (fixed_words, total_fixes).
+        """
+        _MIN_WORD_DUR = 0.03  # 30ms absolute minimum
+        total_fixes = 0
+
+        for turn_idx, words in words_by_input.items():
+            if not words:
+                continue
+            for i in range(len(words)):
+                w = words[i]
+                # Fix overlap: word must not start before previous word ends
+                if i > 0:
+                    prev_end = words[i - 1]["end"]
+                    if w["start"] < prev_end:
+                        words[i] = dict(w, start=prev_end)
+                        w = words[i]
+                        total_fixes += 1
+                # Fix micro-duration
+                dur = w["end"] - w["start"]
+                if dur < _MIN_WORD_DUR:
+                    char_dur = max(_MIN_WORD_DUR, len(w.get("word", "")) * 0.02)
+                    new_end = w["start"] + char_dur
+                    # Don't push into next word
+                    if i + 1 < len(words) and new_end > words[i + 1]["start"]:
+                        new_end = max(w["start"] + _MIN_WORD_DUR,
+                                      words[i + 1]["start"])
+                    words[i] = dict(w, end=new_end)
+                    total_fixes += 1
+
+        return words_by_input, total_fixes
+
     def _match_whisper_words_to_turns(
         self,
         whisper_words: list[dict],
@@ -3287,6 +3331,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 leading_sec=0.0,  # boundaries already include leading_sec
             )
             if whisper_post_words:
+                whisper_post_words, _overlap_fixes = self._fix_whisper_overlaps(whisper_post_words)
+                if _overlap_fixes:
+                    logger.info("TTD: Fixed %d overlapping/micro-duration Whisper words", _overlap_fixes)
                 logger.info(
                     "TTD: Using Whisper on post-PHRASE_SYNC audio for subtitles (%d turns)",
                     len(whisper_post_words),
@@ -3316,6 +3363,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
             # 3. Fallback: Whisper on raw audio (needs offsets in Phase 3)
             elif whisper_raw_words:
+                whisper_raw_words, _raw_fixes = self._fix_whisper_overlaps(whisper_raw_words)
+                if _raw_fixes:
+                    logger.info("TTD: Fixed %d overlapping/micro-duration words in raw Whisper", _raw_fixes)
                 logger.info(
                     "TTD: Post-PHRASE_SYNC Whisper failed — using raw Whisper timestamps (%d turns)",
                     len(whisper_raw_words),
