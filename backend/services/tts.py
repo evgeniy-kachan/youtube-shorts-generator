@@ -2842,19 +2842,18 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         """
         Match words from full Whisper transcription to dialogue turns.
 
-        Unlike ``_match_whisper_words_to_turns`` (1:1 positional matching for
-        forced alignment), this method uses:
+        Uses **global sequential alignment** (one ``SequenceMatcher`` across
+        all turns) instead of per-turn matching.  This avoids the fragile
+        time-boundary grouping step that broke when ``_post_segment_timing``
+        boundaries drifted due to PHRASE_SYNC offset changes.
 
-        1. **Time-boundary grouping** — assign each Whisper word to the turn
-           whose ``segment_timing`` window contains its midpoint.
-        2. **Fuzzy sequential alignment** (``difflib.SequenceMatcher``) —
-           handle the fact that Whisper's recognized text may differ from the
-           expected text (punctuation, number spelling, minor wording).
-        3. **Interpolation** — expected words that didn't match any Whisper
-           word get timestamps interpolated from their matched neighbours.
+        Steps:
+        1. Flatten all expected words (preserving turn membership).
+        2. One ``SequenceMatcher`` call: flat expected ↔ all Whisper words.
+        3. Rescue unmatched expected words via character-level similarity.
+        4. Split matched results back into turns, interpolate gaps.
 
-        Returns the same format as ``_match_whisper_words_to_turns``:
-            ``{turn_idx: [{word, start, end}, ...], ...}``
+        Returns ``{turn_idx: [{word, start, end}, ...], ...}``
         """
         from difflib import SequenceMatcher
 
@@ -2867,106 +2866,79 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             clean_text = re.sub(r'\[[\w]+\]\s*', '', text)
             expected_words_per_turn.append(clean_text.split())
 
-        total_expected = sum(len(w) for w in expected_words_per_turn)
+        # Flatten with metadata: (turn_idx, index_within_turn, word)
+        flat_items: list[tuple[int, int, str]] = []
+        for t_idx, words in enumerate(expected_words_per_turn):
+            for w_idx, word in enumerate(words):
+                flat_items.append((t_idx, w_idx, word))
+
+        total_expected = len(flat_items)
         logger.info(
             "TTD TRANSCRIBE MATCH: %d expected words across %d turns, %d Whisper words",
             total_expected, num_inputs, len(whisper_words),
         )
 
-        # ── Step 1: group Whisper words into turns by time ────────────────
+        # Turn boundaries (for interpolation only, NOT for grouping)
         turn_boundaries: list[tuple[float, float]] = []
         for idx in range(num_inputs):
             timing = segment_timing.get(idx, {})
             turn_boundaries.append((timing.get("start", 0.0), timing.get("end", 0.0)))
 
-        words_per_turn: dict[int, list[dict]] = {i: [] for i in range(num_inputs)}
-        for w in whisper_words:
-            mid = (w["start"] + w["end"]) / 2
-            best_turn = 0
-            best_dist = float("inf")
-            for idx, (tb_start, tb_end) in enumerate(turn_boundaries):
-                if tb_start - 0.3 <= mid <= tb_end + 0.3:
-                    best_turn = idx
-                    best_dist = 0
-                    break
-                dist = min(abs(mid - tb_start), abs(mid - tb_end))
-                if dist < best_dist:
-                    best_dist = dist
-                    best_turn = idx
-            words_per_turn[best_turn].append(w)
-
-        for idx in range(num_inputs):
-            logger.debug(
-                "TTD TRANSCRIBE MATCH: Turn %d time [%.2f-%.2fs] — %d Whisper words, %d expected",
-                idx, turn_boundaries[idx][0], turn_boundaries[idx][1],
-                len(words_per_turn[idx]), len(expected_words_per_turn[idx]),
-            )
-
-        # ── Step 2: fuzzy match within each turn ─────────────────────────
+        # ── Global fuzzy match: all expected vs all Whisper ───────────────
         _PUNCT_STRIP = str.maketrans("", "", ".,!?;:—–-…\"'«»()\u2014\u2013")
 
         def _norm(word: str) -> str:
             return word.lower().strip().translate(_PUNCT_STRIP)
 
+        flat_expected_norm = [_norm(item[2]) for item in flat_items]
+        whisper_norm = [_norm(w["word"]) for w in whisper_words]
+
+        matcher = SequenceMatcher(
+            None, flat_expected_norm, whisper_norm, autojunk=False,
+        )
+
+        exp_to_wh: dict[int, int] = {}
+        for op, i1, i2, j1, j2 in matcher.get_opcodes():
+            if op == "equal":
+                for k in range(i2 - i1):
+                    exp_to_wh[i1 + k] = j1 + k
+            elif op == "replace":
+                n = min(i2 - i1, j2 - j1)
+                for k in range(n):
+                    exp_to_wh[i1 + k] = j1 + k
+            elif op == "delete":
+                _used_wh = set(exp_to_wh.values())
+                for ei in range(i1, i2):
+                    best_j, best_r = -1, 0.0
+                    for ji in range(max(0, j1 - 3), min(len(whisper_words), j2 + 3)):
+                        if ji in _used_wh:
+                            continue
+                        r = SequenceMatcher(
+                            None, flat_expected_norm[ei], whisper_norm[ji],
+                        ).ratio()
+                        if r > best_r:
+                            best_r = r
+                            best_j = ji
+                    if best_r >= 0.6 and best_j >= 0:
+                        exp_to_wh[ei] = best_j
+                        _used_wh.add(best_j)
+
+        # ── Split results back into turns ─────────────────────────────────
         words_by_input: dict[int, list[dict]] = {}
 
         for turn_idx in range(num_inputs):
             expected = expected_words_per_turn[turn_idx]
-            wgroup = words_per_turn[turn_idx]
-
             if not expected:
                 continue
 
-            if not wgroup:
-                logger.warning(
-                    "TTD TRANSCRIBE MATCH: Turn %d — no Whisper words in time window [%.2f-%.2fs]",
-                    turn_idx, *turn_boundaries[turn_idx],
-                )
-                continue
+            # Find the flat indices belonging to this turn
+            turn_offset = sum(len(expected_words_per_turn[t]) for t in range(turn_idx))
 
-            expected_norm = [_norm(w) for w in expected]
-            whisper_norm = [_norm(w["word"]) for w in wgroup]
-
-            matcher = SequenceMatcher(None, expected_norm, whisper_norm, autojunk=False)
-
-            # Build mapping: expected_idx → whisper_idx
-            exp_to_wh: dict[int, int] = {}
-            for op, i1, i2, j1, j2 in matcher.get_opcodes():
-                if op == "equal":
-                    for k in range(i2 - i1):
-                        exp_to_wh[i1 + k] = j1 + k
-                elif op == "replace":
-                    n = min(i2 - i1, j2 - j1)
-                    for k in range(n):
-                        exp_to_wh[i1 + k] = j1 + k
-                elif op == "insert":
-                    pass
-                elif op == "delete":
-                    # Expected words without a Whisper counterpart.
-                    # Try to rescue by finding a nearby Whisper word with
-                    # high character-level similarity (handles typos like
-                    # мошеннической vs мошенической).
-                    _used_wh = set(exp_to_wh.values())
-                    for ei in range(i1, i2):
-                        best_j, best_r = -1, 0.0
-                        for ji in range(max(0, j1 - 3), min(len(wgroup), j2 + 3)):
-                            if ji in _used_wh:
-                                continue
-                            r = SequenceMatcher(
-                                None, expected_norm[ei], whisper_norm[ji],
-                            ).ratio()
-                            if r > best_r:
-                                best_r = r
-                                best_j = ji
-                        if best_r >= 0.6 and best_j >= 0:
-                            exp_to_wh[ei] = best_j
-                            _used_wh.add(best_j)
-
-            # ── Build result list with interpolation for gaps ─────────
             turn_words: list[dict] = []
-            for exp_idx, exp_word in enumerate(expected):
-                if exp_idx in exp_to_wh:
-                    wh = wgroup[exp_to_wh[exp_idx]]
+            for w_idx, exp_word in enumerate(expected):
+                flat_idx = turn_offset + w_idx
+                if flat_idx in exp_to_wh:
+                    wh = whisper_words[exp_to_wh[flat_idx]]
                     turn_words.append({
                         "word": exp_word,
                         "start": wh["start"],
@@ -2979,7 +2951,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         "_needs_interp": True,
                     })
 
-            # Interpolate unmatched words from surrounding anchors
             self._interpolate_gaps(turn_words, turn_boundaries[turn_idx])
 
             if turn_words:
@@ -2989,11 +2960,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     w for w in turn_words if w.get("_interpolated")
                 ]
                 logger.info(
-                    "TTD TRANSCRIBE MATCH: Turn %d: %d/%d matched (%.0f%%), "
-                    "Whisper pool=%d",
+                    "TTD TRANSCRIBE MATCH: Turn %d: %d/%d matched (%.0f%%)",
                     turn_idx, matched, len(expected),
                     matched / len(expected) * 100 if expected else 0,
-                    len(wgroup),
                 )
                 if interp_words:
                     interp_detail = ", ".join(
@@ -3004,12 +2973,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         "TTD TRANSCRIBE MATCH: Turn %d interpolated: %s",
                         turn_idx, interp_detail,
                     )
-                # Log Whisper's raw text for comparison on mismatches
                 if matched < len(expected):
-                    wh_text = " ".join(w["word"] for w in wgroup)
                     logger.info(
-                        "TTD TRANSCRIBE MATCH: Turn %d Whisper heard: '%s'",
-                        turn_idx, wh_text[:200],
+                        "TTD TRANSCRIBE MATCH: Turn %d unmatched expected: %s",
+                        turn_idx,
+                        ", ".join(
+                            f"'{w['word']}'" for w in turn_words
+                            if w.get("_interpolated")
+                        )[:200],
                     )
 
         total_matched = sum(
