@@ -2999,9 +2999,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             else:
                 anchor_end = turn_boundary[1]
 
+            _MIN_INTERP_DUR = 0.25  # 250ms — readable subtitle minimum
+
             run_len = run_end - run_start
             dur = max(0.0, anchor_end - anchor_start)
-            word_dur = dur / max(1, run_len) if dur > 0 else 0.15
+            word_dur = dur / max(1, run_len) if dur > 0 else _MIN_INTERP_DUR
+            word_dur = max(word_dur, _MIN_INTERP_DUR)
 
             for j in range(run_start, run_end):
                 offset = j - run_start
