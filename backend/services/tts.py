@@ -3613,23 +3613,39 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             )
             # ── Choose word-level timestamp source ──────────────────────
             # Priority:
-            #   1. ElevenLabs TTD alignment (native timestamps from the TTS engine)
-            #   2. [DISABLED] Whisper post-PHRASE_SYNC (kept for future use)
-            #   3. [DISABLED] ElevenLabs Forced Alignment API (costs credits)
+            #   1. ElevenLabs Forced Alignment API (word-level, aligned to actual audio)
+            #   2. ElevenLabs TTD character-level alignment (fallback, parsed to words)
+            #   3. [DISABLED] Whisper post-PHRASE_SYNC (kept for future use)
             #   4. [DISABLED] Whisper on raw audio (legacy fallback)
 
             _el_alignment_active = False
             _fa_alignment_active = False
 
-            # 1. ElevenLabs TTD alignment — native word timestamps from the TTS
-            #    engine that generated the audio.  No Whisper indirection.
-            if words_by_input:
+            # 1. ElevenLabs Forced Alignment API — sends post-PHRASE_SYNC audio
+            #    + text to /v1/forced-alignment, returns precise word-level timestamps.
+            fa_words = self._get_timestamps_via_forced_alignment(
+                str(output_path), dialogue_turns, inputs,
+                segment_timing=segment_timing,
+                leading_sec=leading_sec, turn_offsets=turn_offsets,
+            )
+            if fa_words:
+                logger.info(
+                    "TTD: Using ElevenLabs Forced Alignment API for subtitles (%d turns)",
+                    len(fa_words),
+                )
+                words_by_input = fa_words
+                _fa_alignment_active = True
+            else:
+                logger.warning("TTD: Forced Alignment API returned no data — falling back to TTD character alignment")
+
+            # 2. ElevenLabs TTD character-level alignment (fallback)
+            if not _fa_alignment_active and words_by_input:
                 quality_ok = self._check_timing_quality(
                     words_by_input, dialogue_turns, inputs
                 )
                 if not quality_ok:
                     logger.info(
-                        "TTD: ElevenLabs alignment quality poor — applying bunched fix"
+                        "TTD: ElevenLabs char alignment quality poor — applying bunched fix"
                     )
                     for turn_idx, words in list(words_by_input.items()):
                         if turn_idx < len(inputs):
@@ -3638,14 +3654,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                                 words, timing.get("start", 0), timing.get("end", 0)
                             )
                 else:
-                    logger.info("TTD: ElevenLabs alignment quality OK")
+                    logger.info("TTD: ElevenLabs char alignment quality OK")
                 logger.info(
-                    "TTD: Using ElevenLabs TTD alignment for subtitles (%d turns)",
+                    "TTD: Using ElevenLabs TTD char alignment for subtitles (%d turns)",
                     len(words_by_input),
                 )
                 _el_alignment_active = True
 
-            # 2. [DISABLED] Whisper on POST-PHRASE_SYNC audio
+            # 3. [DISABLED] Whisper on POST-PHRASE_SYNC audio
             #    Kept for future use — enable by uncommenting.
             # _post_segment_timing: dict[int, dict] = {}
             # for _ti in range(min(len(inputs), len(dialogue_turns))):
@@ -3672,19 +3688,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             #         len(whisper_post_words),
             #     )
             #     words_by_input = whisper_post_words
-            #     _fa_alignment_active = True
-
-            # 3. [DISABLED] ElevenLabs Forced Alignment API
-            # elif not _fa_alignment_active:
-            #     fa_words = self._get_timestamps_via_forced_alignment(
-            #         str(output_path), dialogue_turns, inputs,
-            #         segment_timing=segment_timing,
-            #         leading_sec=leading_sec, turn_offsets=turn_offsets,
-            #     )
-            #     if fa_words:
-            #         logger.info("TTD: Using ElevenLabs FA API (%d turns)", len(fa_words))
-            #         words_by_input = fa_words
-            #         _fa_alignment_active = True
 
             # 4. [DISABLED] Whisper on raw audio fallback
             # elif whisper_raw_words:
@@ -3704,7 +3707,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             api_timed = [False] * num_inputs
 
             if _fa_alignment_active:
-                # Whisper post-PHRASE_SYNC: timestamps are absolute, no offsets.
+                # FA API: timestamps are absolute (aligned to post-PHRASE_SYNC audio).
                 for idx in range(num_inputs):
                     wds = words_by_input.get(idx)
                     if wds:
@@ -3715,9 +3718,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         turn["tts_start_offset"] = s
                         turn["tts_duration"] = e - s
                         turn["tts_end_offset"] = e
-                        turn["_timing_source"] = "whisper_post"
+                        turn["_timing_source"] = "forced_alignment"
             else:
-                # ElevenLabs alignment or fallback: use voice_segment timing
+                # ElevenLabs char alignment or fallback: use voice_segment timing
                 # with leading_sec + turn_offsets applied.
                 for idx in range(num_inputs):
                     timing = segment_timing.get(idx, {})
@@ -3730,7 +3733,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         turn["tts_start_offset"] = s
                         turn["tts_duration"] = e - s
                         turn["tts_end_offset"] = e
-                        turn["_timing_source"] = "elevenlabs"
+                        turn["_timing_source"] = "elevenlabs_char"
 
             api_count = sum(api_timed)
             interp_count = num_inputs - api_count
@@ -3963,8 +3966,8 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     )
             
             # POST-PROCESSING: Fix bunched/overlapping turns.
-            # Run when ElevenLabs alignment provides timestamps (they can be bunched).
-            # Skip when Whisper/FA post-PHRASE_SYNC was the primary source.
+            # Run when ElevenLabs char alignment is the fallback source (bunched timestamps).
+            # Skip when FA API was used (its word-level timestamps are already accurate).
             if _el_alignment_active and not _fa_alignment_active:
                 MIN_TURN_DURATION = 0.4
                 TURN_GAP = 0.05
