@@ -2454,7 +2454,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             # Whisperx.align will find exact word positions within these windows.
             # Long turns (>_SPLIT_THRESHOLD words) are split at punctuation
             # into smaller sub-segments for better wav2vec2 alignment accuracy.
-            _SPLIT_THRESHOLD = 15
+            _SPLIT_THRESHOLD = 10
+            _MIN_SUB_WORDS = 4
+            _SPLIT_PUNCT = set(".!?:;,\u2014\u2013")  # includes em-dash and en-dash
             segments_for_align = []
             num_inputs = min(len(inputs), len(dialogue_turns))
             for idx in range(num_inputs):
@@ -2469,20 +2471,20 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
                 words = text.split()
                 if len(words) > _SPLIT_THRESHOLD:
-                    # Split at sentence-ending punctuation for shorter alignment windows
                     sub_texts: list[str] = []
                     current_words: list[str] = []
                     for w in words:
                         current_words.append(w)
+                        last_char = w.rstrip()[-1:] if w.rstrip() else ""
+                        is_punct = last_char in _SPLIT_PUNCT or w.strip() in ("\u2014", "\u2013")
                         if (
-                            len(current_words) >= _SPLIT_THRESHOLD // 2
-                            and w.rstrip()[-1:] in ".!?:;,"
-                            and len(current_words) >= 3
+                            len(current_words) >= _MIN_SUB_WORDS
+                            and is_punct
                         ):
                             sub_texts.append(" ".join(current_words))
                             current_words = []
                     if current_words:
-                        if sub_texts and len(current_words) < 4:
+                        if sub_texts and len(current_words) < _MIN_SUB_WORDS:
                             sub_texts[-1] += " " + " ".join(current_words)
                         else:
                             sub_texts.append(" ".join(current_words))
