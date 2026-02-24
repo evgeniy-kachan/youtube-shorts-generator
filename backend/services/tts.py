@@ -2892,7 +2892,29 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             (matched_count / total_expected * 100) if total_expected > 0 else 0,
             whisper_idx, len(whisper_words)
         )
-        
+
+        # Per-turn quality check: drop turns where Whisper coverage is too low
+        # or timestamps are wildly out of range (wav2vec2 alignment failure).
+        _MIN_COVERAGE = 0.70
+        bad_turns = []
+        for turn_idx, expected_words in enumerate(expected_words_per_turn):
+            if not expected_words or turn_idx not in words_by_input:
+                continue
+            matched = words_by_input[turn_idx]
+            coverage = len(matched) / len(expected_words)
+            if coverage < _MIN_COVERAGE:
+                bad_turns.append(turn_idx)
+                logger.warning(
+                    "TTD WHISPER MATCH: Turn %d coverage %.0f%% < %.0f%% — dropping (will use fallback)",
+                    turn_idx, coverage * 100, _MIN_COVERAGE * 100,
+                )
+                del words_by_input[turn_idx]
+        if bad_turns:
+            logger.info(
+                "TTD WHISPER MATCH: Dropped %d low-coverage turns: %s",
+                len(bad_turns), bad_turns,
+            )
+
         return words_by_input
 
     def synthesize_dialogue(
