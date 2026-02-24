@@ -2774,18 +2774,20 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
     def _fix_whisper_overlaps(
         words_by_input: dict[int, list[dict]],
     ) -> tuple[dict[int, list[dict]], int]:
-        """Fix overlapping and micro-duration words from WhisperX forced alignment.
+        """Fix overlapping and micro-duration words from Whisper alignment.
 
-        WhisperX wav2vec2 alignment sometimes produces:
+        Whisper sometimes produces:
         - Overlapping timestamps (word N starts before word N-1 ends)
-        - Micro-duration words (< 30ms)
+        - Unreasonably short words (e.g. 89 ms for a 14-char word)
 
-        After atempo scaling these become negative durations, causing
-        video_processor to reject the entire turn.
+        For short words we expand into neighbouring gaps (forward first,
+        then backward) so subtitles stay visible long enough to read.
 
         Returns (fixed_words, total_fixes).
         """
-        _MIN_WORD_DUR = 0.03  # 30ms absolute minimum
+        _MIN_WORD_DUR = 0.15   # 150 ms absolute floor for any real word
+        _CHAR_RATE = 0.035     # 35 ms per letter → target minimum
+        _PUNCT_ONLY = re.compile(r'^[\W_]+$')
         total_fixes = 0
 
         for turn_idx, words in words_by_input.items():
@@ -2800,16 +2802,32 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         words[i] = dict(w, start=prev_end)
                         w = words[i]
                         total_fixes += 1
-                # Fix micro-duration
+
+                raw = w.get("word", "")
+                if _PUNCT_ONLY.match(raw):
+                    continue
+
+                clean = re.sub(r'[^\w]', '', raw)
+                target_dur = max(_MIN_WORD_DUR, len(clean) * _CHAR_RATE)
                 dur = w["end"] - w["start"]
-                if dur < _MIN_WORD_DUR:
-                    char_dur = max(_MIN_WORD_DUR, len(w.get("word", "")) * 0.02)
-                    new_end = w["start"] + char_dur
-                    # Don't push into next word
-                    if i + 1 < len(words) and new_end > words[i + 1]["start"]:
-                        new_end = max(w["start"] + _MIN_WORD_DUR,
-                                      words[i + 1]["start"])
-                    words[i] = dict(w, end=new_end)
+
+                if dur < target_dur:
+                    deficit = target_dur - dur
+                    new_start, new_end = w["start"], w["end"]
+
+                    end_limit = (words[i + 1]["start"]
+                                 if i + 1 < len(words) else new_end + deficit)
+                    fwd = min(deficit, max(0.0, end_limit - new_end))
+                    new_end += fwd
+                    deficit -= fwd
+
+                    if deficit > 0:
+                        start_limit = (words[i - 1]["end"]
+                                       if i > 0 else new_start - deficit)
+                        bwd = min(deficit, max(0.0, new_start - start_limit))
+                        new_start -= bwd
+
+                    words[i] = dict(w, start=new_start, end=new_end)
                     total_fixes += 1
 
         return words_by_input, total_fixes
