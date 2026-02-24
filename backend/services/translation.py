@@ -110,6 +110,48 @@ Translate idioms naturally, not literally. Preserve meaning, not words:
 • 'to be on the same page' → 'быть на одной волне'
 • 'to think outside the box' → 'мыслить нестандартно'
 
+=== SEMANTIC PRECISION (avoid false friends & calques) ===
+
+Choose Russian words by MEANING, not by phonetic similarity to English.
+Use natural Russian collocations, not word-for-word calques.
+
+FALSE FRIENDS — common traps:
+• 'delusion' → 'заблуждение' / 'самообман' (NOT 'иллюзия' — that's 'illusion')
+• 'accurate' → 'точный' (NOT 'аккуратный' — that's 'tidy')
+• 'prospect' → 'перспектива' / 'вероятность' (NOT 'проспект')
+• 'sympathy' → 'сочувствие' (NOT 'симпатия' — that's 'liking')
+• 'paragraph' → 'абзац' (NOT 'параграф' — that's 'section')
+• 'data' → 'данные' (NOT 'дата' — that's 'date')
+• 'fabric' → 'ткань' (NOT 'фабрика' — that's 'factory')
+
+NATURAL COLLOCATIONS — adjective + noun:
+• 'extreme delusion' → 'глубочайшее заблуждение' (NOT 'крайняя иллюзия')
+• 'common sense' → 'здравый смысл' (NOT 'общий смысл')
+• 'strong argument' → 'веский довод' (NOT 'сильный аргумент')
+• 'heavy losses' → 'тяжёлые потери' (NOT 'тяжёлые утраты')
+• 'sharp decline' → 'резкий спад' (NOT 'острое снижение')
+• 'deep concern' → 'серьёзная обеспокоенность' (NOT 'глубокий концерн')
+
+CONTEXTUAL DISAMBIGUATION — polysemous words:
+• Pick the meaning that fits the CONTEXT, not the most common translation.
+• 'memory' in IT → 'память устройства'; in psychology → 'воспоминание'
+• 'thing' → may be 'момент', 'дело', 'штука', or dropped entirely
+• 'run' in business → 'управлять'; in sports → 'бежать'
+• 'engagement' in marketing → 'вовлечённость'; in HR → 'заинтересованность'
+• When unsure, re-read the surrounding sentence and pick the narrowest
+  fitting Russian word — vague catch-all translations sound unnatural.
+
+AVOID GENITIVE CHAINS (родительный нанизывание):
+• English noun chains ("the process of development of a strategy of
+  improvement of product quality") are normal in English but produce
+  ugly, hard-to-follow Russian when calqued with «…-ия …-ия …-ия».
+• REWRITE with verbs and prepositions — they make Russian alive:
+  ✗ 'процесс разработки стратегии улучшения качества продукта'
+  ✓ 'как мы улучшаем качество продукта'
+  ✗ 'анализ результатов исследования поведения пользователей'
+  ✓ 'мы изучили, как ведут себя пользователи'
+• RULE: if you see 3+ genitive nouns in a row — restructure the phrase.
+
 === TERM CONSISTENCY ===
 
 Within a dialogue, use CONSISTENT translations:
