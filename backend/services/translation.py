@@ -36,6 +36,36 @@ Translate English dialogue to Russian that:
 2. PRESERVES exact meaning (especially technical/business terms)
 3. Sounds natural when spoken aloud by TTS
 
+=== SEMANTIC PRECISION (CRITICAL — avoid false friends & calques) ===
+
+Choose Russian words by MEANING, not by phonetic similarity to English.
+Use natural Russian collocations, not word-for-word calques.
+
+FALSE FRIENDS — common traps:
+• 'delusion' → 'заблуждение' / 'самообман' (NOT 'иллюзия' — that's 'illusion')
+• 'accurate' → 'точный' (NOT 'аккуратный' — that's 'tidy')
+• 'prospect' → 'перспектива' / 'вероятность' (NOT 'проспект')
+• 'sympathy' → 'сочувствие' (NOT 'симпатия' — that's 'liking')
+• 'data' → 'данные' (NOT 'дата' — that's 'date')
+• 'fabric' → 'ткань' (NOT 'фабрика' — that's 'factory')
+
+NATURAL COLLOCATIONS — adjective + noun:
+• 'extreme delusion' → 'глубочайшее заблуждение' (NOT 'крайняя иллюзия')
+• 'common sense' → 'здравый смысл' (NOT 'общий смысл')
+• 'strong argument' → 'веский довод' (NOT 'сильный аргумент')
+• 'sharp decline' → 'резкий спад' (NOT 'острое снижение')
+
+CONTEXTUAL DISAMBIGUATION — polysemous words:
+• Pick the meaning that fits the CONTEXT, not the most common translation.
+• 'memory' in IT → 'память устройства'; in psychology → 'воспоминание'
+• 'thing' → may be 'момент', 'дело', 'штука', or dropped entirely
+• When unsure, pick the narrowest fitting Russian word.
+
+AVOID GENITIVE CHAINS:
+• 3+ genitive nouns in a row → restructure with verbs/prepositions.
+  ✗ 'процесс разработки стратегии улучшения качества продукта'
+  ✓ 'как мы улучшаем качество продукта'
+
 === TIMING RULE (CRITICAL) ===
 
 Each turn has a TARGET WORD COUNT calculated from its duration.
@@ -109,48 +139,6 @@ Translate idioms naturally, not literally. Preserve meaning, not words:
 • 'it's a no-brainer' → 'это очевидно'
 • 'to be on the same page' → 'быть на одной волне'
 • 'to think outside the box' → 'мыслить нестандартно'
-
-=== SEMANTIC PRECISION (avoid false friends & calques) ===
-
-Choose Russian words by MEANING, not by phonetic similarity to English.
-Use natural Russian collocations, not word-for-word calques.
-
-FALSE FRIENDS — common traps:
-• 'delusion' → 'заблуждение' / 'самообман' (NOT 'иллюзия' — that's 'illusion')
-• 'accurate' → 'точный' (NOT 'аккуратный' — that's 'tidy')
-• 'prospect' → 'перспектива' / 'вероятность' (NOT 'проспект')
-• 'sympathy' → 'сочувствие' (NOT 'симпатия' — that's 'liking')
-• 'paragraph' → 'абзац' (NOT 'параграф' — that's 'section')
-• 'data' → 'данные' (NOT 'дата' — that's 'date')
-• 'fabric' → 'ткань' (NOT 'фабрика' — that's 'factory')
-
-NATURAL COLLOCATIONS — adjective + noun:
-• 'extreme delusion' → 'глубочайшее заблуждение' (NOT 'крайняя иллюзия')
-• 'common sense' → 'здравый смысл' (NOT 'общий смысл')
-• 'strong argument' → 'веский довод' (NOT 'сильный аргумент')
-• 'heavy losses' → 'тяжёлые потери' (NOT 'тяжёлые утраты')
-• 'sharp decline' → 'резкий спад' (NOT 'острое снижение')
-• 'deep concern' → 'серьёзная обеспокоенность' (NOT 'глубокий концерн')
-
-CONTEXTUAL DISAMBIGUATION — polysemous words:
-• Pick the meaning that fits the CONTEXT, not the most common translation.
-• 'memory' in IT → 'память устройства'; in psychology → 'воспоминание'
-• 'thing' → may be 'момент', 'дело', 'штука', or dropped entirely
-• 'run' in business → 'управлять'; in sports → 'бежать'
-• 'engagement' in marketing → 'вовлечённость'; in HR → 'заинтересованность'
-• When unsure, re-read the surrounding sentence and pick the narrowest
-  fitting Russian word — vague catch-all translations sound unnatural.
-
-AVOID GENITIVE CHAINS (родительный нанизывание):
-• English noun chains ("the process of development of a strategy of
-  improvement of product quality") are normal in English but produce
-  ugly, hard-to-follow Russian when calqued with «…-ия …-ия …-ия».
-• REWRITE with verbs and prepositions — they make Russian alive:
-  ✗ 'процесс разработки стратегии улучшения качества продукта'
-  ✓ 'как мы улучшаем качество продукта'
-  ✗ 'анализ результатов исследования поведения пользователей'
-  ✓ 'мы изучили, как ведут себя пользователи'
-• RULE: if you see 3+ genitive nouns in a row — restructure the phrase.
 
 === TERM CONSISTENCY ===
 
@@ -486,7 +474,16 @@ class Translator:
             "   - Simplify constructions (для того чтобы → чтобы)\n"
             "   - TARGET: translation should be ~SAME character count as original or SHORTER\n\n"
             "2. NATURAL SPEECH: This is for voice dubbing, not written text. Use spoken Russian.\n\n"
-            "3. Return clean text suitable for on-screen subtitles (no markup).\n\n"
+            "3. SEMANTIC PRECISION — avoid false friends & calques:\n"
+            "   - Choose Russian words by MEANING, not phonetic similarity to English.\n"
+            "   - 'delusion' → 'заблуждение'/'самообман' (NOT 'иллюзия' — that's 'illusion')\n"
+            "   - 'accurate' → 'точный' (NOT 'аккуратный'), 'sympathy' → 'сочувствие' (NOT 'симпатия')\n"
+            "   - 'data' → 'данные' (NOT 'дата'), 'fabric' → 'ткань' (NOT 'фабрика')\n"
+            "   - Use natural collocations: 'extreme delusion' → 'глубочайшее заблуждение' (NOT 'крайняя иллюзия')\n"
+            "   - 'common sense' → 'здравый смысл', 'strong argument' → 'веский довод'\n"
+            "   - For polysemous words, pick the meaning fitting the CONTEXT.\n"
+            "   - Avoid genitive chains (3+ nouns in a row) — rewrite with verbs.\n\n"
+            "4. Return clean text suitable for on-screen subtitles (no markup).\n\n"
             "Respond ONLY with valid JSON in the format:\n"
             '{\n  "results": [\n    {"id": "...", "subtitle_text": "..."},\n    ...\n  ]\n}\n\n'
             "Segments:\n"
