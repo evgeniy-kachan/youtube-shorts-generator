@@ -3743,12 +3743,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 logger.info("TTD: Merged %d short turns into previous turns for subtitle display", merged_count)
             
             # Summary log: timing source for each turn
-            api_count = sum(1 for t in dialogue_turns if t.get("_timing_source") == "api")
-            interp_count = sum(1 for t in dialogue_turns if t.get("_timing_source") == "interpolated")
-            logger.info(
-                "TTD TIMING SUMMARY: %d turns from API, %d interpolated",
-                api_count, interp_count
-            )
+            _src_counts: dict[str, int] = {}
+            for t in dialogue_turns:
+                src = t.get("_timing_source", "unknown")
+                _src_counts[src] = _src_counts.get(src, 0) + 1
+            _src_str = ", ".join(f"{v} {k}" for k, v in sorted(_src_counts.items()))
+            logger.info("TTD TIMING SUMMARY: %s", _src_str or "no turns")
         else:
             # Fallback: distribute proportionally by character count
             logger.warning("TTD: No voice_segments in response, using character-based estimation")
