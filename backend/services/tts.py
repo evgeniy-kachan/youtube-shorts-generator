@@ -2921,6 +2921,28 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     n = min(i2 - i1, j2 - j1)
                     for k in range(n):
                         exp_to_wh[i1 + k] = j1 + k
+                elif op == "insert":
+                    pass
+                elif op == "delete":
+                    # Expected words without a Whisper counterpart.
+                    # Try to rescue by finding a nearby Whisper word with
+                    # high character-level similarity (handles typos like
+                    # мошеннической vs мошенической).
+                    _used_wh = set(exp_to_wh.values())
+                    for ei in range(i1, i2):
+                        best_j, best_r = -1, 0.0
+                        for ji in range(max(0, j1 - 3), min(len(wgroup), j2 + 3)):
+                            if ji in _used_wh:
+                                continue
+                            r = SequenceMatcher(
+                                None, expected_norm[ei], whisper_norm[ji],
+                            ).ratio()
+                            if r > best_r:
+                                best_r = r
+                                best_j = ji
+                        if best_r >= 0.6 and best_j >= 0:
+                            exp_to_wh[ei] = best_j
+                            _used_wh.add(best_j)
 
             # ── Build result list with interpolation for gaps ─────────
             turn_words: list[dict] = []
@@ -2945,6 +2967,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             if turn_words:
                 words_by_input[turn_idx] = turn_words
                 matched = sum(1 for w in turn_words if "_whisper_word" in w)
+                interp_words = [
+                    w for w in turn_words if w.get("_interpolated")
+                ]
                 logger.info(
                     "TTD TRANSCRIBE MATCH: Turn %d: %d/%d matched (%.0f%%), "
                     "Whisper pool=%d",
@@ -2952,6 +2977,22 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     matched / len(expected) * 100 if expected else 0,
                     len(wgroup),
                 )
+                if interp_words:
+                    interp_detail = ", ".join(
+                        f"'{w['word']}'[{w['start']:.2f}-{w['end']:.2f}]"
+                        for w in interp_words
+                    )
+                    logger.info(
+                        "TTD TRANSCRIBE MATCH: Turn %d interpolated: %s",
+                        turn_idx, interp_detail,
+                    )
+                # Log Whisper's raw text for comparison on mismatches
+                if matched < len(expected):
+                    wh_text = " ".join(w["word"] for w in wgroup)
+                    logger.info(
+                        "TTD TRANSCRIBE MATCH: Turn %d Whisper heard: '%s'",
+                        turn_idx, wh_text[:200],
+                    )
 
         total_matched = sum(
             sum(1 for w in wds if "_whisper_word" in w)
