@@ -2452,6 +2452,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         if use_forced:
             # Build a segment list from known text + voice_segment boundaries.
             # Whisperx.align will find exact word positions within these windows.
+            # Long turns (>_SPLIT_THRESHOLD words) are split at punctuation
+            # into smaller sub-segments for better wav2vec2 alignment accuracy.
+            _SPLIT_THRESHOLD = 15
             segments_for_align = []
             num_inputs = min(len(inputs), len(dialogue_turns))
             for idx in range(num_inputs):
@@ -2461,9 +2464,49 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 timing = segment_timing.get(idx, {})
                 seg_start = timing.get("start", 0.0) + leading_sec
                 seg_end   = timing.get("end",   0.0) + leading_sec
-                # Fallback: cover full audio if timing missing for this turn
                 if seg_end <= seg_start:
                     seg_end = seg_start + max(1.0, len(text) * 0.06)
+
+                words = text.split()
+                if len(words) > _SPLIT_THRESHOLD:
+                    # Split at sentence-ending punctuation for shorter alignment windows
+                    sub_texts: list[str] = []
+                    current_words: list[str] = []
+                    for w in words:
+                        current_words.append(w)
+                        if (
+                            len(current_words) >= _SPLIT_THRESHOLD // 2
+                            and w.rstrip()[-1:] in ".!?:;,"
+                            and len(current_words) >= 3
+                        ):
+                            sub_texts.append(" ".join(current_words))
+                            current_words = []
+                    if current_words:
+                        if sub_texts and len(current_words) < 4:
+                            sub_texts[-1] += " " + " ".join(current_words)
+                        else:
+                            sub_texts.append(" ".join(current_words))
+
+                    if len(sub_texts) > 1:
+                        total_chars = max(1, sum(len(s) for s in sub_texts))
+                        cursor = seg_start
+                        total_dur = seg_end - seg_start
+                        for si, sub in enumerate(sub_texts):
+                            proportion = len(sub) / total_chars
+                            sub_dur = total_dur * proportion
+                            sub_end = cursor + sub_dur if si < len(sub_texts) - 1 else seg_end
+                            segments_for_align.append({
+                                "text":  sub,
+                                "start": round(cursor, 3),
+                                "end":   round(sub_end, 3),
+                            })
+                            cursor = sub_end
+                        logger.info(
+                            "TTD WHISPER: Turn %d split into %d sub-segments (%d words)",
+                            idx, len(sub_texts), len(words),
+                        )
+                        continue
+
                 segments_for_align.append({
                     "text":  text,
                     "start": round(seg_start, 3),

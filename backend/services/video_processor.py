@@ -1547,22 +1547,55 @@ class VideoProcessor:
                     if not EMOTION_TAG_PATTERN.match(tw.get("word", ""))
                 ]
                 
-                # Check if word timestamps are valid (within turn boundaries and reasonable)
-                has_valid_timestamps = (
-                    filtered_tts_words and
-                    all(tw.get("start", 0) >= relative_start - 0.1 for tw in filtered_tts_words) and
-                    all(tw.get("end", 0) <= relative_end + 0.1 for tw in filtered_tts_words) and
-                    all(tw.get("end", 0) > tw.get("start", 0) for tw in filtered_tts_words)
-                )
+                # Clamp word timestamps to turn boundaries and fix micro-issues
+                # instead of rejecting the entire turn on minor violations.
+                _clamp_fixes = 0
+                for _ci, _cw in enumerate(filtered_tts_words):
+                    _cs = _cw.get("start", 0)
+                    _ce = _cw.get("end", 0)
+                    # Clamp to turn boundaries (allow 0.05s slack)
+                    if _cs < relative_start - 0.05:
+                        filtered_tts_words[_ci] = dict(_cw, start=relative_start)
+                        _cs = relative_start
+                        _clamp_fixes += 1
+                    if _ce > relative_end + 0.05:
+                        filtered_tts_words[_ci] = dict(_cw, end=relative_end)
+                        _ce = relative_end
+                        _clamp_fixes += 1
+                    # Fix non-positive duration
+                    if _ce <= _cs:
+                        filtered_tts_words[_ci] = dict(
+                            filtered_tts_words[_ci], end=_cs + 0.04
+                        )
+                        _clamp_fixes += 1
+                    # Fix overlap with previous word
+                    if _ci > 0:
+                        _prev_end = filtered_tts_words[_ci - 1].get("end", 0)
+                        if filtered_tts_words[_ci].get("start", 0) < _prev_end:
+                            filtered_tts_words[_ci] = dict(
+                                filtered_tts_words[_ci], start=_prev_end
+                            )
+                            _clamp_fixes += 1
+                            if filtered_tts_words[_ci]["end"] <= filtered_tts_words[_ci]["start"]:
+                                filtered_tts_words[_ci] = dict(
+                                    filtered_tts_words[_ci],
+                                    end=filtered_tts_words[_ci]["start"] + 0.04,
+                                )
+                if _clamp_fixes:
+                    logger.info(
+                        "Turn %d: clamped %d word timestamp issues to turn boundaries",
+                        dialogue.index(turn) if turn in dialogue else -1,
+                        _clamp_fixes,
+                    )
+
+                has_valid_timestamps = bool(filtered_tts_words)
                 
                 if not has_valid_timestamps:
                     logger.warning(
-                        "Turn %d: Invalid word timestamps (turn: %.2f-%.2fs, words: %d), using fallback distribution",
+                        "Turn %d: No word timestamps available (turn: %.2f-%.2fs), using fallback distribution",
                         dialogue.index(turn) if turn in dialogue else -1,
                         relative_start, relative_end,
-                        len(filtered_tts_words) if filtered_tts_words else 0
                     )
-                    # Force fallback
                     use_fallback = True
                 
                 if has_valid_timestamps and not use_fallback:
