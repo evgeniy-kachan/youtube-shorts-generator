@@ -1492,7 +1492,7 @@ class VideoProcessor:
                     clean = _PUNCT_STRIP.sub("", tw.get("word", ""))
                     if not clean:
                         continue
-                    min_dur = max(0.35, len(clean) * 0.12)
+                    min_dur = max(0.25, len(clean) * 0.06)
                     max_dur = min(_MAX_WORD_DURATION, len(clean) * 0.15 + 0.3)
                     if word_end - word_start < min_dur:
                         word_end = min(relative_end, word_start + min_dur)
@@ -1536,33 +1536,27 @@ class VideoProcessor:
                     if 0 < gap <= _GAP_FILL_MAX:
                         cur["end"] = nxt["start"]
 
-                # Post-pass: expand tail words that are still too short
-                # by borrowing time from the previous word (up to half its excess).
-                _MIN_ABS = 0.30
+                # Post-pass: if a word is still shorter than its min_dur and
+                # the previous word has excess time, borrow up to half the excess.
                 for i in range(1, len(validated_tts_words)):
                     w = validated_tts_words[i]
                     w_clean = _PUNCT_STRIP.sub("", w.get("word", ""))
                     if not w_clean:
                         continue
                     cur_dur = w["end"] - w["start"]
-                    w_min = max(0.35, len(w_clean) * 0.12)
+                    w_min = max(0.25, len(w_clean) * 0.06)
                     if cur_dur >= w_min:
                         continue
                     prev = validated_tts_words[i - 1]
                     p_clean = _PUNCT_STRIP.sub("", prev.get("word", ""))
-                    p_min = max(0.35, len(p_clean) * 0.12) if p_clean else 0.35
+                    p_min = max(0.25, len(p_clean) * 0.06) if p_clean else 0.25
                     p_dur = prev["end"] - prev["start"]
-                    available = max(0.0, p_dur - max(p_min, _MIN_ABS))
+                    available = max(0.0, p_dur - p_min)
                     need = w_min - cur_dur
                     steal = min(need, available * 0.5)
                     if steal > 0.02:
                         w["start"] -= steal
                         prev["end"] -= steal
-                        logger.debug(
-                            "SUBTITLE tail-expand [%d] '%s': stole %.0fms from '%s'",
-                            i, w.get("word", ""), steal * 1000,
-                            prev.get("word", ""),
-                        )
 
                 # Log final word durations for diagnostics
                 for _vi, _vw in enumerate(validated_tts_words):
@@ -1782,6 +1776,33 @@ class VideoProcessor:
                     relative_start,
                     relative_end,
                 )
+
+        # ── SYSTEMIC FIX: extend subtitles into inter-subtitle gaps ──
+        # After all turns are processed, each subtitle is confined to its
+        # turn boundary.  But between turns there are often 200-800ms gaps
+        # where the screen is blank.  Extending the subtitle display into
+        # those gaps significantly improves readability — especially for
+        # the last word of a turn (e.g., "уловить." getting only 444ms
+        # can now stay visible 800ms+ by using the inter-turn silence).
+        _INTER_GAP_MAX = 0.50  # extend up to 500ms into the gap
+        _INTER_GAP_MIN = 0.05  # keep at least 50ms gap for visual separation
+        _inter_extended = 0
+        for i in range(len(subtitles) - 1):
+            cur = subtitles[i]
+            nxt = subtitles[i + 1]
+            gap = nxt["start"] - cur["end"]
+            if gap > _INTER_GAP_MIN:
+                extend_by = min(gap - _INTER_GAP_MIN, _INTER_GAP_MAX)
+                if extend_by > 0.02:
+                    cur["end"] += extend_by
+                    if cur.get("words"):
+                        cur["words"][-1]["end"] = cur["end"]
+                    _inter_extended += 1
+        if _inter_extended:
+            logger.info(
+                "SUBTITLE inter-gap fill: extended %d/%d subtitles (max %.0fms)",
+                _inter_extended, len(subtitles), _INTER_GAP_MAX * 1000,
+            )
 
         return subtitles
     
