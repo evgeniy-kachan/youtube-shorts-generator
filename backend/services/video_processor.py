@@ -1492,7 +1492,7 @@ class VideoProcessor:
                     clean = _PUNCT_STRIP.sub("", tw.get("word", ""))
                     if not clean:
                         continue
-                    min_dur = max(0.30, len(clean) * 0.10)
+                    min_dur = max(0.35, len(clean) * 0.12)
                     max_dur = min(_MAX_WORD_DURATION, len(clean) * 0.15 + 0.3)
                     if word_end - word_start < min_dur:
                         word_end = min(relative_end, word_start + min_dur)
@@ -1526,6 +1526,16 @@ class VideoProcessor:
                             cur["end"] = mid
                             nxt["start"] = mid
                 
+                # Gap-fill: extend each word's display until the next word starts
+                # so the subtitle never "flashes off" between words.
+                _GAP_FILL_MAX = 0.25
+                for i in range(len(validated_tts_words) - 1):
+                    cur = validated_tts_words[i]
+                    nxt = validated_tts_words[i + 1]
+                    gap = nxt["start"] - cur["end"]
+                    if 0 < gap <= _GAP_FILL_MAX:
+                        cur["end"] = nxt["start"]
+
                 # Log final word durations for diagnostics
                 for _vi, _vw in enumerate(validated_tts_words):
                     _vdur = _vw["end"] - _vw["start"]
