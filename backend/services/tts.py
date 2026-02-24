@@ -2397,25 +2397,34 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         inputs: list[dict],
         segment_timing: dict[int, dict] | None = None,
         leading_sec: float = 0.0,
+        force_transcribe: bool = False,
     ) -> dict[int, list[dict]]:
         """
         Get word-level timestamps by running WhisperX on the generated TTD audio.
 
-        Preferred mode: FORCED ALIGNMENT — when segment_timing is available we pass
-        the known Russian text with approximate turn boundaries straight to
-        whisperx.align (wav2vec2).  This skips model.transcribe(), avoids
-        word-mismatch risk, and is ~20-30 s faster.
+        Modes (chosen automatically):
 
-        Fallback mode: full transcription (model=large-v3) when segment_timing is
-        absent or the alignment-only binary path is unavailable.
+        1. **Full transcription** (``force_transcribe=True``):
+           Runs Whisper large-v3 ASR → natural word timestamps from the main
+           model (excellent Russian quality).  Results are matched to turns via
+           time-based grouping + fuzzy alignment.  This is the preferred mode
+           for subtitle generation because Whisper ASR produces far more
+           accurate timestamps than wav2vec2 forced alignment for Russian.
+
+        2. **Forced alignment** (``force_transcribe=False``, default):
+           Passes known text + approximate boundaries to whisperx.align
+           (wav2vec2).  Faster (~20-30 s) but mediocre Russian accuracy.
+           Used for PHRASE_SYNC raw-audio pass where speed matters more.
+
+        3. **Full transcription fallback**: when segment_timing is absent.
 
         Args:
-            audio_path:      Path to the generated TTD audio file.
-            dialogue_turns:  Original dialogue turns with text_ru.
-            inputs:          TTD API inputs (text after emotion-tag stripping).
-            segment_timing:  Dict {turn_idx: {start, end}} from TTD voice_segments.
-                             When provided enables forced-alignment mode.
-            leading_sec:     Seconds of leading silence prepended to the audio.
+            audio_path:        Path to the generated TTD audio file.
+            dialogue_turns:    Original dialogue turns with text_ru.
+            inputs:            TTD API inputs (text after emotion-tag stripping).
+            segment_timing:    Dict {turn_idx: {start, end}} from TTD voice_segments.
+            leading_sec:       Seconds of leading silence prepended to the audio.
+            force_transcribe:  Always use full transcription (skip wav2vec2).
 
         Returns:
             Dict mapping turn index → list of word dicts
@@ -2425,9 +2434,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         import subprocess
         import tempfile
 
-        logger.info("TTD WHISPER: Getting timestamps via WhisperX for %s", audio_path)
+        mode_label = "FULL-TRANSCRIBE" if force_transcribe else "FORCED-ALIGN"
+        logger.info("TTD WHISPER [%s]: Getting timestamps for %s", mode_label, audio_path)
 
-        # Get paths from environment (same as transcription_runner.py)
         python_path = os.getenv(
             "EXTERNAL_ASR_PY",
             "/opt/youtube-shorts-generator/venv-asr/bin/python"
@@ -2437,7 +2446,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             "/opt/youtube-shorts-generator/backend/tools/transcribe.py"
         )
 
-        # Check if external transcription is available
         if not os.path.exists(python_path) or not os.path.exists(script_path):
             logger.warning(
                 "TTD WHISPER: External ASR not available (python=%s, script=%s), falling back to TTD alignment",
@@ -2445,18 +2453,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             )
             return {}
 
-        # ── Build forced-alignment segments when we know the turn timing ──────
+        # ── Build forced-alignment segments (only when NOT force_transcribe) ──
         forced_segments_path: str | None = None
-        use_forced = bool(segment_timing)
+        use_forced = bool(segment_timing) and not force_transcribe
 
         if use_forced:
-            # Build a segment list from known text + voice_segment boundaries.
-            # Whisperx.align will find exact word positions within these windows.
-            # Long turns (>_SPLIT_THRESHOLD words) are split at punctuation
-            # into smaller sub-segments for better wav2vec2 alignment accuracy.
             _SPLIT_THRESHOLD = 10
             _MIN_SUB_WORDS = 4
-            _SPLIT_PUNCT = set(".!?:;,\u2014\u2013")  # includes em-dash and en-dash
+            _SPLIT_PUNCT = set(".!?:;,\u2014\u2013")
             segments_for_align = []
             num_inputs = min(len(inputs), len(dialogue_turns))
             for idx in range(num_inputs):
@@ -2537,7 +2541,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
         try:
             if use_forced and forced_segments_path:
-                # ── FORCED ALIGNMENT: skip model.transcribe() ─────────────────
                 cmd = [
                     python_path,
                     script_path,
@@ -2548,9 +2551,8 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     "--output", output_json_path,
                     "--forced-segments-json", forced_segments_path,
                 ]
-                logger.info("TTD WHISPER: Running forced alignment (no transcription)...")
+                logger.info("TTD WHISPER: Running forced alignment (wav2vec2)...")
             else:
-                # ── FULL TRANSCRIPTION fallback ───────────────────────────────
                 cmd = [
                     python_path,
                     script_path,
@@ -2561,27 +2563,25 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     "--compute_type", "float16",
                     "--output", output_json_path,
                 ]
-                logger.info("TTD WHISPER: Running full WhisperX transcription...")
+                logger.info("TTD WHISPER: Running full Whisper transcription (large-v3)...")
 
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5 min max
+                timeout=300,
                 check=True,
             )
-            
+
             if result.stderr:
                 logger.debug("TTD WHISPER stderr: %s", result.stderr[:500])
-            
-            # Read Whisper output
+
             with open(output_json_path, "r", encoding="utf-8") as f:
                 whisper_data = json.load(f)
-            
+
             segments = whisper_data.get("segments", [])
             logger.info("TTD WHISPER: Got %d segments from WhisperX", len(segments))
-            
-            # Extract all words with timestamps from Whisper
+
             whisper_words = []
             for seg in segments:
                 for word_info in seg.get("words", []):
@@ -2594,21 +2594,25 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             "start": start,
                             "end": end,
                         })
-            
+
             logger.info("TTD WHISPER: Extracted %d words with timestamps", len(whisper_words))
-            
+
             if not whisper_words:
                 logger.warning("TTD WHISPER: No words extracted, falling back to TTD alignment")
                 return {}
-            
-            # Now match Whisper words to original turns
-            # Strategy: sequential matching by position
-            words_by_input = self._match_whisper_words_to_turns(
-                whisper_words, dialogue_turns, inputs
-            )
-            
+
+            # Choose matching strategy based on mode
+            if force_transcribe and segment_timing:
+                words_by_input = self._match_transcription_to_turns(
+                    whisper_words, dialogue_turns, inputs, segment_timing,
+                )
+            else:
+                words_by_input = self._match_whisper_words_to_turns(
+                    whisper_words, dialogue_turns, inputs
+                )
+
             return words_by_input
-            
+
         except subprocess.TimeoutExpired:
             logger.error("TTD WHISPER: WhisperX timed out")
             return {}
@@ -2809,6 +2813,206 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     total_fixes += 1
 
         return words_by_input, total_fixes
+
+    def _match_transcription_to_turns(
+        self,
+        whisper_words: list[dict],
+        dialogue_turns: list[dict],
+        inputs: list[dict],
+        segment_timing: dict[int, dict],
+    ) -> dict[int, list[dict]]:
+        """
+        Match words from full Whisper transcription to dialogue turns.
+
+        Unlike ``_match_whisper_words_to_turns`` (1:1 positional matching for
+        forced alignment), this method uses:
+
+        1. **Time-boundary grouping** — assign each Whisper word to the turn
+           whose ``segment_timing`` window contains its midpoint.
+        2. **Fuzzy sequential alignment** (``difflib.SequenceMatcher``) —
+           handle the fact that Whisper's recognized text may differ from the
+           expected text (punctuation, number spelling, minor wording).
+        3. **Interpolation** — expected words that didn't match any Whisper
+           word get timestamps interpolated from their matched neighbours.
+
+        Returns the same format as ``_match_whisper_words_to_turns``:
+            ``{turn_idx: [{word, start, end}, ...], ...}``
+        """
+        from difflib import SequenceMatcher
+
+        num_inputs = min(len(inputs), len(dialogue_turns))
+
+        # ── Build expected words per turn ─────────────────────────────────
+        expected_words_per_turn: list[list[str]] = []
+        for idx in range(num_inputs):
+            text = inputs[idx].get("text", "").strip() if idx < len(inputs) else ""
+            clean_text = re.sub(r'\[[\w]+\]\s*', '', text)
+            expected_words_per_turn.append(clean_text.split())
+
+        total_expected = sum(len(w) for w in expected_words_per_turn)
+        logger.info(
+            "TTD TRANSCRIBE MATCH: %d expected words across %d turns, %d Whisper words",
+            total_expected, num_inputs, len(whisper_words),
+        )
+
+        # ── Step 1: group Whisper words into turns by time ────────────────
+        turn_boundaries: list[tuple[float, float]] = []
+        for idx in range(num_inputs):
+            timing = segment_timing.get(idx, {})
+            turn_boundaries.append((timing.get("start", 0.0), timing.get("end", 0.0)))
+
+        words_per_turn: dict[int, list[dict]] = {i: [] for i in range(num_inputs)}
+        for w in whisper_words:
+            mid = (w["start"] + w["end"]) / 2
+            best_turn = 0
+            best_dist = float("inf")
+            for idx, (tb_start, tb_end) in enumerate(turn_boundaries):
+                if tb_start - 0.3 <= mid <= tb_end + 0.3:
+                    best_turn = idx
+                    best_dist = 0
+                    break
+                dist = min(abs(mid - tb_start), abs(mid - tb_end))
+                if dist < best_dist:
+                    best_dist = dist
+                    best_turn = idx
+            words_per_turn[best_turn].append(w)
+
+        for idx in range(num_inputs):
+            logger.debug(
+                "TTD TRANSCRIBE MATCH: Turn %d time [%.2f-%.2fs] — %d Whisper words, %d expected",
+                idx, turn_boundaries[idx][0], turn_boundaries[idx][1],
+                len(words_per_turn[idx]), len(expected_words_per_turn[idx]),
+            )
+
+        # ── Step 2: fuzzy match within each turn ─────────────────────────
+        _PUNCT_STRIP = str.maketrans("", "", ".,!?;:—–-…\"'«»()\u2014\u2013")
+
+        def _norm(word: str) -> str:
+            return word.lower().strip().translate(_PUNCT_STRIP)
+
+        words_by_input: dict[int, list[dict]] = {}
+
+        for turn_idx in range(num_inputs):
+            expected = expected_words_per_turn[turn_idx]
+            wgroup = words_per_turn[turn_idx]
+
+            if not expected:
+                continue
+
+            if not wgroup:
+                logger.warning(
+                    "TTD TRANSCRIBE MATCH: Turn %d — no Whisper words in time window [%.2f-%.2fs]",
+                    turn_idx, *turn_boundaries[turn_idx],
+                )
+                continue
+
+            expected_norm = [_norm(w) for w in expected]
+            whisper_norm = [_norm(w["word"]) for w in wgroup]
+
+            matcher = SequenceMatcher(None, expected_norm, whisper_norm, autojunk=False)
+
+            # Build mapping: expected_idx → whisper_idx
+            exp_to_wh: dict[int, int] = {}
+            for op, i1, i2, j1, j2 in matcher.get_opcodes():
+                if op == "equal":
+                    for k in range(i2 - i1):
+                        exp_to_wh[i1 + k] = j1 + k
+                elif op == "replace":
+                    n = min(i2 - i1, j2 - j1)
+                    for k in range(n):
+                        exp_to_wh[i1 + k] = j1 + k
+
+            # ── Build result list with interpolation for gaps ─────────
+            turn_words: list[dict] = []
+            for exp_idx, exp_word in enumerate(expected):
+                if exp_idx in exp_to_wh:
+                    wh = wgroup[exp_to_wh[exp_idx]]
+                    turn_words.append({
+                        "word": exp_word,
+                        "start": wh["start"],
+                        "end": wh["end"],
+                        "_whisper_word": wh["word"],
+                    })
+                else:
+                    turn_words.append({
+                        "word": exp_word,
+                        "_needs_interp": True,
+                    })
+
+            # Interpolate unmatched words from surrounding anchors
+            self._interpolate_gaps(turn_words, turn_boundaries[turn_idx])
+
+            if turn_words:
+                words_by_input[turn_idx] = turn_words
+                matched = sum(1 for w in turn_words if "_whisper_word" in w)
+                logger.info(
+                    "TTD TRANSCRIBE MATCH: Turn %d: %d/%d matched (%.0f%%), "
+                    "Whisper pool=%d",
+                    turn_idx, matched, len(expected),
+                    matched / len(expected) * 100 if expected else 0,
+                    len(wgroup),
+                )
+
+        total_matched = sum(
+            sum(1 for w in wds if "_whisper_word" in w)
+            for wds in words_by_input.values()
+        )
+        logger.info(
+            "TTD TRANSCRIBE MATCH: Overall %d/%d words matched (%.0f%%)",
+            total_matched, total_expected,
+            total_matched / total_expected * 100 if total_expected else 0,
+        )
+
+        return words_by_input
+
+    @staticmethod
+    def _interpolate_gaps(
+        turn_words: list[dict],
+        turn_boundary: tuple[float, float],
+    ) -> None:
+        """Fill ``_needs_interp`` entries with timestamps from neighbours.
+
+        Modifies *turn_words* in place.  Runs of consecutive unmatched words
+        are spread evenly between the preceding and following anchor.
+        """
+        n = len(turn_words)
+        i = 0
+        while i < n:
+            if not turn_words[i].get("_needs_interp"):
+                i += 1
+                continue
+            # Found start of an unmatched run
+            run_start = i
+            while i < n and turn_words[i].get("_needs_interp"):
+                i += 1
+            run_end = i  # exclusive
+
+            # Anchor before the run
+            if run_start > 0 and "end" in turn_words[run_start - 1]:
+                anchor_start = turn_words[run_start - 1]["end"]
+            else:
+                anchor_start = turn_boundary[0]
+
+            # Anchor after the run
+            if run_end < n and "start" in turn_words[run_end]:
+                anchor_end = turn_words[run_end]["start"]
+            else:
+                anchor_end = turn_boundary[1]
+
+            run_len = run_end - run_start
+            dur = max(0.0, anchor_end - anchor_start)
+            word_dur = dur / max(1, run_len) if dur > 0 else 0.15
+
+            for j in range(run_start, run_end):
+                offset = j - run_start
+                w_start = anchor_start + offset * word_dur
+                w_end = w_start + word_dur
+                turn_words[j] = {
+                    "word": turn_words[j]["word"],
+                    "start": round(w_start, 3),
+                    "end": round(w_end, 3),
+                    "_interpolated": True,
+                }
 
     def _match_whisper_words_to_turns(
         self,
@@ -3396,6 +3600,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 inputs,
                 segment_timing=_post_segment_timing,
                 leading_sec=0.0,  # boundaries already include leading_sec
+                force_transcribe=True,  # full ASR instead of wav2vec2
             )
             if whisper_post_words:
                 whisper_post_words, _overlap_fixes = self._fix_whisper_overlaps(whisper_post_words)
