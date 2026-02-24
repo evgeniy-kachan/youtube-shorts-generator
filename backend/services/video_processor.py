@@ -1536,6 +1536,34 @@ class VideoProcessor:
                     if 0 < gap <= _GAP_FILL_MAX:
                         cur["end"] = nxt["start"]
 
+                # Post-pass: expand tail words that are still too short
+                # by borrowing time from the previous word (up to half its excess).
+                _MIN_ABS = 0.30
+                for i in range(1, len(validated_tts_words)):
+                    w = validated_tts_words[i]
+                    w_clean = _PUNCT_STRIP.sub("", w.get("word", ""))
+                    if not w_clean:
+                        continue
+                    cur_dur = w["end"] - w["start"]
+                    w_min = max(0.35, len(w_clean) * 0.12)
+                    if cur_dur >= w_min:
+                        continue
+                    prev = validated_tts_words[i - 1]
+                    p_clean = _PUNCT_STRIP.sub("", prev.get("word", ""))
+                    p_min = max(0.35, len(p_clean) * 0.12) if p_clean else 0.35
+                    p_dur = prev["end"] - prev["start"]
+                    available = max(0.0, p_dur - max(p_min, _MIN_ABS))
+                    need = w_min - cur_dur
+                    steal = min(need, available * 0.5)
+                    if steal > 0.02:
+                        w["start"] -= steal
+                        prev["end"] -= steal
+                        logger.debug(
+                            "SUBTITLE tail-expand [%d] '%s': stole %.0fms from '%s'",
+                            i, w.get("word", ""), steal * 1000,
+                            prev.get("word", ""),
+                        )
+
                 # Log final word durations for diagnostics
                 for _vi, _vw in enumerate(validated_tts_words):
                     _vdur = _vw["end"] - _vw["start"]
