@@ -3291,6 +3291,14 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     "TTD: Using Whisper on post-PHRASE_SYNC audio for subtitles (%d turns)",
                     len(whisper_post_words),
                 )
+                for _ti, _wds in sorted(whisper_post_words.items()):
+                    if _wds:
+                        _first3 = " ".join(f"'{w['word']}'[{w['start']:.2f}-{w['end']:.2f}]" for w in _wds[:3])
+                        _last2 = " ".join(f"'{w['word']}'[{w['start']:.2f}-{w['end']:.2f}]" for w in _wds[-2:])
+                        logger.info(
+                            "  WHISPER-POST turn %d: %d words | first: %s | last: %s",
+                            _ti, len(_wds), _first3, _last2,
+                        )
                 words_by_input = whisper_post_words
                 _fa_alignment_active = True  # reuse flag: absolute timestamps, no offsets
 
