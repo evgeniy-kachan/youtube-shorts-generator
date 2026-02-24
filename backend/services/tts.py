@@ -3259,42 +3259,65 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             )
             # ── Choose word-level timestamp source ──────────────────────
             # Priority:
-            #   1. ElevenLabs Forced Alignment API (best: word-level, on real audio)
-            #   2. Whisper forced alignment (good: on raw audio, needs offsets)
-            #   3. ElevenLabs TTD alignment (last resort: known bug after ~60s)
+            #   1. Whisper forced alignment on POST-PHRASE_SYNC audio (free, absolute timestamps)
+            #   2. [DISABLED] ElevenLabs Forced Alignment API (costs credits)
+            #   3. Whisper on raw audio + offsets (legacy fallback)
+            #   4. ElevenLabs TTD alignment (last resort: known bug after ~60s)
 
             _el_alignment_active = False
             _fa_alignment_active = False
 
-            # 1. Try ElevenLabs Forced Alignment API on post-PHRASE_SYNC audio
-            fa_words = self._get_timestamps_via_forced_alignment(
+            # 1. Whisper on POST-PHRASE_SYNC audio — timestamps are absolute,
+            #    no _base or turn_offsets needed (like FA API).
+            #    Build adjusted segment_timing for Whisper (include leading_sec + offsets).
+            _post_segment_timing: dict[int, dict] = {}
+            for _ti in range(min(len(inputs), len(dialogue_turns))):
+                _raw_t = segment_timing.get(_ti, {})
+                _off = turn_offsets[_ti] if _ti < len(turn_offsets) else 0.0
+                _post_segment_timing[_ti] = {
+                    "start": _raw_t.get("start", 0.0) + leading_sec + _off,
+                    "end": _raw_t.get("end", 0.0) + leading_sec + _off,
+                }
+
+            whisper_post_words = self._get_timestamps_via_whisper(
                 str(output_path),
                 dialogue_turns,
                 inputs,
-                segment_timing=segment_timing,
-                leading_sec=leading_sec,
-                turn_offsets=turn_offsets,
+                segment_timing=_post_segment_timing,
+                leading_sec=0.0,  # boundaries already include leading_sec
             )
-            if fa_words:
+            if whisper_post_words:
                 logger.info(
-                    "TTD: Using ElevenLabs Forced Alignment API for subtitles (%d turns)",
-                    len(fa_words),
+                    "TTD: Using Whisper on post-PHRASE_SYNC audio for subtitles (%d turns)",
+                    len(whisper_post_words),
                 )
-                words_by_input = fa_words
-                _fa_alignment_active = True
+                words_by_input = whisper_post_words
+                _fa_alignment_active = True  # reuse flag: absolute timestamps, no offsets
 
-            # 2. Fallback: Whisper on raw audio
+            # 2. [DISABLED] ElevenLabs Forced Alignment API — uncomment to enable
+            # elif not _fa_alignment_active:
+            #     fa_words = self._get_timestamps_via_forced_alignment(
+            #         str(output_path), dialogue_turns, inputs,
+            #         segment_timing=segment_timing,
+            #         leading_sec=leading_sec, turn_offsets=turn_offsets,
+            #     )
+            #     if fa_words:
+            #         logger.info("TTD: Using ElevenLabs FA API (%d turns)", len(fa_words))
+            #         words_by_input = fa_words
+            #         _fa_alignment_active = True
+
+            # 3. Fallback: Whisper on raw audio (needs offsets in Phase 3)
             elif whisper_raw_words:
                 logger.info(
-                    "TTD: FA API failed — using Whisper-raw timestamps (%d turns)",
+                    "TTD: Post-PHRASE_SYNC Whisper failed — using raw Whisper timestamps (%d turns)",
                     len(whisper_raw_words),
                 )
                 words_by_input = whisper_raw_words
 
-            # 3. Last resort: ElevenLabs TTD alignment (bunched fix)
+            # 4. Last resort: ElevenLabs TTD alignment (bunched fix)
             elif words_by_input:
                 logger.warning(
-                    "TTD: FA API + Whisper unavailable — using TTD alignment (may be inaccurate after 60s)"
+                    "TTD: All Whisper attempts failed — using TTD alignment (may be inaccurate after 60s)"
                 )
                 temp_turn_timings = {}
                 for turn_idx in words_by_input.keys():
@@ -3316,12 +3339,12 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             num_inputs = min(len(dialogue_turns), len(inputs))
 
             # Derive turn-level timing from word positions.
-            # FA timestamps are absolute (post-PHRASE_SYNC), no offsets needed.
-            # Whisper timestamps are absolute in raw audio, need turn_offsets.
-            if _fa_alignment_active and fa_words:
+            # _fa_alignment_active = timestamps are absolute (post-PHRASE_SYNC), no offsets.
+            # whisper_raw_words = timestamps from raw audio, need turn_offsets.
+            if _fa_alignment_active:
                 api_timed = [False] * num_inputs
                 for idx in range(num_inputs):
-                    wds = fa_words.get(idx)
+                    wds = words_by_input.get(idx)
                     if wds:
                         s = wds[0]["start"]
                         e = wds[-1]["end"]
@@ -3330,7 +3353,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                         turn["tts_start_offset"] = s
                         turn["tts_duration"] = e - s
                         turn["tts_end_offset"] = e
-                        turn["_timing_source"] = "forced_alignment"
+                        turn["_timing_source"] = "whisper_post"
                 api_count = sum(api_timed)
                 interp_count = num_inputs - api_count
             elif whisper_raw_words:
@@ -3558,9 +3581,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                     )
             
             # POST-PROCESSING: Fix bunched/overlapping turns
-            # Skip entirely when Whisper provided authoritative timestamps —
+            # Skip entirely when Whisper/FA provided authoritative timestamps —
             # the ElevenLabs-based bunched detection would only corrupt them.
-            if not whisper_raw_words:
+            if not (whisper_raw_words or _fa_alignment_active):
                 MIN_TURN_DURATION = 0.4
                 TURN_GAP = 0.05
                 BUNCH_THRESHOLD = 0.15
