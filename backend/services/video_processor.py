@@ -1777,6 +1777,112 @@ class VideoProcessor:
                     relative_end,
                 )
 
+        # ── FIX: Sort subtitles by time and remove duplicates/overlaps ──
+        # This fixes issues where interpolated turns have wrong timestamps
+        # that overlap with FA-timed turns, causing "слипшиеся" subtitles
+        if subtitles:
+            # Sort all subtitles by start time
+            subtitles.sort(key=lambda s: s.get("start", 0))
+            
+            # Collect all words from all subtitles, sort by time, deduplicate
+            all_words_flat: List[Dict] = []
+            for sub in subtitles:
+                for w in sub.get("words", []):
+                    all_words_flat.append({
+                        **w,
+                        "_speaker": sub.get("speaker"),
+                        "_color": sub.get("color"),
+                    })
+            
+            # Sort by start time
+            all_words_flat.sort(key=lambda w: w.get("start", 0))
+            
+            # Remove duplicates: same word text within 0.5s window
+            deduped_words: List[Dict] = []
+            for w in all_words_flat:
+                dominated = False
+                w_text = w.get("word", "").lower().strip()
+                w_start = w.get("start", 0)
+                w_dur = w.get("end", 0) - w_start
+                
+                # Check if this word is a duplicate of a recent word
+                for prev in deduped_words[-10:]:  # Check last 10 words
+                    prev_text = prev.get("word", "").lower().strip()
+                    prev_start = prev.get("start", 0)
+                    prev_dur = prev.get("end", 0) - prev_start
+                    
+                    # Same word within 0.5s = duplicate
+                    if prev_text == w_text and abs(w_start - prev_start) < 0.5:
+                        # Keep the one with longer duration (more likely correct)
+                        if w_dur > prev_dur:
+                            # Replace previous with current
+                            deduped_words.remove(prev)
+                        else:
+                            dominated = True
+                        break
+                
+                if not dominated:
+                    deduped_words.append(w)
+            
+            # Fix overlaps: if word[i] ends after word[i+1] starts, adjust
+            for i in range(len(deduped_words) - 1):
+                cur = deduped_words[i]
+                nxt = deduped_words[i + 1]
+                if cur.get("end", 0) > nxt.get("start", 0):
+                    # Overlap detected - split at midpoint
+                    mid = (cur.get("end", 0) + nxt.get("start", 0)) / 2
+                    cur["end"] = mid
+                    nxt["start"] = mid
+            
+            # Log if we removed duplicates
+            if len(deduped_words) < len(all_words_flat):
+                logger.warning(
+                    "SUBTITLE DEDUP: removed %d duplicate/overlapping words",
+                    len(all_words_flat) - len(deduped_words)
+                )
+            
+            # Rebuild subtitles from deduped words (group by proximity)
+            if deduped_words:
+                rebuilt_subtitles: List[Dict] = []
+                current_chunk: List[Dict] = [deduped_words[0]]
+                
+                for w in deduped_words[1:]:
+                    prev = current_chunk[-1]
+                    gap = w.get("start", 0) - prev.get("end", 0)
+                    
+                    # Start new subtitle if gap > 0.3s or different speaker
+                    if gap > 0.3 or w.get("_speaker") != prev.get("_speaker"):
+                        # Save current chunk
+                        if current_chunk:
+                            rebuilt_subtitles.append({
+                                "start": current_chunk[0].get("start", 0),
+                                "end": current_chunk[-1].get("end", 0),
+                                "text": " ".join(cw.get("word", "") for cw in current_chunk),
+                                "words": [{k: v for k, v in cw.items() if not k.startswith("_")} 
+                                          for cw in current_chunk],
+                                "speaker": current_chunk[0].get("_speaker"),
+                                "color": current_chunk[0].get("_color"),
+                                "lane": 0,
+                            })
+                        current_chunk = [w]
+                    else:
+                        current_chunk.append(w)
+                
+                # Don't forget last chunk
+                if current_chunk:
+                    rebuilt_subtitles.append({
+                        "start": current_chunk[0].get("start", 0),
+                        "end": current_chunk[-1].get("end", 0),
+                        "text": " ".join(cw.get("word", "") for cw in current_chunk),
+                        "words": [{k: v for k, v in cw.items() if not k.startswith("_")} 
+                                  for cw in current_chunk],
+                        "speaker": current_chunk[0].get("_speaker"),
+                        "color": current_chunk[0].get("_color"),
+                        "lane": 0,
+                    })
+                
+                subtitles = rebuilt_subtitles
+
         # ── SYSTEMIC FIX: extend subtitles into inter-subtitle gaps ──
         # After all turns are processed, each subtitle is confined to its
         # turn boundary.  But between turns there are often 200-800ms gaps
