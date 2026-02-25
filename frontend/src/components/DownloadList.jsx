@@ -90,10 +90,19 @@ ${cards}
         if (!desc) return `${separator}\n${segLabel}\n${separator}\n\nОписание не сгенерировано\n`;
         const parts = [separator, segLabel, separator, ''];
         if (desc.category) parts.push(`Категория: ${desc.category}`, '');
-        if (desc.title)    parts.push(`Заголовок: ${desc.title}`, '');
-        if (desc.description) parts.push(`Описание:\n${desc.description}`, '');
+        if (desc.title)    parts.push(desc.title, '');
+        // Clean description: remove CTA phrases like "смотри до конца"
+        if (desc.description) {
+          let cleanDesc = desc.description
+            .replace(/смотр[и|ите] до конца[!.,]?\s*/gi, '')
+            .replace(/досмотр[и|ите][!.,]?\s*/gi, '')
+            .replace(/не пропусти[!.,]?\s*/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          parts.push(cleanDesc, '');
+        }
         if (desc.guest_bio)   parts.push(`О госте:\n${desc.guest_bio}`, '');
-        if (desc.hashtags?.length) parts.push(`Хэштеги: ${desc.hashtags.join(' ')}`, '');
+        if (desc.hashtags?.length) parts.push(desc.hashtags.join(' '), '');
         return parts.join('\n');
       });
       const content = lines.join('\n\n');
