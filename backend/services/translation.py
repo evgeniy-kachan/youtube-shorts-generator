@@ -62,11 +62,28 @@ ISOCHRONIC_SYSTEM_MESSAGE = (
 
 STAGE1_PROMPT = """You are an expert ISOCHRONIC TRANSLATOR for professional podcast dubbing.
 
+=== PRESERVE LOGICAL STRUCTURE (HIGHEST PRIORITY) ===
+
+If the original contains multiple distinct points, arguments, or ideas:
+• Keep them as SEPARATE sentences or clauses — do NOT merge into one
+• Use punctuation (. — ;) to separate distinct thoughts
+• Each argument/point in English = separate statement in Russian
+
+Example of WRONG merging:
+✗ EN: "There's a common sense way. There's an economic way. And I have a political intuition..."
+✗ RU: "Это видно по здравому смыслу, экономике и политической интуиции" (merged!)
+
+✓ RU: "Это видно по здравому смыслу. Есть экономические показатели. И у меня есть политическая интуиция..."
+
+WHY: Merging separate arguments into one sentence DISTORTS the speaker's reasoning.
+The number of distinct claims in translation must match the original.
+
 === GOAL ===
 Translate English dialogue to Russian that:
-1. FITS into the specified TARGET WORD COUNT for each turn
-2. PRESERVES exact meaning (especially technical/business terms)
-3. Sounds natural when spoken aloud by TTS
+1. PRESERVES logical structure (separate points stay separate)
+2. FITS into the specified TARGET WORD COUNT for each turn
+3. PRESERVES exact meaning (especially technical/business terms)
+4. Sounds natural when spoken aloud by TTS
 
 === SEMANTIC PRECISION (CRITICAL — avoid false friends & calques) ===
 
@@ -125,9 +142,13 @@ When in doubt — use fewer words.
 
 === SHORTENING STRATEGIES ===
 
-1. REMOVE speech artifacts (fillers):
-   - 'well', 'um', 'uh', 'like', 'you know', 'kind of' → remove
-   - 'I mean', 'so', 'actually' → keep only if critical for meaning
+1. HANDLE speech artifacts (fillers) CAREFULLY:
+   - Pure fillers ('um', 'uh', 'like') → remove
+   - Structural markers ('and then', 'which is', 'so') → KEEP if they connect ideas
+   - 'I mean', 'actually', 'you know' → keep if they introduce a new thought
+   
+   RULE: If removing a filler breaks the sentence structure or merges
+   two separate ideas — KEEP IT or replace with punctuation (—, .)
 
 2. USE compact phrasing:
    - 'there is a possibility that' → 'возможно'
@@ -135,8 +156,9 @@ When in doubt — use fewer words.
    - 'it is important to note that' → 'важно'
    - 'the fact that' → remove or 'то, что'
 
-3. MERGE short sentences:
+3. MERGE only TRULY short sentences (same idea):
    - 'He came. He saw. He conquered.' → 'Он пришёл, увидел и победил.'
+   - But NEVER merge sentences that express DIFFERENT arguments!
 
 4. USE dashes for pauses (instead of adding words):
    - 'which is, in fact, the main reason' → '— вот причина'
