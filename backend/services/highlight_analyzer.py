@@ -949,6 +949,22 @@ Set "needs_next_context": true if the text:
   contains the solution/answer. Example: text="I was losing $50K/month" + next="How I turned 
   it around" → the problem without the solution is incomplete.
 
+DANGLING SETUP DETECTION (for needs_next_context):
+• If the segment ENDS with a specific fact/detail that is NOT used within this segment:
+  - "His specialty was X" → but X is never mentioned again in THIS segment
+  - "The company was called Y" → but Y's story continues in next segment  
+  - "It happened in 1987" → but what happened is explained later
+• These "dangling setups" indicate the segment grabbed one sentence too many
+• Set needs_next_context: true if the LAST 1-2 sentences introduce new information 
+  that isn't resolved or used within the same segment
+
+Example of DANGLING SETUP:
+BAD ending: "...they were all frauds. His specialty was superconductivity."
+→ "superconductivity" is introduced but not used in THIS segment → needs_next_context: true
+
+GOOD ending: "...they were all frauds. That's when everything changed."
+→ Complete thought, no dangling setup → needs_next_context: false
+
 When EITHER flag is true:
 • Final score will be capped at 0.25 (incomplete segments are not standalone clips)
 • The segment may still have high other scores if the content itself is good
@@ -1021,6 +1037,27 @@ Scores:
 - needs_previous_context: false
 - needs_next_context: false
 
+=== DANGLING SETUP EXAMPLE (needs_next_context) ===
+
+Segment text: "There are many taboos in science: questioning Darwinism, stem cell 
+research, climate change — it's dangerous. But he chose an even more dangerous topic. 
+He claimed that most so-called scientists simply steal government money, engage in 
+pseudoscience or trivial research without value. His specialty was high-temperature 
+superconductivity."
+
+Next topic: "He said that in this field, 50,000 papers were published, and only 25 
+of them actually advanced science..."
+
+Analysis: The last sentence "His specialty was high-temperature superconductivity" 
+introduces a specific field that is NOT discussed in THIS segment, but IS the main 
+topic of the NEXT segment ("in this field, 50,000 papers..."). This is a DANGLING 
+SETUP — the segment ends with new information that only makes sense with the next part.
+
+Scores:
+- completeness_arc: 0.5 (good arc ruined by dangling last sentence)
+- needs_next_context: TRUE (the specialty detail needs the next segment for payoff)
+→ Final score CAPPED at 0.25 due to dangling setup
+
 TEXT:
 "{segment['text']}"
 
@@ -1073,9 +1110,10 @@ SCORING DIMENSIONS (each measures ONE specific thing):
 
 9. needs_next_context (true/false)
    Does this segment require the next one for a complete thought?
+   INCLUDES dangling setups: last sentence introduces something not used in THIS segment.
 
 SCORING PROCESS:
-1. First check needs_previous_context and needs_next_context
+1. First check needs_previous_context and needs_next_context (including dangling setups!)
 2. Then evaluate completeness_arc (most important for standalone clips)
 3. Score remaining 6 criteria independently
 4. Be strict: 0.8+ requires exceptional quality in that dimension
