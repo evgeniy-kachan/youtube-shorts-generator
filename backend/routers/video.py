@@ -1653,7 +1653,7 @@ def _process_segments_task(
                 description_data = {
                     "category": "другое",
                     "title": "Интересный момент",
-                    "description": "Смотрите до конца! 🔥",
+                    "description": "Мудрость, которая меняет взгляд на вещи 🔥",
                     "hashtags": ["#kachancuts_другое", "#подкаст", "#мудрость"]
                 }
             except Exception as desc_exc:
@@ -1661,7 +1661,7 @@ def _process_segments_task(
                 description_data = {
                     "category": "другое",
                     "title": "Интересный момент",
-                    "description": "Смотрите до конца! 🔥",
+                    "description": "Мудрость, которая меняет взгляд на вещи 🔥",
                     "hashtags": ["#kachancuts_другое", "#подкаст", "#мудрость"]
                 }
             
