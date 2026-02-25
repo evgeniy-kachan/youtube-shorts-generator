@@ -1841,45 +1841,46 @@ class VideoProcessor:
                     len(all_words_flat) - len(deduped_words)
                 )
             
-            # Rebuild subtitles from deduped words (group by proximity)
+            # Rebuild subtitles from deduped words (group by proximity + line length)
             if deduped_words:
                 rebuilt_subtitles: List[Dict] = []
                 current_chunk: List[Dict] = [deduped_words[0]]
+                current_chars = len(deduped_words[0].get("word", ""))
+                
+                def _save_chunk(chunk: List[Dict]) -> None:
+                    if chunk:
+                        rebuilt_subtitles.append({
+                            "start": chunk[0].get("start", 0),
+                            "end": chunk[-1].get("end", 0),
+                            "text": " ".join(cw.get("word", "") for cw in chunk),
+                            "words": [{k: v for k, v in cw.items() if not k.startswith("_")} 
+                                      for cw in chunk],
+                            "speaker": chunk[0].get("_speaker"),
+                            "color": chunk[0].get("_color"),
+                            "lane": 0,
+                        })
                 
                 for w in deduped_words[1:]:
                     prev = current_chunk[-1]
                     gap = w.get("start", 0) - prev.get("end", 0)
+                    word_len = len(w.get("word", "")) + 1  # +1 for space
                     
-                    # Start new subtitle if gap > 0.3s or different speaker
-                    if gap > 0.3 or w.get("_speaker") != prev.get("_speaker"):
-                        # Save current chunk
-                        if current_chunk:
-                            rebuilt_subtitles.append({
-                                "start": current_chunk[0].get("start", 0),
-                                "end": current_chunk[-1].get("end", 0),
-                                "text": " ".join(cw.get("word", "") for cw in current_chunk),
-                                "words": [{k: v for k, v in cw.items() if not k.startswith("_")} 
-                                          for cw in current_chunk],
-                                "speaker": current_chunk[0].get("_speaker"),
-                                "color": current_chunk[0].get("_color"),
-                                "lane": 0,
-                            })
+                    # Start new subtitle if:
+                    # - gap > 0.3s (pause in speech)
+                    # - different speaker
+                    # - line would exceed max_chars_per_line
+                    if (gap > 0.3 or 
+                        w.get("_speaker") != prev.get("_speaker") or
+                        current_chars + word_len > max_chars_per_line):
+                        _save_chunk(current_chunk)
                         current_chunk = [w]
+                        current_chars = len(w.get("word", ""))
                     else:
                         current_chunk.append(w)
+                        current_chars += word_len
                 
                 # Don't forget last chunk
-                if current_chunk:
-                    rebuilt_subtitles.append({
-                        "start": current_chunk[0].get("start", 0),
-                        "end": current_chunk[-1].get("end", 0),
-                        "text": " ".join(cw.get("word", "") for cw in current_chunk),
-                        "words": [{k: v for k, v in cw.items() if not k.startswith("_")} 
-                                  for cw in current_chunk],
-                        "speaker": current_chunk[0].get("_speaker"),
-                        "color": current_chunk[0].get("_color"),
-                        "lane": 0,
-                    })
+                _save_chunk(current_chunk)
                 
                 subtitles = rebuilt_subtitles
 
