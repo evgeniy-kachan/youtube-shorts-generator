@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Analyze transcription to find interesting segments using LLM."""
 import logging
 import math
@@ -111,6 +112,12 @@ class HighlightAnalyzer:
             
             # Analyze segments in parallel
             analyzed_segments = self._analyze_segments_parallel(potential_segments, max_parallel)
+            
+            # Adjust segment boundaries based on trim_first/last_sentences
+            analyzed_segments = self._adjust_segment_boundaries(
+                analyzed_segments,
+                max_parallel=max_parallel,
+            )
             
             # Post-process: merge incomplete segments and re-score
             analyzed_segments = self._merge_incomplete_segments(
@@ -233,6 +240,256 @@ class HighlightAnalyzer:
             results = [future.result() for future in futures]
         
         return results
+
+    def _adjust_segment_boundaries(
+        self,
+        analyzed_segments: List[tuple],
+        max_parallel: int = 4,
+    ) -> List[tuple]:
+        """
+        Adjust segment boundaries based on trim_first_sentences / trim_last_sentences.
+        
+        When DeepSeek detects that sentences belong to adjacent segments, this function
+        moves them and re-analyzes the affected segments.
+        """
+        import re
+        
+        if len(analyzed_segments) < 2:
+            return analyzed_segments
+        
+        # Collect adjustment requests
+        adjustments = []  # List of (from_idx, to_idx, num_sentences, direction)
+        
+        for i, (segment, scores) in enumerate(analyzed_segments):
+            trim_last = scores.get('trim_last_sentences', 0)
+            trim_first = scores.get('trim_first_sentences', 0)
+            
+            # trim_last_sentences: move N sentences from end of segment[i] to start of segment[i+1]
+            if trim_last > 0 and i + 1 < len(analyzed_segments):
+                adjustments.append((i, i + 1, trim_last, 'last_to_next'))
+                logger.info(
+                    "BOUNDARY ADJUST: segment %d requests trim_last_sentences=%d (move to segment %d)",
+                    i, trim_last, i + 1
+                )
+            
+            # trim_first_sentences: move N sentences from start of segment[i] to end of segment[i-1]
+            if trim_first > 0 and i > 0:
+                adjustments.append((i, i - 1, trim_first, 'first_to_prev'))
+                logger.info(
+                    "BOUNDARY ADJUST: segment %d requests trim_first_sentences=%d (move to segment %d)",
+                    i, trim_first, i - 1
+                )
+        
+        if not adjustments:
+            logger.info("No boundary adjustments requested by LLM")
+            return analyzed_segments
+        
+        logger.info("Processing %d boundary adjustment requests", len(adjustments))
+        
+        # Helper: split text into sentences
+        def split_sentences(text: str) -> List[str]:
+            """Split text into sentences, handling common abbreviations."""
+            pattern = r'(?<=[.!?])\s+(?=[A-ZА-ЯЁ])'
+            sentences = re.split(pattern, text.strip())
+            return [s.strip() for s in sentences if s.strip()]
+        
+        # Helper: find word boundaries for sentences
+        def find_sentence_word_boundaries(words: List[Dict], sentences: List[str], from_start: bool, count: int) -> int:
+            """Find the word index where sentence boundary occurs."""
+            if not words or not sentences or count <= 0:
+                return 0 if from_start else len(words)
+            
+            if from_start:
+                # Find where first N sentences end
+                target_sentences = sentences[:count]
+                target_text = ' '.join(target_sentences)
+                target_words = target_text.split()
+                return min(len(target_words), len(words))
+            else:
+                # Find where last N sentences start
+                target_sentences = sentences[-count:]
+                target_text = ' '.join(target_sentences)
+                target_words = target_text.split()
+                return max(0, len(words) - len(target_words))
+        
+        # Apply adjustments - create modified segments
+        modified_indices = set()
+        segment_modifications = {}
+        
+        for from_idx, to_idx, num_sentences, direction in adjustments:
+            from_seg, from_scores = analyzed_segments[from_idx]
+            to_seg, to_scores = analyzed_segments[to_idx]
+            
+            from_text = from_seg.get('text', '')
+            from_words = from_seg.get('words', [])
+            from_sentences = split_sentences(from_text)
+            
+            if direction == 'last_to_next':
+                # Move last N sentences from from_seg to start of to_seg
+                if len(from_sentences) <= num_sentences:
+                    logger.warning(
+                        "BOUNDARY ADJUST: segment %d has only %d sentences, cannot trim %d",
+                        from_idx, len(from_sentences), num_sentences
+                    )
+                    continue
+                
+                sentences_to_move = from_sentences[-num_sentences:]
+                text_to_move = ' '.join(sentences_to_move)
+                
+                # Find word boundary
+                word_boundary = find_sentence_word_boundaries(from_words, from_sentences, from_start=False, count=num_sentences)
+                words_to_move = from_words[word_boundary:] if word_boundary < len(from_words) else []
+                
+                # Initialize modification dicts if needed
+                if from_idx not in segment_modifications:
+                    segment_modifications[from_idx] = {'trim_end': 0, 'trim_start': 0, 'prepend_text': '', 'append_text': '', 'prepend_words': [], 'append_words': []}
+                if to_idx not in segment_modifications:
+                    segment_modifications[to_idx] = {'trim_end': 0, 'trim_start': 0, 'prepend_text': '', 'append_text': '', 'prepend_words': [], 'append_words': []}
+                
+                segment_modifications[from_idx]['trim_end'] = num_sentences
+                segment_modifications[to_idx]['prepend_text'] = text_to_move + ' ' + segment_modifications[to_idx].get('prepend_text', '')
+                segment_modifications[to_idx]['prepend_words'] = words_to_move + segment_modifications[to_idx].get('prepend_words', [])
+                
+                modified_indices.add(from_idx)
+                modified_indices.add(to_idx)
+                
+                logger.info(
+                    "BOUNDARY ADJUST: moving %d sentences (%d words) from segment %d end to segment %d start: '%s...'",
+                    num_sentences, len(words_to_move), from_idx, to_idx, text_to_move[:50]
+                )
+                
+            elif direction == 'first_to_prev':
+                # Move first N sentences from from_seg to end of to_seg (previous)
+                if len(from_sentences) <= num_sentences:
+                    logger.warning(
+                        "BOUNDARY ADJUST: segment %d has only %d sentences, cannot trim %d",
+                        from_idx, len(from_sentences), num_sentences
+                    )
+                    continue
+                
+                sentences_to_move = from_sentences[:num_sentences]
+                text_to_move = ' '.join(sentences_to_move)
+                
+                # Find word boundary
+                word_boundary = find_sentence_word_boundaries(from_words, from_sentences, from_start=True, count=num_sentences)
+                words_to_move = from_words[:word_boundary] if word_boundary > 0 else []
+                
+                # Initialize modification dicts if needed
+                if from_idx not in segment_modifications:
+                    segment_modifications[from_idx] = {'trim_end': 0, 'trim_start': 0, 'prepend_text': '', 'append_text': '', 'prepend_words': [], 'append_words': []}
+                if to_idx not in segment_modifications:
+                    segment_modifications[to_idx] = {'trim_end': 0, 'trim_start': 0, 'prepend_text': '', 'append_text': '', 'prepend_words': [], 'append_words': []}
+                
+                segment_modifications[from_idx]['trim_start'] = num_sentences
+                segment_modifications[to_idx]['append_text'] = segment_modifications[to_idx].get('append_text', '') + ' ' + text_to_move
+                segment_modifications[to_idx]['append_words'] = segment_modifications[to_idx].get('append_words', []) + words_to_move
+                
+                modified_indices.add(from_idx)
+                modified_indices.add(to_idx)
+                
+                logger.info(
+                    "BOUNDARY ADJUST: moving %d sentences (%d words) from segment %d start to segment %d end: '%s...'",
+                    num_sentences, len(words_to_move), from_idx, to_idx, text_to_move[:50]
+                )
+        
+        if not modified_indices:
+            return analyzed_segments
+        
+        # Apply modifications and rebuild segments
+        modified_segments = []
+        
+        for i, (segment, scores) in enumerate(analyzed_segments):
+            if i not in modified_indices:
+                modified_segments.append((segment, scores, False))
+                continue
+            
+            mods = segment_modifications.get(i, {})
+            new_segment = dict(segment)
+            
+            # Get current text and words
+            current_text = segment.get('text', '')
+            current_words = list(segment.get('words', []))
+            current_sentences = split_sentences(current_text)
+            
+            # Apply trim_start
+            trim_start = mods.get('trim_start', 0)
+            if trim_start > 0 and len(current_sentences) > trim_start:
+                current_sentences = current_sentences[trim_start:]
+                word_boundary = find_sentence_word_boundaries(current_words, split_sentences(current_text), from_start=True, count=trim_start)
+                current_words = current_words[word_boundary:]
+            
+            # Apply trim_end
+            trim_end = mods.get('trim_end', 0)
+            if trim_end > 0 and len(current_sentences) > trim_end:
+                current_sentences = current_sentences[:-trim_end]
+                word_boundary = find_sentence_word_boundaries(current_words, current_sentences + [''] * trim_end, from_start=False, count=trim_end)
+                current_words = current_words[:word_boundary] if word_boundary > 0 else current_words
+            
+            # Apply prepend
+            prepend_text = mods.get('prepend_text', '').strip()
+            prepend_words = mods.get('prepend_words', [])
+            if prepend_text:
+                current_sentences = split_sentences(prepend_text) + current_sentences
+                current_words = prepend_words + current_words
+            
+            # Apply append
+            append_text = mods.get('append_text', '').strip()
+            append_words = mods.get('append_words', [])
+            if append_text:
+                current_sentences = current_sentences + split_sentences(append_text)
+                current_words = current_words + append_words
+            
+            # Rebuild segment
+            new_segment['text'] = ' '.join(current_sentences)
+            new_segment['words'] = current_words
+            
+            # Update timing based on words if available
+            if current_words:
+                first_word_start = current_words[0].get('start')
+                last_word_end = current_words[-1].get('end')
+                if first_word_start is not None:
+                    new_segment['start'] = first_word_start
+                if last_word_end is not None:
+                    new_segment['end'] = last_word_end
+                new_segment['duration'] = new_segment['end'] - new_segment['start']
+            
+            new_segment['_boundary_adjusted'] = True
+            modified_segments.append((new_segment, scores, True))
+        
+        # Re-analyze modified segments
+        segments_to_reanalyze = [(i, seg) for i, (seg, _, needs) in enumerate(modified_segments) if needs]
+        
+        if segments_to_reanalyze:
+            logger.info("Re-analyzing %d boundary-adjusted segments...", len(segments_to_reanalyze))
+            
+            def reanalyze(item):
+                idx, seg = item
+                new_scores = self._analyze_segment_with_llm(seg)
+                return (idx, new_scores)
+            
+            with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+                reanalyzed = list(executor.map(reanalyze, segments_to_reanalyze))
+            
+            # Update scores
+            reanalyzed_map = {idx: scores for idx, scores in reanalyzed}
+            
+            result = []
+            for i, (seg, old_scores, _) in enumerate(modified_segments):
+                if i in reanalyzed_map:
+                    new_scores = reanalyzed_map[i]
+                    new_highlight = self._calculate_highlight_score(new_scores)
+                    old_highlight = self._calculate_highlight_score(old_scores)
+                    logger.info(
+                        "BOUNDARY ADJUSTED segment %d: score %.2f -> %.2f",
+                        i, old_highlight, new_highlight
+                    )
+                    result.append((seg, new_scores))
+                else:
+                    result.append((seg, old_scores))
+            
+            return result
+        
+        return [(seg, scores) for seg, scores, _ in modified_segments]
 
     def _merge_incomplete_segments(
         self,
@@ -965,6 +1222,28 @@ BAD ending: "...they were all frauds. His specialty was superconductivity."
 GOOD ending: "...they were all frauds. That's when everything changed."
 → Complete thought, no dangling setup → needs_next_context: false
 
+BOUNDARY ADJUSTMENT (trim_first_sentences / trim_last_sentences):
+
+When you detect a boundary problem, you can suggest moving sentences between segments.
+
+Set "trim_last_sentences": N (integer 0-3) if:
+• The LAST N sentences of this segment are actually the SETUP for the next topic
+• These sentences introduce a new subject/person/concept that isn't developed HERE
+• Example: "...they were all frauds. His specialty was superconductivity." 
+  → "His specialty was superconductivity" is setup for NEXT segment → trim_last_sentences: 1
+
+Set "trim_first_sentences": N (integer 0-3) if:
+• The FIRST N sentences are actually the CONCLUSION of the previous topic
+• These sentences reference something from the previous segment without explanation
+• Example: "That's why I always require prepayment now. Moving on to marketing..."
+  → "That's why I always require prepayment now" is conclusion of PREVIOUS → trim_first_sentences: 1
+
+IMPORTANT for trim fields:
+• Default is 0 (no adjustment needed)
+• Only suggest 1-3 sentences, never more
+• If needs_next_context=true due to dangling setup, set trim_last_sentences accordingly
+• If needs_previous_context=true due to orphaned conclusion, set trim_first_sentences accordingly
+
 When EITHER flag is true:
 • Final score will be capped at 0.25 (incomplete segments are not standalone clips)
 • The segment may still have high other scores if the content itself is good
@@ -1037,7 +1316,7 @@ Scores:
 - needs_previous_context: false
 - needs_next_context: false
 
-=== DANGLING SETUP EXAMPLE (needs_next_context) ===
+=== DANGLING SETUP EXAMPLE (trim_last_sentences) ===
 
 Segment text: "There are many taboos in science: questioning Darwinism, stem cell 
 research, climate change — it's dangerous. But he chose an even more dangerous topic. 
@@ -1056,6 +1335,7 @@ SETUP — the segment ends with new information that only makes sense with the n
 Scores:
 - completeness_arc: 0.5 (good arc ruined by dangling last sentence)
 - needs_next_context: TRUE (the specialty detail needs the next segment for payoff)
+- trim_last_sentences: 1 (move "His specialty was..." to next segment)
 → Final score CAPPED at 0.25 due to dangling setup
 
 TEXT:
@@ -1112,11 +1392,21 @@ SCORING DIMENSIONS (each measures ONE specific thing):
    Does this segment require the next one for a complete thought?
    INCLUDES dangling setups: last sentence introduces something not used in THIS segment.
 
+10. trim_first_sentences (0-3)
+    How many sentences from the START should move to the PREVIOUS segment?
+    Use when first sentences are conclusions of the previous topic.
+
+11. trim_last_sentences (0-3)
+    How many sentences from the END should move to the NEXT segment?
+    Use when last sentences are setup for the next topic (dangling setup).
+
 SCORING PROCESS:
 1. First check needs_previous_context and needs_next_context (including dangling setups!)
-2. Then evaluate completeness_arc (most important for standalone clips)
-3. Score remaining 6 criteria independently
-4. Be strict: 0.8+ requires exceptional quality in that dimension
+2. If needs_next_context due to dangling setup, set trim_last_sentences accordingly
+3. If needs_previous_context due to orphaned conclusion, set trim_first_sentences accordingly
+4. Then evaluate completeness_arc (most important for standalone clips)
+5. Score remaining 6 criteria independently
+6. Be strict: 0.8+ requires exceptional quality in that dimension
 
 OUTPUT FORMAT:
 Respond ONLY with valid JSON (no explanations, no markdown):
@@ -1129,7 +1419,9 @@ Respond ONLY with valid JSON (no explanations, no markdown):
   "completeness_arc": 0.0,
   "hook_quality": 0.0,
   "needs_previous_context": false,
-  "needs_next_context": false
+  "needs_next_context": false,
+  "trim_first_sentences": 0,
+  "trim_last_sentences": 0
 }}"""
 
         try:
@@ -1153,12 +1445,21 @@ Respond ONLY with valid JSON (no explanations, no markdown):
                 'actionability_score', 'clarity_simplicity', 'completeness_arc', 'hook_quality'
             ]
             boolean_fields = ['needs_previous_context', 'needs_next_context']
+            trim_fields = ['trim_first_sentences', 'trim_last_sentences']
             
             # Validate scores
             for key in scores:
                 if key in boolean_fields:
                     if not isinstance(scores[key], bool):
                         scores[key] = str(scores[key]).lower() in ('true', '1', 'yes')
+                elif key in trim_fields:
+                    # Integer 0-3
+                    if not isinstance(scores[key], int):
+                        try:
+                            scores[key] = int(scores[key])
+                        except (ValueError, TypeError):
+                            scores[key] = 0
+                    scores[key] = max(0, min(3, scores[key]))
                 elif key in numeric_fields:
                     if not isinstance(scores[key], (int, float)):
                         scores[key] = 0.0
@@ -1169,6 +1470,8 @@ Respond ONLY with valid JSON (no explanations, no markdown):
                 scores.setdefault(field, 0.5)
             for field in boolean_fields:
                 scores.setdefault(field, False)
+            for field in trim_fields:
+                scores.setdefault(field, 0)
             
             return scores
             
@@ -1185,6 +1488,8 @@ Respond ONLY with valid JSON (no explanations, no markdown):
                 'hook_quality': 0.5,
                 'needs_previous_context': False,
                 'needs_next_context': False,
+                'trim_first_sentences': 0,
+                'trim_last_sentences': 0,
             }
     
     def _calculate_highlight_score(self, scores: Dict[str, float]) -> float:
