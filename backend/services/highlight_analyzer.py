@@ -1219,6 +1219,11 @@ Example of DANGLING SETUP:
 BAD ending: "...they were all frauds. His specialty was superconductivity."
 → "superconductivity" is introduced but not used in THIS segment → needs_next_context: true
 
+RUSSIAN EXAMPLE (ВАЖНО для русского контента):
+ПЛОХО: "...занимаются псевдонаукой или мелкими улучшениями без ценности. Его специализация — высокотемпературная сверхпроводимость."
+→ "Его специализация — высокотемпературная сверхпроводимость" вводит тему, которая НЕ раскрывается в ЭТОМ сегменте
+→ needs_next_context: true, trim_last_sentences: 1
+
 GOOD ending: "...they were all frauds. That's when everything changed."
 → Complete thought, no dangling setup → needs_next_context: false
 
@@ -1318,6 +1323,27 @@ Scores:
 
 === DANGLING SETUP EXAMPLE (trim_last_sentences) ===
 
+РУССКИЙ ПРИМЕР (для русского контента):
+Текст сегмента: "В науке много табу: ставить под сомнение дарвинизм, исследования 
+стволовых клеток, изменение климата — это опасно. Но он выбрал тему ещё опаснее. 
+Он считал, что большинство так называемых учёных попросту воруют государственные 
+деньги, занимаются псевдонаукой или мелкими улучшениями без ценности. 
+Его специализация — высокотемпературная сверхпроводимость."
+
+Следующий сегмент начинается: "Он сказал мне: в этой области вышло 50 тысяч статей..."
+
+Анализ: Последнее предложение "Его специализация — высокотемпературная сверхпроводимость"
+вводит конкретную область, которая НЕ обсуждается в ЭТОМ сегменте, но ЯВЛЯЕТСЯ главной
+темой СЛЕДУЮЩЕГО сегмента ("в этой области вышло 50 тысяч статей..."). Это DANGLING 
+SETUP — сегмент заканчивается новой информацией, которая имеет смысл только со следующей частью.
+
+Оценки:
+- completeness_arc: 0.5 (хорошая арка испорчена висящим последним предложением)
+- needs_next_context: TRUE (деталь о специализации требует следующий сегмент)
+- trim_last_sentences: 1 (переместить "Его специализация..." в следующий сегмент)
+→ Итоговый score ОГРАНИЧЕН 0.25 из-за dangling setup
+
+ENGLISH EXAMPLE:
 Segment text: "There are many taboos in science: questioning Darwinism, stem cell 
 research, climate change — it's dangerous. But he chose an even more dangerous topic. 
 He claimed that most so-called scientists simply steal government money, engage in 
