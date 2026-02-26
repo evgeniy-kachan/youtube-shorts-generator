@@ -24,6 +24,11 @@ FALLBACK_MIN_SCORE = 0.15           # Fallback segments must be at least this go
 PREV_TOPIC_MAX_WORDS = 50
 NEXT_TOPIC_MAX_WORDS = 30
 
+# Logical boundary detection settings
+BOUNDARY_CHUNK_DURATION = 600  # 10 minutes per chunk for boundary detection
+MIN_SEGMENT_DURATION = 30      # Minimum segment duration after logical split
+MAX_SEGMENT_DURATION = 100     # Maximum segment duration after logical split
+
 
 def get_min_highlights(video_duration: float) -> int:
     """
@@ -654,30 +659,64 @@ class HighlightAnalyzer:
             segments_to_reanalyze.append(('expand', expanded_seg, idx, None))
             expanded_indices.add(idx)
         
-        # Re-analyze all modified segments in parallel
-        total_to_reanalyze = len(segments_to_reanalyze)
-        logger.info(f"Re-analyzing {total_to_reanalyze} modified segments...")
+        # Combine scores without re-analyzing (faster, uses weighted average by duration)
+        total_to_combine = len(segments_to_reanalyze)
+        logger.info(f"Combining scores for {total_to_combine} modified segments (no re-analysis)...")
         
-        def reanalyze(item):
+        reanalyzed = []
+        for item in segments_to_reanalyze:
             op_type, seg, idx_a, idx_b = item
-            new_scores = self._analyze_segment_with_llm(seg)
-            new_highlight = self._calculate_highlight_score(new_scores)
+            
             if op_type == 'merge':
+                # Combine scores from both segments using weighted average by duration
+                _, scores_a = analyzed_segments[idx_a]
+                _, scores_b = analyzed_segments[idx_b]
+                seg_a, _ = analyzed_segments[idx_a]
+                seg_b, _ = analyzed_segments[idx_b]
+                
+                dur_a = seg_a.get('duration', 60)
+                dur_b = seg_b.get('duration', 60)
+                total_dur = dur_a + dur_b
+                weight_a = dur_a / total_dur
+                weight_b = dur_b / total_dur
+                
+                # Weighted average for numeric scores
+                new_scores = {}
+                numeric_fields = [
+                    'surprise_novelty', 'specificity_score', 'personal_connection',
+                    'actionability_score', 'clarity_simplicity', 'completeness_arc', 'hook_quality'
+                ]
+                for field in numeric_fields:
+                    val_a = scores_a.get(field, 0.25)
+                    val_b = scores_b.get(field, 0.25)
+                    new_scores[field] = val_a * weight_a + val_b * weight_b
+                
+                # For context flags: merged segment needs previous only if A needed it,
+                # needs next only if B needed it
+                new_scores['needs_previous_context'] = scores_a.get('needs_previous_context', False)
+                new_scores['needs_next_context'] = scores_b.get('needs_next_context', False)
+                new_scores['trim_first_sentences'] = 0
+                new_scores['trim_last_sentences'] = 0
+                
+                new_highlight = self._calculate_highlight_score(new_scores)
                 logger.info(
-                    "MERGED %d+%d: new_score=%.2f, needs_prev=%s, needs_next=%s",
+                    "MERGED %d+%d: combined_score=%.2f (was %.2f + %.2f)",
                     idx_a, idx_b, new_highlight,
-                    new_scores.get('needs_previous_context'),
-                    new_scores.get('needs_next_context'),
+                    self._calculate_highlight_score(scores_a),
+                    self._calculate_highlight_score(scores_b),
                 )
             else:
+                # For expanded segments, keep original scores but mark as no longer needing context
+                _, original_scores = analyzed_segments[idx_a]
+                new_scores = dict(original_scores)
+                new_scores['needs_next_context'] = False  # We expanded, so context is now included
+                new_highlight = self._calculate_highlight_score(new_scores)
                 logger.info(
-                    "EXPANDED %d: new_score=%.2f (was incomplete, added %.1fs)",
+                    "EXPANDED %d: score=%.2f (added %.1fs of context)",
                     idx_a, new_highlight, seg['end'] - seg.get('_expanded_from', seg['start'])
                 )
-            return (op_type, seg, new_scores, idx_a, idx_b)
-        
-        with ThreadPoolExecutor(max_workers=max_parallel) as executor:
-            reanalyzed = list(executor.map(reanalyze, segments_to_reanalyze))
+            
+            reanalyzed.append((op_type, seg, new_scores, idx_a, idx_b))
         
         # Build maps for quick lookup
         merge_map = {}  # (idx_a, idx_b) -> (seg, scores)
@@ -832,6 +871,132 @@ class HighlightAnalyzer:
             window_sizes,
         )
         return unique_windows
+
+    def _detect_logical_boundaries(
+        self,
+        text: str,
+        chunk_start_time: float,
+        words: List[Dict],
+    ) -> List[float]:
+        """
+        Use DeepSeek to detect logical boundaries in a text chunk.
+        
+        Args:
+            text: Full text of the chunk (~10 min)
+            chunk_start_time: Start time of this chunk in the video
+            words: Word-level timestamps for precise boundary mapping
+            
+        Returns:
+            List of timestamps where logical boundaries should be
+        """
+        if not text or not words:
+            return []
+        
+        # Split text into sentences for DeepSeek to reference
+        import re
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        sentences = [s.strip() for s in sentences if s.strip()]
+        
+        if len(sentences) < 3:
+            return []  # Too short to split
+        
+        # Build numbered sentence list for the prompt
+        numbered_sentences = "\n".join(
+            f"{i+1}. {s}" for i, s in enumerate(sentences)
+        )
+        
+        prompt = f"""You are analyzing a transcript chunk to find LOGICAL TOPIC BOUNDARIES.
+
+TASK: Identify sentence numbers where a NEW TOPIC or SUBTOPIC begins.
+A boundary should be placed where:
+- The speaker changes subject
+- A new example/story begins
+- A conclusion ends and new point starts
+- The conversation shifts direction
+
+CONSTRAINTS:
+- Segments should be {MIN_SEGMENT_DURATION}-{MAX_SEGMENT_DURATION} seconds (~50-200 words)
+- Don't split in the middle of an example or story
+- Don't split between a setup sentence and its payoff
+- Example: "His specialty was superconductivity." should stay with "In this field, 50,000 papers..."
+
+SENTENCES:
+{numbered_sentences}
+
+OUTPUT FORMAT:
+Return ONLY comma-separated sentence numbers where NEW segments should START.
+Example: 4, 8, 15, 23
+
+If no good boundaries exist, return: NONE
+
+BOUNDARIES:"""
+
+        try:
+            response = self.client.generate(prompt, max_tokens=100, temperature=0.3)
+            response_text = response.strip()
+            
+            if response_text.upper() == "NONE" or not response_text:
+                return []
+            
+            # Parse sentence numbers
+            boundary_sentences = []
+            for part in response_text.replace(",", " ").split():
+                try:
+                    num = int(part.strip())
+                    if 1 <= num <= len(sentences):
+                        boundary_sentences.append(num)
+                except ValueError:
+                    continue
+            
+            if not boundary_sentences:
+                return []
+            
+            # Map sentence numbers to timestamps using word positions
+            boundary_times = []
+            current_word_idx = 0
+            current_sentence_idx = 0
+            
+            for sentence_num in sorted(set(boundary_sentences)):
+                # Find the start of this sentence in words
+                target_sentence = sentences[sentence_num - 1] if sentence_num <= len(sentences) else None
+                if not target_sentence:
+                    continue
+                
+                # Find first word of this sentence
+                first_words = target_sentence.split()[:3]  # First 3 words
+                first_words_lower = [w.lower().strip('.,!?') for w in first_words]
+                
+                # Search in words array
+                for i in range(current_word_idx, len(words)):
+                    word_text = (words[i].get('word') or words[i].get('text', '')).lower().strip('.,!?')
+                    if word_text in first_words_lower:
+                        # Found potential match, verify next words
+                        match = True
+                        for j, fw in enumerate(first_words_lower[1:], 1):
+                            if i + j < len(words):
+                                next_word = (words[i+j].get('word') or words[i+j].get('text', '')).lower().strip('.,!?')
+                                if next_word != fw:
+                                    match = False
+                                    break
+                        
+                        if match:
+                            word_start = words[i].get('start')
+                            if word_start is not None:
+                                boundary_times.append(word_start)
+                                current_word_idx = i
+                            break
+            
+            logger.info(
+                "Detected %d logical boundaries in chunk starting at %.1fs: %s",
+                len(boundary_times),
+                chunk_start_time,
+                [f"{t:.1f}s" for t in boundary_times]
+            )
+            return boundary_times
+            
+        except Exception as e:
+            logger.warning("Failed to detect logical boundaries: %s", e)
+            return []
 
     def _merge_segments(
         self,
@@ -1007,34 +1172,124 @@ class HighlightAnalyzer:
                 "words": (prev.get("words") or []) + (extra.get("words") or [])
             }
 
+        # Step 1: Build large chunks (~10 min) for boundary detection
+        large_chunks = []
         for seg in segments:
             current.append(seg)
             duration = current[-1]["end"] - current[0]["start"]
-            reached_count = len(current) >= segments_per_chunk
-            reached_duration = duration >= max_duration
-            long_enough = duration >= min_duration
-
-            if (reached_count or reached_duration) and long_enough:
+            
+            if duration >= BOUNDARY_CHUNK_DURATION:
                 chunk = build_chunk(current)
                 if chunk["text"]:
-                    merged.append(chunk)
+                    large_chunks.append(chunk)
                 current = []
 
         if current:
             chunk = build_chunk(current)
             if chunk["text"]:
-                if merged and chunk["duration"] < min_duration:
-                    merged[-1] = merge_with_previous(merged[-1], chunk)
-                else:
-                    merged.append(chunk)
+                large_chunks.append(chunk)
+        
+        logger.info(
+            "Built %d large chunks (~%d sec each) for boundary detection",
+            len(large_chunks),
+            BOUNDARY_CHUNK_DURATION
+        )
+        
+        # Step 2: Detect logical boundaries in each large chunk and split
+        for large_chunk in large_chunks:
+            chunk_text = large_chunk["text"]
+            chunk_words = large_chunk.get("words", [])
+            chunk_start = large_chunk["start"]
+            chunk_end = large_chunk["end"]
+            
+            # Get logical boundary timestamps from DeepSeek
+            boundary_times = self._detect_logical_boundaries(
+                chunk_text,
+                chunk_start,
+                chunk_words
+            )
+            
+            if not boundary_times:
+                # No boundaries found - use mechanical split as fallback
+                logger.debug("No logical boundaries in chunk %.1f-%.1fs, using mechanical split", chunk_start, chunk_end)
+                # Split by max_duration
+                sub_current = []
+                for seg in segments:
+                    if seg["start"] < chunk_start or seg["end"] > chunk_end:
+                        continue
+                    sub_current.append(seg)
+                    sub_duration = sub_current[-1]["end"] - sub_current[0]["start"]
+                    if sub_duration >= max_duration:
+                        sub_chunk = build_chunk(sub_current)
+                        if sub_chunk["text"]:
+                            merged.append(sub_chunk)
+                        sub_current = []
+                if sub_current:
+                    sub_chunk = build_chunk(sub_current)
+                    if sub_chunk["text"]:
+                        merged.append(sub_chunk)
+                continue
+            
+            # Add chunk boundaries
+            all_boundaries = [chunk_start] + sorted(boundary_times) + [chunk_end]
+            
+            # Create segments between boundaries
+            for i in range(len(all_boundaries) - 1):
+                seg_start = all_boundaries[i]
+                seg_end = all_boundaries[i + 1]
+                seg_duration = seg_end - seg_start
+                
+                # Skip if too short
+                if seg_duration < MIN_SEGMENT_DURATION:
+                    continue
+                
+                # Find whisper segments in this range
+                seg_whisper = [
+                    s for s in segments
+                    if s["start"] >= seg_start - 0.5 and s["end"] <= seg_end + 0.5
+                ]
+                
+                if seg_whisper:
+                    sub_chunk = build_chunk(seg_whisper)
+                    if sub_chunk["text"]:
+                        # If segment is too long, split mechanically
+                        if sub_chunk["duration"] > MAX_SEGMENT_DURATION:
+                            # Split into smaller pieces
+                            sub_current = []
+                            for ws in seg_whisper:
+                                sub_current.append(ws)
+                                if sub_current[-1]["end"] - sub_current[0]["start"] >= max_duration:
+                                    sc = build_chunk(sub_current)
+                                    if sc["text"]:
+                                        merged.append(sc)
+                                    sub_current = []
+                            if sub_current:
+                                sc = build_chunk(sub_current)
+                                if sc["text"]:
+                                    merged.append(sc)
+                        else:
+                            merged.append(sub_chunk)
 
         # Fallback: if merging collapsed everything into a single tiny chunk, reuse original window logic
         if not merged and segments:
             return self._create_time_windows(segments, min_duration, max_duration)
+        
+        # Merge any segments that are too short with neighbors
+        final_merged = []
+        for chunk in merged:
+            if final_merged and chunk["duration"] < min_duration:
+                final_merged[-1] = merge_with_previous(final_merged[-1], chunk)
+            else:
+                final_merged.append(chunk)
 
-        return merged
+        logger.info(
+            "Logical boundary split: %d segments from %d large chunks",
+            len(final_merged),
+            len(large_chunks)
+        )
+        
+        return final_merged
 
-    @staticmethod
     @staticmethod
     def _sanitize_topic_text(text: str | None, max_words: int) -> str:
         cleaned_words = (text or "").split()
