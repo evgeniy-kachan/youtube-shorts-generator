@@ -26,8 +26,8 @@ NEXT_TOPIC_MAX_WORDS = 30
 
 # Logical boundary detection settings
 BOUNDARY_CHUNK_DURATION = 600  # 10 minutes per chunk for boundary detection
-MIN_SEGMENT_DURATION = 30      # Minimum segment duration after logical split
-MAX_SEGMENT_DURATION = 100     # Maximum segment duration after logical split
+MIN_SEGMENT_DURATION = 25      # Minimum segment duration after logical split
+MAX_SEGMENT_DURATION = 60      # Maximum segment duration (IDEAL for Shorts/Reels)
 
 
 def get_min_highlights(video_duration: float) -> int:
@@ -944,9 +944,25 @@ RULE 3: WHERE TO SPLIT (good boundaries)
 - After a complete thought/conclusion BEFORE a new topic starts
 - When speaker explicitly transitions ("Now let's talk about...", "Moving on...")
 
-RULE 4: SEGMENT LENGTH
-- Target: {MIN_SEGMENT_DURATION}-{MAX_SEGMENT_DURATION} seconds (~50-200 words, ~4-15 sentences)
-- Better to have longer coherent segments than short broken ones
+RULE 4: SEGMENT LENGTH (CRITICAL FOR SHORTS/REELS)
+- IDEAL: 30-60 seconds (BEST for virality, highest retention)
+- ACCEPTABLE: 60-90 seconds (only if the thought absolutely requires it)
+- AVOID: 90-120 seconds (will be penalized, use ONLY for exceptional content)
+- MAXIMUM HARD LIMIT: 120 seconds (anything longer is INVALID)
+
+Word count guidelines:
+- 30 seconds ≈ 70 words
+- 60 seconds ≈ 140 words  
+- 90 seconds ≈ 210 words
+
+PREFERENCE HIERARCHY:
+1. Complete thought in 30-45 seconds (PERFECT)
+2. Complete thought in 45-60 seconds (GOOD)  
+3. Complete thought in 60-90 seconds (ACCEPTABLE if high value)
+4. Complete thought in 90-120 seconds (USE ONLY IF UNSPLITTABLE)
+
+If you can split a 90-second segment into two 45-second segments without breaking logic — DO IT.
+Prefer TWO good short clips over ONE mediocre long clip.
 
 RULE 5: EXPLICIT TRANSITION MARKERS — ALWAYS SPLIT HERE
 If sentence starts with these words, it's a NEW TOPIC — MUST place boundary BEFORE this sentence:
@@ -1434,7 +1450,14 @@ BOUNDARIES:"""
         
         prompt = f"""You are an editor who curates punchy clips from long-form podcasts and interviews (Diary of a CEO, Joe Rogan, Ali Abdaal, Huberman Lab, Lex Fridman). Guests include entrepreneurs, scientists, psychologists, doctors, athletes, authors, and thought leaders.
 
-Judge this fragment as a potential 20–90 second short for viewers who crave:
+Judge this fragment as a potential YouTube Short / Instagram Reel.
+
+TARGET LENGTH: 30-90 seconds (IDEAL: 30-60 seconds for best virality)
+WORD COUNT: ~70-210 words (140 words ≈ 60 seconds)
+
+Note: Segments longer than 90 seconds don't fit the Shorts/Reels format well.
+
+Evaluate for viewers who crave:
 
 BUSINESS & ENTREPRENEURSHIP:
 - actionable business insights, growth tactics, metrics, frameworks, contrarian strategies
@@ -1471,7 +1494,7 @@ UNIVERSAL CRITERIA for high scores:
 - Complete arc: setup → insight → takeaway
 - Emotional resonance: surprise, inspiration, validation, curiosity
 
-Assume natural speech (~140 words per minute). Focus on fragments roughly 45–210 words long (≈20–90 s).
+Assume natural speech (~140 words per minute). Focus on fragments roughly 70–210 words long (≈30–90 seconds, ideally 30-60s).
 
 CONTEXT:
 Previous topic: {segment.get('prev_topic', 'Unknown')}
