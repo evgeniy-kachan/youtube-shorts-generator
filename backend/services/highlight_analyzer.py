@@ -905,27 +905,62 @@ class HighlightAnalyzer:
             f"{i+1}. {s}" for i, s in enumerate(sentences)
         )
         
-        prompt = f"""You are analyzing a transcript chunk to find LOGICAL TOPIC BOUNDARIES.
+        prompt = f"""You are finding logical boundaries in a podcast transcript.
 
-TASK: Identify sentence numbers where a NEW TOPIC or SUBTOPIC begins.
-A boundary should be placed where:
-- The speaker changes subject
-- A new example/story begins
-- A conclusion ends and new point starts
-- The conversation shifts direction
+CRITICAL RULES — YOU MUST FOLLOW THESE EXACTLY:
 
-CONSTRAINTS:
-- Segments should be {MIN_SEGMENT_DURATION}-{MAX_SEGMENT_DURATION} seconds (~50-200 words)
-- Don't split in the middle of an example or story
-- Don't split between a setup sentence and its payoff
-- Example: "His specialty was superconductivity." should stay with "In this field, 50,000 papers..."
+RULE 1: NEVER SPLIT BETWEEN TOPIC INTRODUCTION AND ITS EXPLANATION
+If sentence N introduces a person/concept/field and sentence N+1 explains or develops it — they MUST stay together.
 
-SENTENCES:
+FORBIDDEN SPLITS (examples where you MUST NOT put a boundary):
+
+ENGLISH:
+"...they were all frauds. His specialty was high-temperature superconductivity." | "In this field, 50,000 papers were published..."
+→ "superconductivity" is introduced in sentence N, explained in N+1 → MUST BE ONE SEGMENT
+
+"...we continue to develop in the world of bits." | "Computers, software, internet, mobile internet, crypto, now AI."
+→ "bits" is a category, next sentence lists examples of that category → MUST BE ONE SEGMENT
+
+RUSSIAN (ВАЖНО — применяй эти правила к русскому тексту):
+"...занимаются псевдонаукой. Его специализация — высокотемпературная сверхпроводимость." | "В этой области вышло 50 тысяч статей..."
+→ "сверхпроводимость" вводится, следующее предложение раскрывает → ОДИН СЕГМЕНТ
+
+"...мы продолжаем развиваться в мире битов." | "Компьютеры, софт, интернет, мобильный интернет, крипто, теперь ИИ."
+→ "биты" — категория, следующее перечисляет примеры → ОДИН СЕГМЕНТ
+
+"...они умнейшие люди в мире." | "Оценить эти области объективно крайне сложно."
+→ Второе предложение — прямое продолжение мысли о экспертах → ОДИН СЕГМЕНТ
+
+"Ключ был в дофамине." | "Дофамин — это нейромедиатор..."
+→ Первое вводит тему, второе объясняет → ОДИН СЕГМЕНТ
+
+RULE 2: NEVER SPLIT AFTER CONNECTORS
+If sentence starts with: "But", "However", "And", "So", "That's why", "Because", "Therefore"
+(Russian: "Но", "Однако", "И", "А", "Так что", "Поэтому", "Потому что", "То есть")
+→ It continues the previous thought → DO NOT start new segment here
+
+RULE 3: WHERE TO SPLIT (good boundaries)
+- Clear topic change (new subject, new person, new story)
+- After a complete thought/conclusion BEFORE a new topic starts
+- When speaker explicitly transitions ("Now let's talk about...", "Moving on...")
+
+RULE 4: SEGMENT LENGTH
+- Target: {MIN_SEGMENT_DURATION}-{MAX_SEGMENT_DURATION} seconds (~50-200 words, ~4-15 sentences)
+- Better to have longer coherent segments than short broken ones
+
+DETECTION LOGIC:
+Before placing a boundary between sentences N and N+1, ask yourself:
+1. Does sentence N introduce something that N+1 explains? → NO BOUNDARY
+2. Does N+1 start with a connector (But, And, So...)? → NO BOUNDARY  
+3. Does N+1 list examples of what N mentioned? → NO BOUNDARY
+4. Is N+1 a completely new topic unrelated to N? → YES, BOUNDARY OK
+
+SENTENCES TO ANALYZE:
 {numbered_sentences}
 
 OUTPUT FORMAT:
 Return ONLY comma-separated sentence numbers where NEW segments should START.
-Example: 4, 8, 15, 23
+Example: 5, 12, 19
 
 If no good boundaries exist, return: NONE
 
