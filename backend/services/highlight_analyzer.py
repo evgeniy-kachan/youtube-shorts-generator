@@ -1212,14 +1212,14 @@ BOUNDARIES:"""
             if not boundary_times:
                 # No boundaries found - use mechanical split as fallback
                 logger.debug("No logical boundaries in chunk %.1f-%.1fs, using mechanical split", chunk_start, chunk_end)
-                # Split by max_duration
+                # Split by MAX_SEGMENT_DURATION (not max_duration which is 180s)
                 sub_current = []
                 for seg in segments:
                     if seg["start"] < chunk_start or seg["end"] > chunk_end:
                         continue
                     sub_current.append(seg)
                     sub_duration = sub_current[-1]["end"] - sub_current[0]["start"]
-                    if sub_duration >= max_duration:
+                    if sub_duration >= MAX_SEGMENT_DURATION:
                         sub_chunk = build_chunk(sub_current)
                         if sub_chunk["text"]:
                             merged.append(sub_chunk)
@@ -1252,13 +1252,13 @@ BOUNDARIES:"""
                 if seg_whisper:
                     sub_chunk = build_chunk(seg_whisper)
                     if sub_chunk["text"]:
-                        # If segment is too long, split mechanically
+                        # If segment is too long, split mechanically by MAX_SEGMENT_DURATION
                         if sub_chunk["duration"] > MAX_SEGMENT_DURATION:
-                            # Split into smaller pieces
+                            # Split into smaller pieces (~MAX_SEGMENT_DURATION each)
                             sub_current = []
                             for ws in seg_whisper:
                                 sub_current.append(ws)
-                                if sub_current[-1]["end"] - sub_current[0]["start"] >= max_duration:
+                                if sub_current[-1]["end"] - sub_current[0]["start"] >= MAX_SEGMENT_DURATION:
                                     sc = build_chunk(sub_current)
                                     if sc["text"]:
                                         merged.append(sc)
