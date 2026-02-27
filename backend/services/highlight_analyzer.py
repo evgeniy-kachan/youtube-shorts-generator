@@ -948,6 +948,27 @@ RULE 4: SEGMENT LENGTH
 - Target: {MIN_SEGMENT_DURATION}-{MAX_SEGMENT_DURATION} seconds (~50-200 words, ~4-15 sentences)
 - Better to have longer coherent segments than short broken ones
 
+RULE 5: EXPLICIT TRANSITION MARKERS — ALWAYS SPLIT HERE
+If sentence starts with these words, it's a NEW TOPIC — MUST place boundary BEFORE this sentence:
+
+ENGLISH:
+- "First,", "Second,", "Third,", "Firstly,", "Secondly,", "Thirdly,"
+- "First:", "Second:", "Third:", "Point one:", "Point two:"
+- "The first thing", "The second thing", "Another thing"
+- "Now let's talk about", "Moving on to", "Next topic"
+- "On another note", "Separately,", "Additionally,"
+
+RUSSIAN:
+- "Во-первых", "Во-вторых", "В-третьих"
+- "Первое:", "Второе:", "Третье:", "Первый пункт", "Второй пункт"
+- "Первое —", "Второе —", "Следующее —"
+- "Теперь о", "Перейдём к", "Далее про", "Следующий момент"
+- "Отдельно скажу", "Кроме того", "Ещё один момент"
+
+Example:
+"...сауна уничтожила токсины. Это было поразительно. Во-вторых, мы пытались снизить микропластик..."
+→ "Во-вторых" = explicit new topic marker → MUST split before "Во-вторых"
+
 DETECTION LOGIC:
 Before placing a boundary between sentences N and N+1, ask yourself:
 1. Does sentence N introduce something that N+1 explains? → NO BOUNDARY
