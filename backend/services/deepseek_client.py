@@ -147,6 +147,25 @@ class DeepSeekClient:
         
         return text
 
+    def generate(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 500,
+        temperature: float = 0.3,
+    ) -> str:
+        """
+        Simple text generation from a prompt.
+        Returns just the text response (not full JSON).
+        """
+        messages = [{"role": "user", "content": prompt}]
+        response_json = self.chat(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return self.extract_text(response_json)
+
     def close(self):
         self._client.close()
 
