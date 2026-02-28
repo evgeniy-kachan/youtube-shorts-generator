@@ -937,120 +937,145 @@ class HighlightAnalyzer:
             f"{i+1}. {s}" for i, s in enumerate(sentences)
         )
         
-        prompt = f"""You are finding logical boundaries in a podcast transcript.
+        prompt = f"""You are an editor creating short clips for YouTube Shorts / Instagram Reels from Russian podcasts.
 
-CRITICAL RULES — YOU MUST FOLLOW THESE EXACTLY:
+YOUR TASK:
+Find logical boundaries in this 10-minute transcript chunk. Each resulting segment will become a separate short video.
 
-RULE 1: NEVER SPLIT BETWEEN TOPIC INTRODUCTION AND ITS EXPLANATION
-If sentence N introduces a person/concept/field and sentence N+1 explains or develops it — they MUST stay together.
+============================================================================
+PART 1: SEGMENT LENGTH RULES (CRITICAL FOR SHORTS/REELS)
+============================================================================
 
-FORBIDDEN SPLITS (examples where you MUST NOT put a boundary):
+LENGTH HIERARCHY (from best to worst):
 
-ENGLISH:
-"...they were all frauds. His specialty was high-temperature superconductivity." | "In this field, 50,000 papers were published..."
-→ "superconductivity" is introduced in sentence N, explained in N+1 → MUST BE ONE SEGMENT
+1. IDEAL: 30-60 seconds (70-140 words)
+   → Best engagement, highest reach, perfect for shorts format
+   → Aim here whenever possible
 
-"...we continue to develop in the world of bits." | "Computers, software, internet, mobile internet, crypto, now AI."
-→ "bits" is a category, next sentence lists examples of that category → MUST BE ONE SEGMENT
+2. ACCEPTABLE: 60-90 seconds (140-210 words)
+   → Still usable, but less viral potential
+   → Only if the thought absolutely requires this length
 
-RUSSIAN (ВАЖНО — применяй эти правила к русскому тексту):
-"...занимаются псевдонаукой. Его специализация — высокотемпературная сверхпроводимость." | "В этой области вышло 50 тысяч статей..."
-→ "сверхпроводимость" вводится, следующее предложение раскрывает → ОДИН СЕГМЕНТ
+3. TOLERABLE: 90-120 seconds (210-280 words)
+   → Will be penalized in final scoring
+   → Use ONLY for exceptional content that cannot be split
 
-"...мы продолжаем развиваться в мире битов." | "Компьютеры, софт, интернет, мобильный интернет, крипто, теперь ИИ."
-→ "биты" — категория, следующее перечисляет примеры → ОДИН СЕГМЕНТ
+4. INVALID: >120 seconds
+   → Do NOT create segments longer than 120 seconds under any circumstances
 
-"...они умнейшие люди в мире." | "Оценить эти области объективно крайне сложно."
-→ Второе предложение — прямое продолжение мысли о экспертах → ОДИН СЕГМЕНТ
+LENGTH EXCEPTIONS FOR COMPLETE ARGUMENTS:
+Complete arguments (thesis + evidence + conclusion) can go up to 120 seconds, BUT:
+- 60-90 seconds: ideal for most arguments
+- 90-120 seconds: allowed ONLY if evidence is detailed and necessary
+- The argument MUST be truly complete (question → answer → proof → conclusion)
 
-"Ключ был в дофамине." | "Дофамин — это нейромедиатор..."
-→ Первое вводит тему, второе объясняет → ОДИН СЕГМЕНТ
+PREFERENCE RULE:
+If you can split a 90-second segment into 45+45 without breaking the logical flow — ALWAYS DO IT.
+Shorter complete thoughts are better than longer ones.
 
-RULE 2: NEVER SPLIT AFTER CONNECTORS
-If sentence starts with: "But", "However", "And", "So", "That's why", "Because", "Therefore"
-(Russian: "Но", "Однако", "И", "А", "Так что", "Поэтому", "Потому что", "То есть")
-→ It continues the previous thought → DO NOT start new segment here
+============================================================================
+PART 2: WHERE TO SPLIT
+============================================================================
 
-RULE 3: LIST vs EXPLAINED IDEAS (CRITICAL!)
-When speaker mentions multiple ideas/examples:
+Split when:
+- Topic clearly changes ("Now let's talk about...", "Moving on to...")
+- New example or story begins
+- Question → answer cycle completes
+- Speaker changes (if multiple speakers)
 
-A) JUST A LIST (no explanation) → KEEP AS ONE SEGMENT, but this is LOW VALUE content
-   Example: "Here are problems: slow processes, bureaucracy, hybrid work, Zoom settings, interview prep..."
-   → Ideas are just mentioned, not developed → ONE segment (but likely low score)
+Explicit transition markers — ALWAYS split BEFORE these:
+ENGLISH: "First,", "Second,", "Firstly,", "Now let's talk about", "Moving on to"
+RUSSIAN: "Во-первых", "Во-вторых", "Теперь о", "Перейдём к", "Следующий момент"
 
-B) EXPLAINED IDEAS → SEPARATE SEGMENTS at each transition
-   Example: "First idea: [30 sec explanation]. Second idea: [30 sec explanation]"
-   → Each idea is developed → Split between them
+============================================================================
+PART 3: WHERE NOT TO SPLIT (CRITICAL)
+============================================================================
 
-WRONG: Segment 6 type — 2+ minutes of random ideas without development = BAD SEGMENT
-RIGHT: Each explained idea = separate segment of 30-60 seconds
+NEVER split in these cases:
 
-RULE 4: ARGUMENT STRUCTURE — KEEP COMPLETE ARGUMENTS TOGETHER
-Look for: THESIS → EVIDENCE/EXAMPLES → CONCLUSION
-This is ONE logical unit. DO NOT split even if it takes 90-120 seconds.
+1. TOPIC INTRODUCTION + EXPLANATION (DANGLING SETUP)
+   If sentence N introduces a person/concept and sentence N+1 explains it — they MUST stay together.
 
-Example structure to keep together:
-- Thesis: "Boring ideas are better for business"
-- Evidence: 4 examples (AI = bad, product = bad, lawn mowing = good, storage = perfect)
-- Conclusion: "Test with grandma — if she says 'cool idea' it's bad"
-→ This is ONE segment (thesis needs examples, examples need conclusion)
+   Examples:
+   "Его специализация — высокотемпературная сверхпроводимость. В этой области вышло 50 тысяч статей..."
+   → Topic introduced in sentence 1, explained in sentence 2 → ONE SEGMENT.
 
-RULE 5: WHERE TO SPLIT (good boundaries)
-- Clear topic change (new subject, new person, new story)
-- After a complete thought/conclusion BEFORE a new topic starts
-- When speaker explicitly transitions ("Now let's talk about...", "Moving on...")
-- Between EXPLAINED ideas (not just listed)
+2. ARGUMENT STRUCTURE (CRITICAL)
+   When you see this pattern:
+   - Question or bold claim
+   - Response
+   - Evidence/examples supporting the claim
+   
+   This is ONE logical unit. DO NOT split between these parts.
 
-RULE 6: SEGMENT LENGTH (CRITICAL FOR SHORTS/REELS)
-- IDEAL: 30-60 seconds (BEST for virality, highest retention)
-- ACCEPTABLE: 60-90 seconds (only if the thought absolutely requires it)
-- ALLOWED FOR COMPLETE ARGUMENTS: 90-120 seconds (thesis + evidence + conclusion)
-- MAXIMUM HARD LIMIT: 120 seconds (anything longer is INVALID)
+   Example of GOOD (keep together):
+   "Веришь в симуляцию? - Высокий процент. - Посмотри на видеоигры за 50 лет..."
+   → Question → answer → evidence → ONE SEGMENT
 
-Word count guidelines:
-- 30 seconds ≈ 70 words
-- 60 seconds ≈ 140 words  
-- 90 seconds ≈ 210 words
+   Common mistake (BAD):
+   Splitting between the answer and its supporting evidence
+   → First segment: question + answer only (incomplete)
+   → Second segment: evidence only (no context)
 
-IMPORTANT: Complete thought at 90 seconds is BETTER than split thought at 45+45 seconds.
-But: If you CAN split without breaking logic — DO IT.
+3. CONNECTORS
+   If sentence starts with: "But", "However", "And", "So", "That's why"
+   (Russian: "Но", "Однако", "И", "А", "Так что", "Поэтому", "То есть")
+   → It continues the previous thought → DO NOT start new segment here
 
-RULE 7: EXPLICIT TRANSITION MARKERS — ALWAYS SPLIT HERE
-If sentence starts with these words, it's a NEW TOPIC — MUST place boundary BEFORE this sentence:
+4. LIST HANDLING
+   When speaker enumerates multiple ideas:
+   - If each idea is EXPLAINED (30+ sec) → separate segments
+   - If ideas are just listed briefly → keep as one segment
 
-ENGLISH:
-- "First,", "Second,", "Third,", "Firstly,", "Secondly,", "Thirdly,"
-- "First:", "Second:", "Third:", "Point one:", "Point two:"
-- "The first thing", "The second thing", "Another thing"
-- "Now let's talk about", "Moving on to", "Next topic"
-- "On another note", "Separately,", "Additionally,"
+5. TOPIC TRANSITION WITH CONTEXT
+   When a new topic begins with a reference to previous discussion:
+   - "Как я говорил ранее..."
+   - "Вы упоминали о..."
+   - "Возвращаясь к тому разговору..."
+   
+   Make sure this REFERENCE PHRASE stays with the new topic.
+   
+   Example:
+   GOOD: "Вы ранее говорили о симуляции. Обожаю «Матрицу»..."
+   → The context phrase is included, viewer understands
 
-RUSSIAN:
-- "Во-первых", "Во-вторых", "В-третьих"
-- "Первое:", "Второе:", "Третье:", "Первый пункт", "Второй пункт"
-- "Первое —", "Второе —", "Следующее —"
-- "Теперь о", "Перейдём к", "Далее про", "Следующий момент"
-- "Отдельно скажу", "Кроме того", "Ещё один момент"
+============================================================================
+PART 4: DETECTION LOGIC (use before each boundary decision)
+============================================================================
 
-Example:
-"...сауна уничтожила токсины. Это было поразительно. Во-вторых, мы пытались снизить микропластик..."
-→ "Во-вторых" = explicit new topic marker → MUST split before "Во-вторых"
-
-DETECTION LOGIC:
 Before placing a boundary between sentences N and N+1, ask yourself:
 1. Does sentence N introduce something that N+1 explains? → NO BOUNDARY
 2. Does N+1 start with a connector (But, And, So...)? → NO BOUNDARY  
 3. Does N+1 list examples of what N mentioned? → NO BOUNDARY
 4. Is N+1 a completely new topic unrelated to N? → YES, BOUNDARY OK
+5. Does N+1 start with explicit marker (Во-вторых, Second...)? → YES, BOUNDARY OK
 
-SENTENCES TO ANALYZE:
+============================================================================
+PART 5: SENTENCES TO ANALYZE
+============================================================================
+
 {numbered_sentences}
 
-OUTPUT FORMAT:
-Return ONLY comma-separated sentence numbers where NEW segments should START.
-Example: 5, 12, 19
+============================================================================
+PART 6: YOUR OUTPUT - STRICT FORMAT
+============================================================================
 
-If no good boundaries exist, return: NONE
+Return ONLY comma-separated sentence numbers where NEW segments should START.
+
+RULES:
+- Numbers must be integers between 2 and {len(sentences)}
+- Do NOT include sentence 1
+- Numbers in ascending order
+- Comma-separated (spaces optional)
+
+Examples:
+✅ 4, 8, 15, 23
+✅ 4,8,15,23
+
+If no boundaries needed: return exactly "NONE"
+
+Remember: You are creating clips for Shorts/Reels. Shorter is better. 30-60 seconds is ideal.
+But COMPLETE arguments at 90 seconds are better than BROKEN arguments at 45+45.
 
 BOUNDARIES:"""
 
