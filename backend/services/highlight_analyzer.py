@@ -26,6 +26,7 @@ NEXT_TOPIC_MAX_WORDS = 30
 
 # Logical boundary detection settings
 BOUNDARY_CHUNK_DURATION = 600  # 10 minutes per chunk for boundary detection
+CHUNK_OVERLAP_DURATION = 30    # Overlap between chunks to avoid cutting mid-thought
 MIN_SEGMENT_DURATION = 25      # Minimum segment duration after logical split
 MAX_SEGMENT_DURATION = 60      # Maximum segment duration (IDEAL for Shorts/Reels)
 MAX_MERGED_DURATION = 120      # Maximum duration when merging incomplete segments
@@ -1091,6 +1092,11 @@ WHY BAD is wrong:
 PART 6: THE TEXT TO ANALYZE
 ============================================================================
 
+NOTE: Sentences at the beginning of this chunk may be continuations from the previous chunk.
+If you see phrases like "Вы ранее говорили" or "Как я сказал" at the START, 
+check if the reference is explained WITHIN this chunk.
+If not, treat the FIRST 1-2 sentences as context-bringers and keep them with this chunk.
+
 Here are the sentences with numbers. Each sentence is approximately 2-3 seconds long.
 Pay attention to logical connections, not just sentence boundaries.
 
@@ -1359,8 +1365,11 @@ BOUNDARIES:"""
             }
 
         # Step 1: Build large chunks (~10 min) for boundary detection
+        # Use overlap to avoid cutting mid-thought at chunk boundaries
         large_chunks = []
-        for seg in segments:
+        chunk_start_idx = 0
+        
+        for i, seg in enumerate(segments):
             current.append(seg)
             duration = current[-1]["end"] - current[0]["start"]
             
@@ -1368,7 +1377,18 @@ BOUNDARIES:"""
                 chunk = build_chunk(current)
                 if chunk["text"]:
                     large_chunks.append(chunk)
-                current = []
+                
+                # Find overlap: go back ~30 seconds from the end
+                overlap_start_time = current[-1]["end"] - CHUNK_OVERLAP_DURATION
+                overlap_idx = i
+                for j in range(i, chunk_start_idx, -1):
+                    if segments[j]["start"] <= overlap_start_time:
+                        overlap_idx = j
+                        break
+                
+                # Start next chunk from overlap point (not from scratch)
+                current = list(segments[overlap_idx:i+1]) if overlap_idx < i else []
+                chunk_start_idx = overlap_idx
 
         if current:
             chunk = build_chunk(current)
@@ -1376,9 +1396,10 @@ BOUNDARIES:"""
                 large_chunks.append(chunk)
         
         logger.info(
-            "Built %d large chunks (~%d sec each) for boundary detection",
+            "Built %d large chunks (~%d sec each, %d sec overlap) for boundary detection",
             len(large_chunks),
-            BOUNDARY_CHUNK_DURATION
+            BOUNDARY_CHUNK_DURATION,
+            CHUNK_OVERLAP_DURATION
         )
         
         # Step 2: Detect logical boundaries in each large chunk and split
@@ -1460,9 +1481,27 @@ BOUNDARIES:"""
         if not merged and segments:
             return self._create_time_windows(segments, min_duration, max_duration)
         
+        # Deduplicate segments from overlapping chunks
+        # Sort by start time and remove segments that overlap significantly
+        merged.sort(key=lambda x: x["start"])
+        deduped = []
+        for chunk in merged:
+            if not deduped:
+                deduped.append(chunk)
+            else:
+                last = deduped[-1]
+                # If this segment starts before the last one ends (overlap), keep the better one
+                if chunk["start"] < last["end"] - 1:  # 1 sec tolerance
+                    # Keep the longer/more complete segment
+                    if chunk["duration"] > last["duration"]:
+                        deduped[-1] = chunk
+                    # else keep the existing one
+                else:
+                    deduped.append(chunk)
+        
         # Merge any segments that are too short with neighbors
         final_merged = []
-        for chunk in merged:
+        for chunk in deduped:
             if final_merged and chunk["duration"] < min_duration:
                 final_merged[-1] = merge_with_previous(final_merged[-1], chunk)
             else:
