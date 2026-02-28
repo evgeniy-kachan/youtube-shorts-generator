@@ -793,9 +793,17 @@ function App() {
           <SegmentsList
             segments={segments}
             videoTitle={videoData?.title}
+            videoId={videoData?.video_id}
             onProcess={handleProcess}
             onDubbing={handleDubbing}
             onNemoDiarization={handleNemoDiarization}
+            onSegmentsUpdate={(updatedSegments) => {
+              // Refresh segments after boundary update
+              setSegments(prev => prev.map(seg => {
+                const updated = updatedSegments.find(u => u.id === seg.id);
+                return updated ? { ...seg, ...updated } : seg;
+              }));
+            }}
             nemoAvailable={nemoAvailable}
             nemoLoading={nemoLoading}
             loading={stage === 'processing'}
