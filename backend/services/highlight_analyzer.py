@@ -26,7 +26,7 @@ NEXT_TOPIC_MAX_WORDS = 30
 
 # Logical boundary detection settings
 BOUNDARY_CHUNK_DURATION = 600  # 10 minutes per chunk for boundary detection
-CHUNK_OVERLAP_DURATION = 30    # Overlap between chunks to avoid cutting mid-thought
+CHUNK_OVERLAP_DURATION = 60    # Overlap between chunks to avoid cutting mid-thought (1 minute)
 MIN_SEGMENT_DURATION = 25      # Minimum segment duration after logical split
 MAX_SEGMENT_DURATION = 60      # Maximum segment duration (IDEAL for Shorts/Reels)
 MAX_MERGED_DURATION = 120      # Maximum duration when merging incomplete segments
@@ -1205,7 +1205,6 @@ BOUNDARIES:"""
             return []
 
         merged: List[Dict] = []
-        current: List[Dict] = []
         max_duration = max_duration or 180
         segments_per_chunk = max(1, segments_per_chunk)
 
@@ -1364,36 +1363,42 @@ BOUNDARIES:"""
                 "words": (prev.get("words") or []) + (extra.get("words") or [])
             }
 
-        # Step 1: Build large chunks (~10 min) for boundary detection
-        # Use overlap to avoid cutting mid-thought at chunk boundaries
+        # Step 1: Build large chunks (~10 min) with 1 min overlap for boundary detection
+        # Overlap ensures we don't cut mid-thought at chunk boundaries
         large_chunks = []
-        chunk_start_idx = 0
+        current_idx = 0
         
-        for i, seg in enumerate(segments):
-            current.append(seg)
-            duration = current[-1]["end"] - current[0]["start"]
+        while current_idx < len(segments):
+            # Find end of this chunk (chunk_size seconds from start)
+            chunk_start_time = segments[current_idx]["start"]
+            end_time = chunk_start_time + BOUNDARY_CHUNK_DURATION
             
-            if duration >= BOUNDARY_CHUNK_DURATION:
-                chunk = build_chunk(current)
+            # Find the last segment that fits in this chunk
+            end_idx = current_idx
+            while end_idx < len(segments) and segments[end_idx]["end"] <= end_time:
+                end_idx += 1
+            
+            # Make sure we include at least one segment
+            if end_idx == current_idx:
+                end_idx = current_idx + 1
+            
+            # Build chunk from current_idx to end_idx
+            chunk_segments = segments[current_idx:end_idx]
+            if chunk_segments:
+                chunk = build_chunk(chunk_segments)
                 if chunk["text"]:
                     large_chunks.append(chunk)
-                
-                # Find overlap: go back ~30 seconds from the end
-                overlap_start_time = current[-1]["end"] - CHUNK_OVERLAP_DURATION
-                overlap_idx = i
-                for j in range(i, chunk_start_idx, -1):
-                    if segments[j]["start"] <= overlap_start_time:
-                        overlap_idx = j
-                        break
-                
-                # Start next chunk from overlap point (not from scratch)
-                current = list(segments[overlap_idx:i+1]) if overlap_idx < i else []
-                chunk_start_idx = overlap_idx
-
-        if current:
-            chunk = build_chunk(current)
-            if chunk["text"]:
-                large_chunks.append(chunk)
+            
+            # Move to next chunk: start at (chunk_size - overlap) from current start
+            next_start_time = chunk_start_time + (BOUNDARY_CHUNK_DURATION - CHUNK_OVERLAP_DURATION)
+            
+            # Find first segment that starts at or after next_start_time
+            while current_idx < len(segments) and segments[current_idx]["start"] < next_start_time:
+                current_idx += 1
+            
+            # If we didn't move forward, force move to avoid infinite loop
+            if current_idx < len(segments) and segments[current_idx]["start"] < next_start_time:
+                current_idx = end_idx
         
         logger.info(
             "Built %d large chunks (~%d sec each, %d sec overlap) for boundary detection",
