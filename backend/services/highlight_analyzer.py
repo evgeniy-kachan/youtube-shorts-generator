@@ -983,10 +983,6 @@ Split when:
 - Question → answer cycle completes
 - Speaker changes (if multiple speakers)
 
-Explicit transition markers — ALWAYS split BEFORE these:
-ENGLISH: "First,", "Second,", "Firstly,", "Now let's talk about", "Moving on to"
-RUSSIAN: "Во-первых", "Во-вторых", "Теперь о", "Перейдём к", "Следующий момент"
-
 ============================================================================
 PART 3: WHERE NOT TO SPLIT (CRITICAL)
 ============================================================================
@@ -1017,55 +1013,100 @@ NEVER split in these cases:
    → First segment: question + answer only (incomplete)
    → Second segment: evidence only (no context)
 
-3. CONNECTORS
-   If sentence starts with: "But", "However", "And", "So", "That's why"
-   (Russian: "Но", "Однако", "И", "А", "Так что", "Поэтому", "То есть")
-   → It continues the previous thought → DO NOT start new segment here
+3. MID-STORY
+   Never cut in the middle of an example, anecdote, or personal story
+   Wait for the punchline or conclusion
 
-4. LIST HANDLING
-   When speaker enumerates multiple ideas:
-   - If each idea is EXPLAINED (30+ sec) → separate segments
-   - If ideas are just listed briefly → keep as one segment
+4. SETUP + PAYOFF
+   If sentence sets up a question and next sentence answers it — keep together
 
-5. TOPIC TRANSITION WITH CONTEXT
-   When a new topic begins with a reference to previous discussion:
-   - "Как я говорил ранее..."
-   - "Вы упоминали о..."
-   - "Возвращаясь к тому разговору..."
-   
-   Make sure this REFERENCE PHRASE stays with the new topic.
-   
-   Example:
-   GOOD: "Вы ранее говорили о симуляции. Обожаю «Матрицу»..."
-   → The context phrase is included, viewer understands
+5. CONDITION + RESULT
+   "If you do X, then Y happens" — keep together
 
 ============================================================================
-PART 4: DETECTION LOGIC (use before each boundary decision)
+PART 4: LIST HANDLING
 ============================================================================
 
-Before placing a boundary between sentences N and N+1, ask yourself:
-1. Does sentence N introduce something that N+1 explains? → NO BOUNDARY
-2. Does N+1 start with a connector (But, And, So...)? → NO BOUNDARY  
-3. Does N+1 list examples of what N mentioned? → NO BOUNDARY
-4. Is N+1 a completely new topic unrelated to N? → YES, BOUNDARY OK
-5. Does N+1 start with explicit marker (Во-вторых, Second...)? → YES, BOUNDARY OK
+When speaker enumerates multiple ideas/examples:
+
+- If each idea is EXPLAINED (30+ seconds of explanation) → separate segments
+- If ideas are just listed briefly without explanation → keep as one segment
+
+Examples:
+WRONG:
+"Here are ideas: A. B. C. D. E." with each just mentioned
+→ This is ONE segment (just a list)
+
+RIGHT:
+"First idea: [explanation 30 sec]. Second idea: [explanation 30 sec]"
+→ This is TWO segments, put boundary between them
 
 ============================================================================
-PART 5: SENTENCES TO ANALYZE
+PART 5: RETROSPECTIVE REFERENCES — NEW TOPIC SIGNALS (CRITICAL)
 ============================================================================
 
+When speaker refers BACK to a previous discussion to START a new topic, 
+the reference phrase BELONGS TO THE NEW SEGMENT.
+
+RUSSIAN MARKERS:
+- "Вы ранее говорили о..."
+- "Ты упоминал..."
+- "Как вы сказали ранее..."
+- "Мы раньше обсуждали..."
+- "Возвращаясь к разговору о..."
+- "Помните, вы говорили про..."
+- "Вы упоминали о..."
+
+ENGLISH MARKERS (for reference):
+- "You mentioned earlier..."
+- "As you said before..."
+- "Going back to..."
+- "Returning to our discussion about..."
+- "Earlier you talked about..."
+
+CRITICAL RULE:
+These phrases INTRODUCE a topic change. 
+The boundary should be placed BEFORE such phrase.
+
+EXAMPLE:
+GOOD split:
+Segment 4: "...долг станет менее серьёзной проблемой. Да, скорее всего."
+Segment 5: "Вы ранее говорили о симуляции. Я люблю «Матрицу»..."
+
+BAD split (what happened):
+Segment 4: "...долг станет менее серьёзной проблемой. Да, скорее всего. Вы ранее говорили о симуляции."
+Segment 5: "Я люблю «Матрицу»..."
+
+WHY GOOD is correct:
+- "Вы ранее говорили" introduces the NEW topic (simulation)
+- Viewer immediately knows what's being discussed
+- The reference serves as context for the new topic
+
+WHY BAD is wrong:
+- The reference is stuck in the wrong segment
+- Segment 5 starts without context ("Я люблю «Матрицу»" — which Matrix?)
+- Listener is confused
+
+============================================================================
+PART 6: THE TEXT TO ANALYZE
+============================================================================
+
+Here are the sentences with numbers. Each sentence is approximately 2-3 seconds long.
+Pay attention to logical connections, not just sentence boundaries.
+
+SENTENCES:
 {numbered_sentences}
 
 ============================================================================
-PART 6: YOUR OUTPUT - STRICT FORMAT
+PART 7: YOUR OUTPUT - STRICT FORMAT
 ============================================================================
 
 Return ONLY comma-separated sentence numbers where NEW segments should START.
 
 RULES:
 - Numbers must be integers between 2 and {len(sentences)}
-- Do NOT include sentence 1
-- Numbers in ascending order
+- Do NOT include sentence 1 (first segment always starts there)
+- Numbers must be in ascending order
 - Comma-separated (spaces optional)
 
 Examples:
@@ -1073,9 +1114,6 @@ Examples:
 ✅ 4,8,15,23
 
 If no boundaries needed: return exactly "NONE"
-
-Remember: You are creating clips for Shorts/Reels. Shorter is better. 30-60 seconds is ideal.
-But COMPLETE arguments at 90 seconds are better than BROKEN arguments at 45+45.
 
 BOUNDARIES:"""
 
