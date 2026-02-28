@@ -28,6 +28,7 @@ NEXT_TOPIC_MAX_WORDS = 30
 BOUNDARY_CHUNK_DURATION = 600  # 10 minutes per chunk for boundary detection
 MIN_SEGMENT_DURATION = 25      # Minimum segment duration after logical split
 MAX_SEGMENT_DURATION = 60      # Maximum segment duration (IDEAL for Shorts/Reels)
+MAX_MERGED_DURATION = 120      # Maximum duration when merging incomplete segments
 
 
 def get_min_highlights(video_duration: float) -> int:
@@ -534,29 +535,60 @@ class HighlightAnalyzer:
             # Check if merged duration would be acceptable
             merged_duration = seg_b['end'] - seg_a['start']
             
-            # Merge conditions:
-            # 1. Direct link: A needs next AND B needs previous
-            # 2. A needs next and B is low-scored (likely continuation)
-            # 3. Both are low-scored and together might form a story
+            # Merge conditions using DeepSeek's merge evaluation
+            # Use MAX_MERGED_DURATION (120s) as hard limit for Shorts/Reels
+            merge_limit = min(max_duration, MAX_MERGED_DURATION)
+            
             should_merge = False
             merge_reason = ""
             
-            if needs_next and needs_prev and merged_duration <= max_duration:
-                should_merge = True
-                merge_reason = "direct_link"
-            elif needs_next and merged_duration <= max_duration:
-                # A clearly needs continuation
-                score_a = self._calculate_highlight_score(scores_a)
-                score_b = self._calculate_highlight_score(scores_b)
-                if score_a < 0.35 and score_b < 0.35:
+            # Get merge benefit hints from DeepSeek
+            merge_benefit_a = scores_a.get('merge_benefit', 'none')
+            merge_benefit_b = scores_b.get('merge_benefit', 'none')
+            estimated_duration_a = scores_a.get('estimated_merged_duration', 0)
+            merged_completeness_a = scores_a.get('merged_completeness_score', 0)
+            
+            # Condition 1: Direct link with DeepSeek approval
+            if needs_next and needs_prev and merged_duration <= merge_limit:
+                # DeepSeek says merge is beneficial
+                if merge_benefit_a in ['high', 'medium'] or merge_benefit_b in ['high', 'medium']:
                     should_merge = True
-                    merge_reason = "both_low_score"
-            elif needs_prev and merged_duration <= max_duration:
-                # B clearly needs context from A
-                score_a = self._calculate_highlight_score(scores_a)
-                if score_a < 0.40:
+                    merge_reason = "direct_link_approved"
+                # Even without explicit approval, if both need context and duration is short
+                elif merged_duration <= 90:
                     should_merge = True
-                    merge_reason = "b_needs_context"
+                    merge_reason = "direct_link_short"
+            
+            # Condition 2: A needs next, DeepSeek recommends merge
+            elif needs_next and merged_duration <= merge_limit:
+                if merge_benefit_a == 'high':
+                    should_merge = True
+                    merge_reason = "a_needs_next_high"
+                elif merge_benefit_a == 'medium' and merged_duration <= 90:
+                    should_merge = True
+                    merge_reason = "a_needs_next_medium"
+                # Fallback: both low-scored (original logic)
+                else:
+                    score_a = self._calculate_highlight_score(scores_a)
+                    score_b = self._calculate_highlight_score(scores_b)
+                    if score_a < 0.35 and score_b < 0.35 and merged_duration <= 90:
+                        should_merge = True
+                        merge_reason = "both_low_score"
+            
+            # Condition 3: B needs previous context
+            elif needs_prev and merged_duration <= merge_limit:
+                if merge_benefit_b == 'high':
+                    should_merge = True
+                    merge_reason = "b_needs_prev_high"
+                elif merge_benefit_b == 'medium' and merged_duration <= 90:
+                    should_merge = True
+                    merge_reason = "b_needs_prev_medium"
+                # Fallback: A is low-scored
+                else:
+                    score_a = self._calculate_highlight_score(scores_a)
+                    if score_a < 0.40 and merged_duration <= 90:
+                        should_merge = True
+                        merge_reason = "b_needs_context"
             
             if should_merge:
                 merge_pairs.append((i, i + 1, merge_reason))
@@ -1609,12 +1641,25 @@ When EITHER flag is true:
 MERGE LOGIC (for segments that need both contexts):
 If a segment needs BOTH previous AND next context (needs_previous_context AND needs_next_context),
 and together with neighbors forms a complete thought (thesis + evidence + conclusion),
-consider if merging would create a better clip.
+evaluate if merging would create a better clip.
 
-MERGE SCORING:
-- Merged segment should ideally be 60-90 seconds
-- Maximum 120 seconds for exceptional content
-- If merged length > 120, consider if split with better boundaries is possible
+MERGE EVALUATION (fill these fields when needs_previous_context OR needs_next_context is true):
+- "merge_benefit": How much would merging improve the clip?
+  • "high" = Merging is ESSENTIAL, segment is incomplete without neighbors
+  • "medium" = Merging would improve quality noticeably  
+  • "low" = Merging would help slightly but segment is watchable alone
+  • "none" = Segment is complete, no merge needed
+- "estimated_merged_duration": Your estimate in seconds if merged with neighbor(s)
+  • If needs_previous_context: add ~30-60 seconds for previous context
+  • If needs_next_context: add ~30-60 seconds for next context
+  • If both: estimate total combined duration
+- "merged_completeness_score": Expected completeness_arc score (0.0-1.0) after merge
+
+MERGE CONSTRAINTS:
+- IDEAL merged duration: 60-90 seconds (best for Shorts/Reels)
+- ACCEPTABLE: 90-120 seconds (only for exceptional content)
+- MAXIMUM: 120 seconds (anything longer should NOT be merged, use trims instead)
+- If merged would exceed 120 seconds, set merge_benefit to "none"
 
 LIST vs ARGUMENT DETECTION:
 - If segment is just a LIST of ideas without development (like "here are 10 problems: A, B, C, D...")
@@ -1818,7 +1863,10 @@ Respond ONLY with valid JSON (no explanations, no markdown):
   "needs_previous_context": false,
   "needs_next_context": false,
   "trim_first_sentences": 0,
-  "trim_last_sentences": 0
+  "trim_last_sentences": 0,
+  "merge_benefit": "none",
+  "estimated_merged_duration": 0,
+  "merged_completeness_score": 0.0
 }}"""
 
         try:
@@ -1839,10 +1887,13 @@ Respond ONLY with valid JSON (no explanations, no markdown):
             # Define expected fields
             numeric_fields = [
                 'surprise_novelty', 'specificity_score', 'personal_connection',
-                'actionability_score', 'clarity_simplicity', 'completeness_arc', 'hook_quality'
+                'actionability_score', 'clarity_simplicity', 'completeness_arc', 'hook_quality',
+                'merged_completeness_score'
             ]
             boolean_fields = ['needs_previous_context', 'needs_next_context']
             trim_fields = ['trim_first_sentences', 'trim_last_sentences']
+            integer_fields = ['estimated_merged_duration']
+            merge_benefit_values = ['high', 'medium', 'low', 'none']
             
             # Validate scores
             for key in scores:
@@ -1857,6 +1908,18 @@ Respond ONLY with valid JSON (no explanations, no markdown):
                         except (ValueError, TypeError):
                             scores[key] = 0
                     scores[key] = max(0, min(3, scores[key]))
+                elif key in integer_fields:
+                    # Integer (duration in seconds)
+                    if not isinstance(scores[key], int):
+                        try:
+                            scores[key] = int(scores[key])
+                        except (ValueError, TypeError):
+                            scores[key] = 0
+                    scores[key] = max(0, scores[key])
+                elif key == 'merge_benefit':
+                    # String: high/medium/low/none
+                    if scores[key] not in merge_benefit_values:
+                        scores[key] = 'none'
                 elif key in numeric_fields:
                     if not isinstance(scores[key], (int, float)):
                         scores[key] = 0.0
@@ -1864,11 +1927,14 @@ Respond ONLY with valid JSON (no explanations, no markdown):
             
             # Ensure all required fields exist with defaults
             for field in numeric_fields:
-                scores.setdefault(field, 0.5)
+                scores.setdefault(field, 0.5 if field != 'merged_completeness_score' else 0.0)
             for field in boolean_fields:
                 scores.setdefault(field, False)
             for field in trim_fields:
                 scores.setdefault(field, 0)
+            for field in integer_fields:
+                scores.setdefault(field, 0)
+            scores.setdefault('merge_benefit', 'none')
             
             return scores
             
@@ -1887,6 +1953,9 @@ Respond ONLY with valid JSON (no explanations, no markdown):
                 'needs_next_context': False,
                 'trim_first_sentences': 0,
                 'trim_last_sentences': 0,
+                'merge_benefit': 'none',
+                'estimated_merged_duration': 0,
+                'merged_completeness_score': 0.0,
             }
     
     def _calculate_highlight_score(self, scores: Dict[str, float]) -> float:
