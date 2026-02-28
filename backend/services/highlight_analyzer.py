@@ -1024,6 +1024,23 @@ NEVER split in these cases:
 5. CONDITION + RESULT
    "If you do X, then Y happens" — keep together
 
+6. QUESTION + ANSWER (CRITICAL — NEVER SPLIT)
+   If you see a QUESTION followed by an ANSWER — they MUST be in ONE segment.
+   
+   Pattern to detect:
+   - Sentence ends with "?" 
+   - Next 1-3 sentences are the answer
+   - Answer may be very short ("Да", "Нет", "Высокий процент", "Довольно высокий")
+   
+   NEVER put boundary between question and its answer!
+   
+   Examples:
+   BAD: "Какой процент вы бы дали?" | "Довольно высокий."
+   GOOD: "Какой процент вы бы дали? Довольно высокий." (same segment)
+   
+   BAD: "Вы верите в симуляцию?" | "Да, довольно высокий процент."
+   GOOD: "Вы верите в симуляцию? Да, довольно высокий процент." (same segment)
+
 ============================================================================
 PART 4: LIST HANDLING
 ============================================================================
@@ -1687,6 +1704,10 @@ Set "needs_previous_context": true if the text:
 • OR (SEMANTIC CHECK) the "Previous topic" describes a story/event that THIS segment is clearly 
   a conclusion or lesson from. Example: prev="How I failed my first business" + text="Now I always 
   require prepayment" → the lesson loses impact without the failure story.
+• OR (ORPHANED ANSWER) segment STARTS with a short answer (1-5 words) that answers a question:
+  - Short confirmations: "Да", "Нет", "Точно", "Конечно", "Да, скорее всего"
+  - Short answers: "Довольно высокий", "Примерно 50%", "Около года", "Три раза"
+  - If "Previous topic" likely contains the question → needs_previous_context: true, trim_first_sentences: 1
 
 Set "needs_next_context": true if the text:
 • ENDS mid-story (setup without punchline, buildup without payoff)
