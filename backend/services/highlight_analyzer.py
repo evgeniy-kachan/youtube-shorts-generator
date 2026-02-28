@@ -939,15 +939,40 @@ If sentence starts with: "But", "However", "And", "So", "That's why", "Because",
 (Russian: "Но", "Однако", "И", "А", "Так что", "Поэтому", "Потому что", "То есть")
 → It continues the previous thought → DO NOT start new segment here
 
-RULE 3: WHERE TO SPLIT (good boundaries)
+RULE 3: LIST vs EXPLAINED IDEAS (CRITICAL!)
+When speaker mentions multiple ideas/examples:
+
+A) JUST A LIST (no explanation) → KEEP AS ONE SEGMENT, but this is LOW VALUE content
+   Example: "Here are problems: slow processes, bureaucracy, hybrid work, Zoom settings, interview prep..."
+   → Ideas are just mentioned, not developed → ONE segment (but likely low score)
+
+B) EXPLAINED IDEAS → SEPARATE SEGMENTS at each transition
+   Example: "First idea: [30 sec explanation]. Second idea: [30 sec explanation]"
+   → Each idea is developed → Split between them
+
+WRONG: Segment 6 type — 2+ minutes of random ideas without development = BAD SEGMENT
+RIGHT: Each explained idea = separate segment of 30-60 seconds
+
+RULE 4: ARGUMENT STRUCTURE — KEEP COMPLETE ARGUMENTS TOGETHER
+Look for: THESIS → EVIDENCE/EXAMPLES → CONCLUSION
+This is ONE logical unit. DO NOT split even if it takes 90-120 seconds.
+
+Example structure to keep together:
+- Thesis: "Boring ideas are better for business"
+- Evidence: 4 examples (AI = bad, product = bad, lawn mowing = good, storage = perfect)
+- Conclusion: "Test with grandma — if she says 'cool idea' it's bad"
+→ This is ONE segment (thesis needs examples, examples need conclusion)
+
+RULE 5: WHERE TO SPLIT (good boundaries)
 - Clear topic change (new subject, new person, new story)
 - After a complete thought/conclusion BEFORE a new topic starts
 - When speaker explicitly transitions ("Now let's talk about...", "Moving on...")
+- Between EXPLAINED ideas (not just listed)
 
-RULE 4: SEGMENT LENGTH (CRITICAL FOR SHORTS/REELS)
+RULE 6: SEGMENT LENGTH (CRITICAL FOR SHORTS/REELS)
 - IDEAL: 30-60 seconds (BEST for virality, highest retention)
 - ACCEPTABLE: 60-90 seconds (only if the thought absolutely requires it)
-- AVOID: 90-120 seconds (will be penalized, use ONLY for exceptional content)
+- ALLOWED FOR COMPLETE ARGUMENTS: 90-120 seconds (thesis + evidence + conclusion)
 - MAXIMUM HARD LIMIT: 120 seconds (anything longer is INVALID)
 
 Word count guidelines:
@@ -955,16 +980,10 @@ Word count guidelines:
 - 60 seconds ≈ 140 words  
 - 90 seconds ≈ 210 words
 
-PREFERENCE HIERARCHY:
-1. Complete thought in 30-45 seconds (PERFECT)
-2. Complete thought in 45-60 seconds (GOOD)  
-3. Complete thought in 60-90 seconds (ACCEPTABLE if high value)
-4. Complete thought in 90-120 seconds (USE ONLY IF UNSPLITTABLE)
+IMPORTANT: Complete thought at 90 seconds is BETTER than split thought at 45+45 seconds.
+But: If you CAN split without breaking logic — DO IT.
 
-If you can split a 90-second segment into two 45-second segments without breaking logic — DO IT.
-Prefer TWO good short clips over ONE mediocre long clip.
-
-RULE 5: EXPLICIT TRANSITION MARKERS — ALWAYS SPLIT HERE
+RULE 7: EXPLICIT TRANSITION MARKERS — ALWAYS SPLIT HERE
 If sentence starts with these words, it's a NEW TOPIC — MUST place boundary BEFORE this sentence:
 
 ENGLISH:
@@ -1586,6 +1605,24 @@ IMPORTANT for trim fields:
 When EITHER flag is true:
 • Final score will be capped at 0.25 (incomplete segments are not standalone clips)
 • The segment may still have high other scores if the content itself is good
+
+MERGE LOGIC (for segments that need both contexts):
+If a segment needs BOTH previous AND next context (needs_previous_context AND needs_next_context),
+and together with neighbors forms a complete thought (thesis + evidence + conclusion),
+consider if merging would create a better clip.
+
+MERGE SCORING:
+- Merged segment should ideally be 60-90 seconds
+- Maximum 120 seconds for exceptional content
+- If merged length > 120, consider if split with better boundaries is possible
+
+LIST vs ARGUMENT DETECTION:
+- If segment is just a LIST of ideas without development (like "here are 10 problems: A, B, C, D...")
+  → Lower ALL scores significantly (this is low-value content for Shorts)
+  → Add comment suggesting this should be split or skipped
+- If segment is a complete ARGUMENT (thesis → evidence → conclusion)
+  → Keep scores high even if 90-120 seconds
+  → This is valuable content worth the length
 
 CALIBRATION EXAMPLES (with new scoring system):
 
