@@ -339,13 +339,22 @@ def nemo_diarize_task(
             logger.info(f"Using {num_scales} scales for {gpu_memory_gb:.1f}GB GPU "
                         f"(windows: {ms_params['window_length_in_sec']})")
             
-            # Adjust batch size based on GPU memory
-            if gpu_memory_gb >= 12:
+            # Adjust batch size based on GPU memory and duration
+            duration_min = duration / 60.0
+            if duration_min > 130:
+                # Long videos (>130 min): reduce batch to fit in VRAM
+                batch_size = 18
+                infer_batch_size = 10
+                logger.info(f"Long video ({duration_min:.0f} min): using reduced batch_size={batch_size}, infer_batch_size={infer_batch_size}")
+            elif gpu_memory_gb >= 12:
                 batch_size = 128
+                infer_batch_size = 50
             elif duration > 1800 and gpu_memory_gb < 8:
                 batch_size = 32
+                infer_batch_size = 15
             else:
                 batch_size = 64
+                infer_batch_size = 25
             
             # Create manifest
             manifest_path = os.path.join(tmpdir, "manifest.json")
@@ -403,7 +412,7 @@ def nemo_diarize_task(
                         "model_path": "diar_msdd_telephonic",
                         "parameters": {
                             "use_speaker_model_from_ckpt": True,
-                            "infer_batch_size": 50 if gpu_memory_gb >= 12 else 25,
+                            "infer_batch_size": infer_batch_size,
                             "sigmoid_threshold": [0.7],
                             "seq_eval_mode": False,
                             "split_infer": True,

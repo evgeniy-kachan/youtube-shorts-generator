@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 NeMo diarization task - runs on Selectel server.
 Downloads audio from main server, processes with NeMo, returns results.
@@ -8,8 +9,9 @@ import logging
 import tempfile
 import subprocess
 import requests
+import math
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 from redis import Redis
 
 logger = logging.getLogger(__name__)
@@ -22,6 +24,9 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "NeMo2026SecurePass!")
 NEMO_INTERNAL_TOKEN = os.getenv("NEMO_INTERNAL_TOKEN", "NeMo2026InternalToken!")
 STATUS_KEY = "nemo_server:status"
 HEARTBEAT_KEY = "nemo_server:heartbeat"
+
+# Chunking configuration
+MAX_CHUNK_DURATION_SEC = 90 * 60  # 90 minutes per chunk
 
 
 def set_status(status: str):
@@ -83,6 +88,55 @@ def _extract_wav(input_path: str, output_path: str, sample_rate: int = 16000):
         "-ac", "1", "-ar", str(sample_rate), "-vn", output_path
     ]
     subprocess.run(cmd, check=True, capture_output=True)
+
+
+def _split_audio_chunk(input_wav: str, output_wav: str, start_sec: float, end_sec: float):
+    """
+    Extract a chunk from audio file using ffmpeg.
+    Uses stream copy for speed (no re-encoding).
+    """
+    duration = end_sec - start_sec
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start_sec),
+        "-i", input_wav,
+        "-t", str(duration),
+        "-c", "copy",
+        output_wav
+    ]
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        # Fallback: re-encode if copy fails
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(start_sec),
+            "-i", input_wav,
+            "-t", str(duration),
+            "-ac", "1", "-ar", "16000",
+            output_wav
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+
+
+def _get_audio_chunks(total_duration: float) -> List[Tuple[float, float]]:
+    """
+    Calculate chunk boundaries for audio splitting.
+    
+    Returns list of (start, end) tuples in seconds.
+    """
+    if total_duration <= MAX_CHUNK_DURATION_SEC:
+        return [(0, total_duration)]
+    
+    num_chunks = math.ceil(total_duration / MAX_CHUNK_DURATION_SEC)
+    chunk_size = total_duration / num_chunks
+    
+    chunks = []
+    for i in range(num_chunks):
+        start = i * chunk_size
+        end = min((i + 1) * chunk_size, total_duration)
+        chunks.append((start, end))
+    
+    return chunks
 
 
 def _parse_rttm(rttm_path: str) -> List[Dict]:
@@ -227,6 +281,146 @@ def _get_multiscale_params(duration: float, gpu_memory_gb: float = 6.0):
         }
 
 
+def _diarize_single_chunk(
+    wav_path: str,
+    tmpdir: str,
+    chunk_idx: int,
+    duration: float,
+    num_speakers: int,
+    max_speakers: int,
+    gpu_memory_gb: float,
+    device: str,
+) -> List[Dict]:
+    """
+    Run NeMo diarization on a single audio chunk.
+    
+    Returns list of segments with start/end times relative to chunk start.
+    """
+    import gc
+    import torch
+    from nemo.collections.asr.models import ClusteringDiarizer
+    from omegaconf import OmegaConf
+    
+    logger.info(f"Diarizing chunk {chunk_idx + 1}: {duration:.1f}s ({duration/60:.1f} min)")
+    
+    # Choose multi-scale params based on chunk duration
+    ms_params = _get_multiscale_params(duration, gpu_memory_gb)
+    num_scales = len(ms_params["window_length_in_sec"])
+    logger.info(f"Chunk {chunk_idx + 1}: using {num_scales} scales")
+    
+    # Adjust batch size
+    if gpu_memory_gb >= 12:
+        batch_size = 128
+    elif duration > 1800 and gpu_memory_gb < 8:
+        batch_size = 32
+    else:
+        batch_size = 64
+    
+    # Create manifest for this chunk
+    manifest_path = os.path.join(tmpdir, f"manifest_chunk{chunk_idx}.json")
+    output_dir = os.path.join(tmpdir, f"output_chunk{chunk_idx}")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    manifest_entry = {
+        "audio_filepath": wav_path,
+        "offset": 0,
+        "duration": duration,
+        "label": "infer",
+        "text": "-",
+        "num_speakers": num_speakers if num_speakers > 0 else None,
+        "rttm_filepath": None,
+        "uem_filepath": None,
+    }
+    with open(manifest_path, "w") as f:
+        json.dump(manifest_entry, f)
+        f.write("\n")
+    
+    # NeMo configuration
+    config = OmegaConf.create({
+        "device": device,
+        "verbose": True,
+        "num_workers": 0,
+        "sample_rate": 16000,
+        "batch_size": batch_size,
+        "diarizer": {
+            "manifest_filepath": manifest_path,
+            "out_dir": output_dir,
+            "oracle_vad": False,
+            "collar": 0.25,
+            "ignore_overlap": True,
+            
+            "speaker_embeddings": {
+                "model_path": "titanet_large",
+                "parameters": {
+                    **ms_params,
+                    "save_embeddings": False,
+                }
+            },
+            
+            "clustering": {
+                "parameters": {
+                    "oracle_num_speakers": num_speakers > 0,
+                    "max_num_speakers": max_speakers,
+                    "enhanced_count_thres": 80,
+                    "max_rp_threshold": 0.25,
+                    "sparse_search_volume": 30,
+                    "maj_vote_spk_count": False,
+                }
+            },
+            
+            "msdd_model": {
+                "model_path": "diar_msdd_telephonic",
+                "parameters": {
+                    "use_speaker_model_from_ckpt": True,
+                    "infer_batch_size": 50 if gpu_memory_gb >= 12 else 25,
+                    "sigmoid_threshold": [0.7],
+                    "seq_eval_mode": False,
+                    "split_infer": True,
+                    "diar_window_length": 50,
+                    "overlap_infer_spk_limit": 5,
+                }
+            },
+            
+            "vad": {
+                "model_path": "vad_multilingual_marblenet",
+                "parameters": {
+                    "window_length_in_sec": 0.15,
+                    "shift_length_in_sec": 0.01,
+                    "smoothing": "median",
+                    "overlap": 0.5,
+                    "onset": 0.4,
+                    "offset": 0.3,
+                    "pad_onset": 0.05,
+                    "pad_offset": -0.1,
+                    "min_duration_on": 0.2,
+                    "min_duration_off": 0.2,
+                    "filter_speech_first": True,
+                }
+            },
+        }
+    })
+    
+    diarizer = ClusteringDiarizer(cfg=config)
+    diarizer.diarize()
+    
+    # Find results
+    rttm_files = list(Path(output_dir).glob("pred_rttms/*.rttm"))
+    if not rttm_files:
+        logger.warning(f"Chunk {chunk_idx + 1}: no RTTM output")
+        return []
+    
+    segments = _parse_rttm(str(rttm_files[0]))
+    logger.info(f"Chunk {chunk_idx + 1}: found {len(segments)} segments")
+    
+    # Cleanup
+    del diarizer
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    return segments
+
+
 def nemo_diarize_task(
     audio_path: str,
     num_speakers: int = 0,
@@ -234,7 +428,7 @@ def nemo_diarize_task(
     voice_mix: str = "male_duo",
 ) -> Dict[str, Any]:
     """
-    NeMo MSDD diarization task.
+    NeMo MSDD diarization task with automatic chunking for long audio.
     
     Args:
         audio_path: Path or filename of audio on main server
@@ -262,18 +456,16 @@ def nemo_diarize_task(
     # Set status to busy
     set_status("busy")
     
-    diarizer = None
+    duration = 0
+    gpu_memory_gb = 0.0
     
     try:
         # Lazy imports for clean CUDA context
         import gc
         import torch
         import soundfile as sf
-        from nemo.collections.asr.models import ClusteringDiarizer
-        from omegaconf import OmegaConf
         
         # Initialize CUDA
-        gpu_memory_gb = 0.0
         if torch.cuda.is_available():
             gc.collect()
             torch.cuda.empty_cache()
@@ -294,7 +486,6 @@ def nemo_diarize_task(
                     f"Low GPU memory before start ({free_gb:.1f} GB free). "
                     f"Forcing full cache clear..."
                 )
-                # Aggressive cleanup: run gc several times to free cyclic refs
                 for _ in range(3):
                     gc.collect()
                 torch.cuda.synchronize()
@@ -303,7 +494,7 @@ def nemo_diarize_task(
                 free_gb = free_mem / (1024**3)
                 logger.info(f"After aggressive cleanup: {free_gb:.1f} GB free")
             
-            # Warm up cuBLAS with realistic matrix size
+            # Warm up cuBLAS
             a = torch.randn(64, 64, device='cuda')
             b = torch.randn(64, 64, device='cuda')
             _ = torch.mm(a, b)
@@ -333,146 +524,105 @@ def nemo_diarize_task(
             duration = audio_info.duration
             logger.info(f"Audio duration: {duration:.2f}s ({duration/60:.1f} min)")
             
-            # Choose multi-scale params based on duration and GPU memory
-            ms_params = _get_multiscale_params(duration, gpu_memory_gb)
-            num_scales = len(ms_params["window_length_in_sec"])
-            logger.info(f"Using {num_scales} scales for {gpu_memory_gb:.1f}GB GPU "
-                        f"(windows: {ms_params['window_length_in_sec']})")
+            # Calculate chunks
+            chunks = _get_audio_chunks(duration)
+            num_chunks = len(chunks)
             
-            # Adjust batch size based on GPU memory
-            if gpu_memory_gb >= 12:
-                batch_size = 128
-            elif duration > 1800 and gpu_memory_gb < 8:
-                batch_size = 32
+            if num_chunks == 1:
+                logger.info("Audio fits in single chunk, processing directly...")
             else:
-                batch_size = 64
+                logger.info(f"Audio too long, splitting into {num_chunks} chunks "
+                           f"(max {MAX_CHUNK_DURATION_SEC/60:.0f} min each)")
             
-            # Create manifest
-            manifest_path = os.path.join(tmpdir, "manifest.json")
-            output_dir = os.path.join(tmpdir, "output")
-            os.makedirs(output_dir, exist_ok=True)
+            all_segments = []
             
-            manifest_entry = {
-                "audio_filepath": wav_path,
-                "offset": 0,
-                "duration": duration,
-                "label": "infer",
-                "text": "-",
-                "num_speakers": num_speakers if num_speakers > 0 else None,
-                "rttm_filepath": None,
-                "uem_filepath": None,
-            }
-            with open(manifest_path, "w") as f:
-                json.dump(manifest_entry, f)
-                f.write("\n")
-            
-            # NeMo configuration
-            config = OmegaConf.create({
-                "device": device,
-                "verbose": True,
-                "num_workers": 0,
-                "sample_rate": 16000,
-                "batch_size": batch_size,
-                "diarizer": {
-                    "manifest_filepath": manifest_path,
-                    "out_dir": output_dir,
-                    "oracle_vad": False,
-                    "collar": 0.25,
-                    "ignore_overlap": True,
+            for chunk_idx, (chunk_start, chunk_end) in enumerate(chunks):
+                chunk_duration = chunk_end - chunk_start
+                
+                if num_chunks > 1:
+                    # Split audio for this chunk
+                    chunk_wav = os.path.join(tmpdir, f"chunk_{chunk_idx}.wav")
+                    logger.info(f"Extracting chunk {chunk_idx + 1}/{num_chunks}: "
+                               f"{chunk_start/60:.1f}-{chunk_end/60:.1f} min")
+                    _split_audio_chunk(wav_path, chunk_wav, chunk_start, chunk_end)
+                    process_wav = chunk_wav
+                else:
+                    process_wav = wav_path
+                
+                # Diarize this chunk
+                chunk_segments = _diarize_single_chunk(
+                    wav_path=process_wav,
+                    tmpdir=tmpdir,
+                    chunk_idx=chunk_idx,
+                    duration=chunk_duration,
+                    num_speakers=num_speakers,
+                    max_speakers=max_speakers,
+                    gpu_memory_gb=gpu_memory_gb,
+                    device=device,
+                )
+                
+                # Adjust timestamps and speaker IDs for multi-chunk
+                for seg in chunk_segments:
+                    # Shift timestamps by chunk start
+                    seg["start"] += chunk_start
+                    seg["end"] += chunk_start
                     
-                    "speaker_embeddings": {
-                        "model_path": "titanet_large",
-                        "parameters": {
-                            **ms_params,
-                            "save_embeddings": False,
-                        }
-                    },
-                    
-                    "clustering": {
-                        "parameters": {
-                            "oracle_num_speakers": num_speakers > 0,
-                            "max_num_speakers": max_speakers,
-                            "enhanced_count_thres": 80,
-                            "max_rp_threshold": 0.25,
-                            "sparse_search_volume": 30,
-                            "maj_vote_spk_count": False,
-                        }
-                    },
-                    
-                    "msdd_model": {
-                        "model_path": "diar_msdd_telephonic",
-                        "parameters": {
-                            "use_speaker_model_from_ckpt": True,
-                            "infer_batch_size": 50 if gpu_memory_gb >= 12 else 25,
-                            "sigmoid_threshold": [0.7],
-                            "seq_eval_mode": False,
-                            "split_infer": True,
-                            "diar_window_length": 50,
-                            "overlap_infer_spk_limit": 5,
-                        }
-                    },
-                    
-                    "vad": {
-                        "model_path": "vad_multilingual_marblenet",
-                        "parameters": {
-                            "window_length_in_sec": 0.15,
-                            "shift_length_in_sec": 0.01,
-                            "smoothing": "median",
-                            "overlap": 0.5,
-                            "onset": 0.4,
-                            "offset": 0.3,
-                            "pad_onset": 0.05,
-                            "pad_offset": -0.1,
-                            "min_duration_on": 0.2,
-                            "min_duration_off": 0.2,
-                            "filter_speech_first": True,
-                        }
-                    },
-                }
-            })
+                    # Rename speakers to avoid collisions between chunks
+                    # SPEAKER_00 in chunk 0 stays SPEAKER_00
+                    # SPEAKER_00 in chunk 1 becomes SPEAKER_10
+                    # SPEAKER_00 in chunk 2 becomes SPEAKER_20
+                    if num_chunks > 1:
+                        old_id = seg["speaker"]
+                        # Extract speaker number (e.g., "SPEAKER_00" -> 0)
+                        try:
+                            spk_num = int(old_id.split("_")[-1])
+                            new_num = chunk_idx * 10 + spk_num
+                            seg["speaker"] = f"SPEAKER_{new_num:02d}"
+                        except (ValueError, IndexError):
+                            # Keep original if parsing fails
+                            seg["speaker"] = f"{old_id}_chunk{chunk_idx}"
+                
+                all_segments.extend(chunk_segments)
+                
+                # Clear GPU memory between chunks
+                if num_chunks > 1:
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
             
-            logger.info("Initializing NeMo ClusteringDiarizer...")
-            diarizer = ClusteringDiarizer(cfg=config)
+            # Sort all segments by start time
+            all_segments.sort(key=lambda x: x["start"])
             
-            logger.info("Running diarization...")
-            diarizer.diarize()
-            
-            # Find results
-            rttm_files = list(Path(output_dir).glob("pred_rttms/*.rttm"))
-            if not rttm_files:
-                raise RuntimeError("NeMo diarization produced no RTTM output")
-            
-            segments = _parse_rttm(str(rttm_files[0]))
-            
-            if not segments:
-                raise RuntimeError("NeMo RTTM file is empty — no speech segments found")
+            if not all_segments:
+                raise RuntimeError("NeMo diarization produced no speech segments")
             
             # Detect speaker genders via F0 analysis — only for mixed_duo mode
             if voice_mix == "mixed_duo":
                 logger.info("Running gender detection via F0 analysis (voice_mix=mixed_duo)...")
-                speaker_genders = _detect_speaker_genders(wav_path, segments)
+                speaker_genders = _detect_speaker_genders(wav_path, all_segments)
                 logger.info(f"Gender results: {speaker_genders}")
             else:
-                logger.info(f"Skipping gender detection (voice_mix={voice_mix}, only runs for mixed_duo)")
+                logger.info(f"Skipping gender detection (voice_mix={voice_mix})")
                 speaker_genders = {}
             
             # Statistics
-            speakers = set(s["speaker"] for s in segments)
-            total_speech = sum(s["end"] - s["start"] for s in segments)
+            speakers = set(s["speaker"] for s in all_segments)
+            total_speech = sum(s["end"] - s["start"] for s in all_segments)
             elapsed = _time.time() - task_start
             
             logger.info(f"Diarization complete in {elapsed:.1f}s: "
-                        f"{len(speakers)} speakers, {len(segments)} segments, "
-                        f"{total_speech:.1f}s speech, {num_scales} scales")
+                        f"{len(speakers)} speakers, {len(all_segments)} segments, "
+                        f"{total_speech:.1f}s speech, {num_chunks} chunk(s)")
             
             return {
-                "segments": segments,
+                "segments": all_segments,
                 "num_speakers": len(speakers),
                 "total_speech_duration": total_speech,
                 "speaker_genders": speaker_genders,
             }
     
     except torch.cuda.OutOfMemoryError as oom:
+        import torch
         gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "unknown"
         logger.error(f"CUDA OOM during NeMo diarization on {gpu_name}: {oom}")
         raise RuntimeError(
@@ -490,8 +640,6 @@ def nemo_diarize_task(
         try:
             import gc
             import torch
-            if diarizer is not None:
-                del diarizer
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
