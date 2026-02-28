@@ -503,6 +503,13 @@ const SegmentsList = ({
           </div>
           <div className="flex space-x-2">
             <button
+              onClick={openTranscriptEditor}
+              className="btn-secondary text-sm bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100"
+              disabled={loading || editorLoading}
+            >
+              {editorLoading ? '⏳ Загрузка...' : '✂️ Редактор границ'}
+            </button>
+            <button
               onClick={selectAll}
               className="btn-secondary text-sm"
               disabled={loading}
@@ -1355,6 +1362,15 @@ const SegmentsList = ({
         </div>
       </div>
 
+      {/* Transcript Editor Modal */}
+      {showTranscriptEditor && (
+        <TranscriptEditor
+          sentences={transcriptData.sentences}
+          segments={transcriptData.segments}
+          onSegmentsChange={handleSegmentBoundariesUpdate}
+          onClose={() => setShowTranscriptEditor(false)}
+        />
+      )}
     </div>
   );
 };
