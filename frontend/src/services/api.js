@@ -214,4 +214,18 @@ export const runNemoDiarization = async (videoId, options = {}) => {
   return response.data;
 };
 
+// Transcript Editor API
+export const getTranscriptSentences = async (videoId) => {
+  const response = await api.get(`/api/video/transcript/${videoId}`);
+  return response.data;
+};
+
+export const updateSegmentBoundaries = async (videoId, segments) => {
+  const response = await api.post('/api/video/transcript/update-boundaries', {
+    video_id: videoId,
+    segments: segments,
+  });
+  return response.data;
+};
+
 export default api;

@@ -2973,6 +2973,117 @@ async def get_project_file(file_path: str):
     )
 
 
+# ============================================================================
+# Transcript Editor API
+# ============================================================================
+
+class UpdateSegmentBoundariesRequest(BaseModel):
+    video_id: str
+    segments: List[dict]  # [{id, start_time, end_time, duration}, ...]
+
+
+@router.get("/transcript/{video_id}")
+async def get_transcript_sentences(video_id: str):
+    """
+    Get full transcript as sentences with speaker labels and timestamps.
+    Used by TranscriptEditor for manual boundary adjustment.
+    """
+    if video_id not in analysis_results_cache:
+        raise HTTPException(status_code=404, detail=f"Video {video_id} not found in cache")
+    
+    cached = analysis_results_cache[video_id]
+    transcript_segments = cached.get("transcript_segments", [])
+    segments = cached.get("segments", [])
+    
+    # Build sentences list from transcript segments
+    sentences = []
+    for seg in transcript_segments:
+        # Each transcript segment has text, start, end, speaker
+        sentences.append({
+            "text": seg.get("text", "").strip(),
+            "start": seg.get("start", 0),
+            "end": seg.get("end", 0),
+            "speaker": seg.get("speaker", ""),
+        })
+    
+    return {
+        "video_id": video_id,
+        "sentences": sentences,
+        "segments": [
+            {
+                "id": s["id"],
+                "start_time": s["start_time"],
+                "end_time": s["end_time"],
+                "duration": s["duration"],
+                "highlight_score": s.get("highlight_score", 0),
+                "tier": s.get("tier", "extended"),
+            }
+            for s in segments
+        ],
+    }
+
+
+@router.post("/transcript/update-boundaries")
+async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
+    """
+    Update segment boundaries after manual adjustment in TranscriptEditor.
+    """
+    video_id = request.video_id
+    
+    if video_id not in analysis_results_cache:
+        raise HTTPException(status_code=404, detail=f"Video {video_id} not found in cache")
+    
+    cached = analysis_results_cache[video_id]
+    existing_segments = cached.get("segments", [])
+    transcript_segments = cached.get("transcript_segments", [])
+    
+    # Update segment boundaries
+    updated_count = 0
+    for update in request.segments:
+        seg_id = update.get("id")
+        new_start = update.get("start_time")
+        new_end = update.get("end_time")
+        
+        # Find and update the segment
+        for seg in existing_segments:
+            if seg["id"] == seg_id:
+                seg["start_time"] = new_start
+                seg["end_time"] = new_end
+                seg["duration"] = new_end - new_start
+                
+                # Rebuild text from transcript segments within new boundaries
+                text_parts = []
+                for ts in transcript_segments:
+                    ts_start = ts.get("start", 0)
+                    ts_end = ts.get("end", 0)
+                    # Include if overlaps with segment
+                    if ts_end > new_start and ts_start < new_end:
+                        text_parts.append(ts.get("text", "").strip())
+                
+                if text_parts:
+                    seg["text_ru"] = " ".join(text_parts)
+                
+                updated_count += 1
+                break
+    
+    logger.info(f"Updated {updated_count} segment boundaries for video {video_id}")
+    
+    return {
+        "success": True,
+        "updated_count": updated_count,
+        "segments": [
+            {
+                "id": s["id"],
+                "start_time": s["start_time"],
+                "end_time": s["end_time"],
+                "duration": s["duration"],
+                "text_ru": s.get("text_ru", ""),
+            }
+            for s in existing_segments
+        ],
+    }
+
+
 @router.on_event("startup")
 async def startup_event():
     # Clean up temp and output directories on startup

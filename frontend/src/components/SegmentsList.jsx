@@ -1,4 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
+import TranscriptEditor from './TranscriptEditor';
+import { getTranscriptSentences, updateSegmentBoundaries } from '../services/api';
 
 const CRITERIA_LABELS = {
   surprise_novelty: 'Неожиданность',
@@ -284,9 +286,11 @@ const SubtitlePreview = ({
 const SegmentsList = ({
   segments,
   videoTitle,
+  videoId,
   onProcess,
   onDubbing,
   onNemoDiarization,
+  onSegmentsUpdate,
   nemoAvailable,
   nemoLoading,
   loading,
@@ -295,6 +299,11 @@ const SegmentsList = ({
   const [selectedSegments, setSelectedSegments] = useState([]);
   const [expandedSegments, setExpandedSegments] = useState([]);
   const [verticalMethod, setVerticalMethod] = useState('center_crop');
+  
+  // Transcript Editor state
+  const [showTranscriptEditor, setShowTranscriptEditor] = useState(false);
+  const [transcriptData, setTranscriptData] = useState({ sentences: [], segments: [] });
+  const [editorLoading, setEditorLoading] = useState(false);
 
   // Style settings
   const [subtitleAnimation, setSubtitleAnimation] = useState('highlight');
@@ -343,6 +352,39 @@ const SegmentsList = ({
   const deselectAll = () => {
     setSelectedSegments([]);
   };
+
+  // Open Transcript Editor
+  const openTranscriptEditor = useCallback(async () => {
+    if (!videoId) return;
+    setEditorLoading(true);
+    try {
+      const data = await getTranscriptSentences(videoId);
+      setTranscriptData({
+        sentences: data.sentences || [],
+        segments: data.segments || [],
+      });
+      setShowTranscriptEditor(true);
+    } catch (error) {
+      console.error('Failed to load transcript:', error);
+      alert('Не удалось загрузить транскрипцию');
+    } finally {
+      setEditorLoading(false);
+    }
+  }, [videoId]);
+
+  // Save updated segment boundaries
+  const handleSegmentBoundariesUpdate = useCallback(async (updatedSegments) => {
+    if (!videoId) return;
+    try {
+      const result = await updateSegmentBoundaries(videoId, updatedSegments);
+      if (result.success && onSegmentsUpdate) {
+        onSegmentsUpdate(result.segments);
+      }
+    } catch (error) {
+      console.error('Failed to update boundaries:', error);
+      alert('Не удалось сохранить изменения');
+    }
+  }, [videoId, onSegmentsUpdate]);
 
   // Group segments by tier: strict, extended, fallback
   const { strictSegments, extendedSegments, fallbackSegments } = useMemo(() => {

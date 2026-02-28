@@ -553,7 +553,7 @@ class HighlightAnalyzer:
             if needs_next and needs_prev and merged_duration <= merge_limit:
                 # DeepSeek says merge is beneficial
                 if merge_benefit_a in ['high', 'medium'] or merge_benefit_b in ['high', 'medium']:
-                    should_merge = True
+                should_merge = True
                     merge_reason = "direct_link_approved"
                 # Even without explicit approval, if both need context and duration is short
                 elif merged_duration <= 90:
@@ -570,11 +570,11 @@ class HighlightAnalyzer:
                     merge_reason = "a_needs_next_medium"
                 # Fallback: both low-scored (original logic)
                 else:
-                    score_a = self._calculate_highlight_score(scores_a)
-                    score_b = self._calculate_highlight_score(scores_b)
+                score_a = self._calculate_highlight_score(scores_a)
+                score_b = self._calculate_highlight_score(scores_b)
                     if score_a < 0.35 and score_b < 0.35 and merged_duration <= 90:
-                        should_merge = True
-                        merge_reason = "both_low_score"
+                    should_merge = True
+                    merge_reason = "both_low_score"
             
             # Condition 3: B needs previous context
             elif needs_prev and merged_duration <= merge_limit:
@@ -586,10 +586,10 @@ class HighlightAnalyzer:
                     merge_reason = "b_needs_prev_medium"
                 # Fallback: A is low-scored
                 else:
-                    score_a = self._calculate_highlight_score(scores_a)
+                score_a = self._calculate_highlight_score(scores_a)
                     if score_a < 0.40 and merged_duration <= 90:
-                        should_merge = True
-                        merge_reason = "b_needs_context"
+                    should_merge = True
+                    merge_reason = "b_needs_context"
             
             if should_merge:
                 merge_pairs.append((i, i + 1, merge_reason))
@@ -748,7 +748,7 @@ class HighlightAnalyzer:
                     "EXPANDED %d: score=%.2f (added %.1fs of context)",
                     idx_a, new_highlight, seg['end'] - seg.get('_expanded_from', seg['start'])
                 )
-            
+        
             reanalyzed.append((op_type, seg, new_scores, idx_a, idx_b))
         
         # Build maps for quick lookup
@@ -840,7 +840,7 @@ class HighlightAnalyzer:
             'next_topic': seg_b.get('next_topic', 'Unknown'),
             '_merged_from': [seg_a.get('start'), seg_b.get('start')],  # Debug info
         }
-    
+
     def _create_time_windows(self, segments: List[Dict], min_duration: int, max_duration: int) -> List[Dict]:
         """
         Create overlapping time windows of several fixed sizes.
@@ -1194,8 +1194,8 @@ BOUNDARIES:"""
                                 boundary_times.append(word_start)
                                 current_word_idx = i
                             break
-            
-            logger.info(
+
+        logger.info(
                 "Detected %d logical boundaries in chunk starting at %.1fs: %s",
                 len(boundary_times),
                 chunk_start_time,
@@ -1403,7 +1403,7 @@ BOUNDARIES:"""
             chunk_segments = segments[current_idx:end_idx]
             if chunk_segments:
                 chunk = build_chunk(chunk_segments)
-                if chunk["text"]:
+            if chunk["text"]:
                     large_chunks.append(chunk)
             
             # Move to next chunk: start at (chunk_size - overlap) from current start
@@ -1496,13 +1496,13 @@ BOUNDARIES:"""
                                 sc = build_chunk(sub_current)
                                 if sc["text"]:
                                     merged.append(sc)
-                        else:
+                else:
                             merged.append(sub_chunk)
 
         # Fallback: if merging collapsed everything into a single tiny chunk, reuse original window logic
         if not merged and segments:
             return self._create_time_windows(segments, min_duration, max_duration)
-        
+
         # Deduplicate segments from overlapping chunks
         # Sort by start time and remove segments that overlap significantly
         merged.sort(key=lambda x: x["start"])
