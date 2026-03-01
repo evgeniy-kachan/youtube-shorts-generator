@@ -2995,18 +2995,34 @@ async def get_transcript_sentences(video_id: str):
     transcript_segments = cached.get("transcript_segments", [])
     segments = cached.get("segments", [])
     
-    # Build sentences list from transcript segments
+    # Build sentences list from segments' dialogue (has Russian translation)
+    # Each segment has dialogue with text_ru for each turn
     sentences = []
-    for seg in transcript_segments:
-        # Each transcript segment has text, start, end, speaker
-        # Prefer text_ru (Russian translation), fallback to text (English original)
-        text = seg.get("text_ru") or seg.get("text", "")
-        sentences.append({
-            "text": text.strip(),
-            "start": seg.get("start", 0),
-            "end": seg.get("end", 0),
-            "speaker": seg.get("speaker", ""),
-        })
+    
+    for seg in segments:
+        dialogue = seg.get("dialogue", [])
+        if dialogue:
+            for turn in dialogue:
+                # Use text_ru (Russian translation), fallback to text (English)
+                text = turn.get("text_ru") or turn.get("text", "")
+                sentences.append({
+                    "text": text.strip(),
+                    "start": turn.get("start", 0),
+                    "end": turn.get("end", 0),
+                    "speaker": turn.get("speaker", ""),
+                })
+        else:
+            # Fallback: use segment's text_ru directly
+            text = seg.get("text_ru") or seg.get("text_en") or seg.get("text", "")
+            sentences.append({
+                "text": text.strip(),
+                "start": seg.get("start_time", 0),
+                "end": seg.get("end_time", 0),
+                "speaker": seg.get("primary_speaker", ""),
+            })
+    
+    # Sort by start time to ensure correct order
+    sentences.sort(key=lambda x: x["start"])
     
     return {
         "video_id": video_id,
