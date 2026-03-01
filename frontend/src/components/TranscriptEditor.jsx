@@ -1,12 +1,21 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 
 const SEGMENT_COLORS = [
-  'rgba(241, 245, 249, 0.7)',   // slate-100
-  'rgba(239, 246, 255, 0.7)',   // blue-50
-  'rgba(240, 253, 244, 0.7)',   // green-50
-  'rgba(254, 252, 232, 0.7)',   // yellow-50
-  'rgba(255, 247, 237, 0.7)',   // orange-50
-  'rgba(254, 242, 242, 0.7)',   // red-50
+  'rgba(99, 102, 241, 0.15)',   // indigo - сегмент 1
+  'rgba(16, 185, 129, 0.15)',   // emerald - сегмент 2
+  'rgba(245, 158, 11, 0.15)',   // amber - сегмент 3
+  'rgba(239, 68, 68, 0.15)',    // red - сегмент 4
+  'rgba(139, 92, 246, 0.15)',   // violet - сегмент 5
+  'rgba(6, 182, 212, 0.15)',    // cyan - сегмент 6
+];
+
+const SEGMENT_BORDER_COLORS = [
+  'rgb(99, 102, 241)',   // indigo
+  'rgb(16, 185, 129)',   // emerald
+  'rgb(245, 158, 11)',   // amber
+  'rgb(239, 68, 68)',    // red
+  'rgb(139, 92, 246)',   // violet
+  'rgb(6, 182, 212)',    // cyan
 ];
 
 const getDurationColor = (seconds) => {
@@ -29,20 +38,18 @@ const TranscriptEditor = ({
   onClose,
 }) => {
   // Local state for segment boundaries (sentence indices)
-  // Each segment is defined by [startSentenceIdx, endSentenceIdx]
   const [segmentBoundaries, setSegmentBoundaries] = useState([]);
-  const [selectedSegmentIdx, setSelectedSegmentIdx] = useState(null);
+  const [selectedSegmentIdx, setSelectedSegmentIdx] = useState(0);
+  const sentenceRefs = useRef({});
   
   // Initialize boundaries from segments
   useEffect(() => {
     if (segments.length > 0 && sentences.length > 0) {
-      const boundaries = segments.map(seg => {
+      const boundaries = segments.map((seg, originalIdx) => {
         // Find sentence indices that match segment times
-        // startIdx: first sentence that starts at or after segment start
         let startIdx = sentences.findIndex(s => s.start >= seg.start_time - 0.5);
         if (startIdx === -1) startIdx = 0;
         
-        // endIdx: last sentence that ends at or before segment end
         let endIdx = -1;
         for (let i = sentences.length - 1; i >= 0; i--) {
           if (sentences[i].end <= seg.end_time + 0.5) {
@@ -52,13 +59,13 @@ const TranscriptEditor = ({
         }
         if (endIdx === -1) endIdx = sentences.length - 1;
         
-        // Ensure startIdx <= endIdx
         if (startIdx > endIdx) {
           startIdx = endIdx;
         }
         
         return {
           id: seg.id,
+          globalIndex: originalIdx + 1, // 1-based global index from original order
           startIdx,
           endIdx,
           score: seg.highlight_score || 0,
@@ -67,9 +74,31 @@ const TranscriptEditor = ({
         };
       });
       setSegmentBoundaries(boundaries);
-      console.log('Initialized boundaries:', boundaries);
+      setSelectedSegmentIdx(0);
     }
   }, [segments, sentences]);
+
+  // Track if we should scroll (only on segment selection, not on boundary changes)
+  const shouldScrollRef = useRef(false);
+  
+  // Scroll to selected segment only when explicitly selecting a new segment
+  useEffect(() => {
+    if (shouldScrollRef.current && selectedSegmentIdx !== null && segmentBoundaries[selectedSegmentIdx]) {
+      const startIdx = segmentBoundaries[selectedSegmentIdx].startIdx;
+      const el = sentenceRefs.current[startIdx];
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      shouldScrollRef.current = false;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSegmentIdx]); // Intentionally exclude segmentBoundaries to prevent scroll on boundary changes
+  
+  // Function to select segment WITH scroll
+  const selectSegmentWithScroll = useCallback((idx) => {
+    shouldScrollRef.current = true;
+    setSelectedSegmentIdx(idx);
+  }, []);
 
   // Calculate segment info (duration, text) based on current boundaries
   const segmentInfos = useMemo(() => {
@@ -94,10 +123,8 @@ const TranscriptEditor = ({
   // Move segment start boundary
   const moveStart = useCallback((segIdx, direction, e) => {
     if (e) e.stopPropagation();
-    console.log('moveStart called:', { segIdx, direction, sentencesLength: sentences.length });
     
     if (segIdx === null || segIdx === undefined) {
-      console.log('Blocked: segIdx is null/undefined');
       return;
     }
     
@@ -105,42 +132,42 @@ const TranscriptEditor = ({
       const newBoundaries = [...prev];
       const current = newBoundaries[segIdx];
       if (!current) {
-        console.log('No current boundary found for segIdx:', segIdx);
         return prev;
       }
       const newStartIdx = current.startIdx + direction;
       
-      console.log('moveStart:', { current: current.startIdx, newStartIdx, endIdx: current.endIdx });
-      
       // Constraints
       if (newStartIdx < 0) {
-        console.log('Blocked: newStartIdx < 0');
         return prev;
       }
       if (newStartIdx > current.endIdx) {
-        console.log('Blocked: newStartIdx > endIdx');
         return prev;
       }
       
-      // Don't overlap with previous segment
-      if (segIdx > 0 && newStartIdx <= newBoundaries[segIdx - 1].endIdx) {
-        console.log('Blocked: would overlap with previous');
-        return prev;
+      // If expanding into previous segment (moving start earlier), push its end back
+      if (direction < 0 && segIdx > 0) {
+        const prevSeg = newBoundaries[segIdx - 1];
+        if (newStartIdx <= prevSeg.endIdx) {
+          // Push previous segment's end to before our new start
+          const newPrevEndIdx = newStartIdx - 1;
+          // But don't let previous segment become invalid (end < start)
+          if (newPrevEndIdx < prevSeg.startIdx) {
+            return prev; // Can't steal - previous segment would become empty
+          }
+          newBoundaries[segIdx - 1] = { ...prevSeg, endIdx: newPrevEndIdx };
+        }
       }
       
       newBoundaries[segIdx] = { ...current, startIdx: newStartIdx };
-      console.log('Success: new startIdx =', newStartIdx);
       return newBoundaries;
     });
-  }, [sentences.length]);
+  }, []);
 
   // Move segment end boundary
   const moveEnd = useCallback((segIdx, direction, e) => {
     if (e) e.stopPropagation();
-    console.log('moveEnd called:', { segIdx, direction, sentencesLength: sentences.length });
     
     if (segIdx === null || segIdx === undefined) {
-      console.log('Blocked: segIdx is null/undefined');
       return;
     }
     
@@ -148,31 +175,33 @@ const TranscriptEditor = ({
       const newBoundaries = [...prev];
       const current = newBoundaries[segIdx];
       if (!current) {
-        console.log('No current boundary found for segIdx:', segIdx);
         return prev;
       }
       const newEndIdx = current.endIdx + direction;
       
-      console.log('moveEnd:', { current: current.endIdx, newEndIdx, startIdx: current.startIdx });
-      
       // Constraints
       if (newEndIdx >= sentences.length) {
-        console.log('Blocked: newEndIdx >= sentences.length', sentences.length);
         return prev;
       }
       if (newEndIdx < current.startIdx) {
-        console.log('Blocked: newEndIdx < startIdx');
         return prev;
       }
       
-      // Don't overlap with next segment
-      if (segIdx < newBoundaries.length - 1 && newEndIdx >= newBoundaries[segIdx + 1].startIdx) {
-        console.log('Blocked: would overlap with next');
-        return prev;
+      // If expanding into next segment, push its start forward
+      if (direction > 0 && segIdx < newBoundaries.length - 1) {
+        const nextSeg = newBoundaries[segIdx + 1];
+        if (newEndIdx >= nextSeg.startIdx) {
+          // Push next segment's start to after our new end
+          const newNextStartIdx = newEndIdx + 1;
+          // But don't let next segment become invalid (start > end)
+          if (newNextStartIdx > nextSeg.endIdx) {
+            return prev; // Can't steal - next segment would become empty
+          }
+          newBoundaries[segIdx + 1] = { ...nextSeg, startIdx: newNextStartIdx };
+        }
       }
       
       newBoundaries[segIdx] = { ...current, endIdx: newEndIdx };
-      console.log('Success: new endIdx =', newEndIdx);
       return newBoundaries;
     });
   }, [sentences.length]);
@@ -200,14 +229,25 @@ const TranscriptEditor = ({
     return -1;
   }, [segmentBoundaries]);
 
+  // Navigate between segments (with scroll)
+  const goToPrevSegment = useCallback(() => {
+    shouldScrollRef.current = true;
+    setSelectedSegmentIdx(prev => Math.max(0, (prev || 0) - 1));
+  }, []);
+
+  const goToNextSegment = useCallback(() => {
+    shouldScrollRef.current = true;
+    setSelectedSegmentIdx(prev => Math.min(segmentBoundaries.length - 1, (prev || 0) + 1));
+  }, [segmentBoundaries.length]);
+
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b">
+        <div className="flex items-center justify-between p-4 border-b bg-gradient-to-r from-purple-50 to-indigo-50">
           <div>
-            <h2 className="text-xl font-bold text-gray-900">Редактор границ сегментов</h2>
-            <p className="text-sm text-gray-500">Нажмите на сегмент для редактирования границ</p>
+            <h2 className="text-xl font-bold text-gray-900">✂️ Редактор границ сегментов</h2>
+            <p className="text-sm text-gray-500">Выберите сегмент слева → настройте границы справа</p>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -218,27 +258,59 @@ const TranscriptEditor = ({
             </button>
             <button
               onClick={handleSave}
-              className="px-6 py-2 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition"
+              className="px-6 py-2 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition shadow-lg"
             >
-              Сохранить
+              💾 Сохранить
             </button>
           </div>
         </div>
 
-        {/* Segment Legend */}
-        <div className="flex items-center gap-4 px-4 py-2 bg-gray-50 border-b text-sm">
-          <span className="font-medium text-gray-700">Длина:</span>
-          <span className="flex items-center gap-1">🟢 30-60с</span>
-          <span className="flex items-center gap-1">🟡 60-90с</span>
-          <span className="flex items-center gap-1">🟠 90-120с</span>
-          <span className="flex items-center gap-1">🔴 &gt;120с</span>
-        </div>
-
-        {/* Main Content */}
+        {/* Main Content - 3 columns */}
         <div className="flex flex-1 overflow-hidden">
-          {/* Transcript with segments */}
-          <div className="flex-1 overflow-y-auto p-4">
-            <div className="space-y-0">
+          
+          {/* LEFT: Segment List (quick navigation) */}
+          <div className="w-56 border-r bg-gray-50 overflow-y-auto">
+            <div className="p-3 border-b bg-white sticky top-0 z-10">
+              <h3 className="font-semibold text-gray-700 text-sm">📋 Сегменты ({segmentBoundaries.length})</h3>
+            </div>
+            <div className="p-2 space-y-1">
+              {segmentInfos.map((info, idx) => {
+                const isSelected = idx === selectedSegmentIdx;
+                const durationStyle = getDurationColor(info.duration);
+                const borderColor = SEGMENT_BORDER_COLORS[info.colorIdx];
+                
+                return (
+                  <button
+                    key={info.id}
+                    onClick={() => selectSegmentWithScroll(idx)}
+                    className={`w-full text-left p-3 rounded-lg transition-all ${
+                      isSelected 
+                        ? 'bg-white shadow-md ring-2 ring-purple-400' 
+                        : 'hover:bg-white hover:shadow-sm'
+                    }`}
+                    style={{ borderLeft: `4px solid ${borderColor}` }}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-semibold text-gray-900">Сегмент {info.globalIndex}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${durationStyle.bg} ${durationStyle.text}`}>
+                        {durationStyle.emoji} {Math.round(info.duration)}с
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {formatTime(info.startTime)} - {formatTime(info.endTime)}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-1 line-clamp-2">
+                      {info.text.slice(0, 60)}...
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* CENTER: Transcript with highlighted segments */}
+          <div className="flex-1 overflow-y-auto p-4 bg-white">
+            <div className="max-w-3xl mx-auto space-y-0">
               {sentences.map((sentence, idx) => {
                 const segIdx = getSentenceSegment(idx);
                 const segInfo = segIdx >= 0 ? segmentInfos[segIdx] : null;
@@ -246,86 +318,128 @@ const TranscriptEditor = ({
                 const isSegmentStart = segInfo && idx === segInfo.startIdx;
                 const isSegmentEnd = segInfo && idx === segInfo.endIdx;
                 
-                const bgColor = segInfo 
-                  ? SEGMENT_COLORS[segInfo.colorIdx]
-                  : 'transparent';
+                // Show speaker only when it changes from previous sentence
+                const prevSpeaker = idx > 0 ? sentences[idx - 1]?.speaker : null;
+                const showSpeaker = sentence.speaker && sentence.speaker !== prevSpeaker;
+                
+                const bgColor = segInfo ? SEGMENT_COLORS[segInfo.colorIdx] : 'transparent';
+                const borderColor = segInfo ? SEGMENT_BORDER_COLORS[segInfo.colorIdx] : 'transparent';
                 
                 return (
                   <div
                     key={idx}
+                    ref={el => sentenceRefs.current[idx] = el}
                     className={`relative transition-all ${isSelected ? 'z-10' : ''}`}
                     onClick={() => segIdx >= 0 && setSelectedSegmentIdx(segIdx)}
                   >
-                    {/* Segment start indicator */}
+                    {/* Segment start marker */}
                     {isSegmentStart && (
-                      <div className="flex items-center gap-2 py-1 px-2 -mx-2 rounded-t-lg" style={{ backgroundColor: bgColor }}>
-                        <div className={`h-1 flex-1 rounded ${isSelected ? 'bg-purple-400' : 'bg-gray-300'}`} />
-                        <span className={`text-xs font-medium ${isSelected ? 'text-purple-700' : 'text-gray-500'}`}>
-                          Сегмент {segIdx + 1}
+                      <div 
+                        className="flex items-center gap-2 py-2 px-3 rounded-t-xl mt-3 cursor-pointer"
+                        style={{ 
+                          backgroundColor: bgColor,
+                          borderTop: `3px solid ${borderColor}`,
+                          borderLeft: `3px solid ${borderColor}`,
+                          borderRight: `3px solid ${borderColor}`,
+                        }}
+                      >
+                        <span 
+                          className="text-xs font-bold px-2 py-1 rounded-full text-white"
+                          style={{ backgroundColor: borderColor }}
+                        >
+                          Сегмент {segInfo.globalIndex}
                         </span>
-                        <div className={`h-1 flex-1 rounded ${isSelected ? 'bg-purple-400' : 'bg-gray-300'}`} />
+                        <span className="text-xs text-gray-500">
+                          {formatTime(segInfo.startTime)}
+                        </span>
+                        {isSelected && (
+                          <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full ml-auto">
+                            ✏️ редактируется
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Speaker change indicator */}
+                    {showSpeaker && (
+                      <div 
+                        className="px-4 py-1"
+                        style={{ 
+                          backgroundColor: segInfo ? bgColor : 'transparent',
+                          borderLeft: segInfo ? `3px solid ${borderColor}` : 'none',
+                          borderRight: segInfo ? `3px solid ${borderColor}` : 'none',
+                        }}
+                      >
+                        <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded inline-block">
+                          🎤 {sentence.speaker}:
+                        </span>
                       </div>
                     )}
                     
                     {/* Sentence content */}
                     <div
-                      className={`
-                        px-3 py-1.5 cursor-pointer transition-all
-                        ${isSelected ? 'ring-2 ring-purple-400 ring-inset' : ''}
-                        ${isSegmentStart && isSelected ? 'border-l-4 border-purple-500' : ''}
-                        ${isSegmentEnd && isSelected ? 'border-r-4 border-purple-500' : ''}
-                      `}
-                      style={{ backgroundColor: bgColor }}
+                      className={`px-4 py-1.5 cursor-pointer transition-all ${
+                        isSelected ? 'bg-purple-50/50' : ''
+                      }`}
+                      style={{ 
+                        backgroundColor: segInfo ? bgColor : 'transparent',
+                        borderLeft: segInfo ? `3px solid ${borderColor}` : 'none',
+                        borderRight: segInfo ? `3px solid ${borderColor}` : 'none',
+                      }}
                     >
-                      <div className="flex items-start gap-2">
-                        {/* Blinking cursor at start */}
-                        {isSegmentStart && isSelected && (
-                          <div className="w-0.5 h-6 bg-purple-500 animate-pulse flex-shrink-0" />
-                        )}
+                      <div className="flex items-start gap-3">
+                        {/* Sentence number */}
+                        <span className="text-xs text-gray-300 font-mono w-6 flex-shrink-0 mt-0.5">
+                          {idx + 1}
+                        </span>
                         
-                        {/* Speaker label */}
-                        {sentence.speaker && (
-                          <span className="text-xs font-semibold text-purple-600 flex-shrink-0 mt-0.5">
-                            [{sentence.speaker}]
-                          </span>
+                        {/* Start marker */}
+                        {isSegmentStart && isSelected && (
+                          <span className="text-green-500 font-bold flex-shrink-0">▶</span>
                         )}
                         
                         {/* Text */}
-                        <span className="text-sm text-gray-800 flex-1">
+                        <span className={`text-sm flex-1 ${isSelected ? 'text-gray-900' : 'text-gray-700'}`}>
                           {sentence.text}
                         </span>
                         
+                        {/* End marker */}
+                        {isSegmentEnd && isSelected && (
+                          <span className="text-red-500 font-bold flex-shrink-0">◀</span>
+                        )}
+                        
                         {/* Time */}
-                        <span className="text-xs text-gray-400 flex-shrink-0 mt-0.5">
+                        <span className="text-xs text-gray-400 flex-shrink-0 mt-0.5 font-mono">
                           {formatTime(sentence.start)}
                         </span>
-                        
-                        {/* Blinking cursor at end */}
-                        {isSegmentEnd && isSelected && (
-                          <div className="w-0.5 h-6 bg-purple-500 animate-pulse flex-shrink-0" />
-                        )}
                       </div>
                     </div>
                     
-                    {/* Segment end indicator with stats */}
+                    {/* Segment end marker */}
                     {isSegmentEnd && segInfo && (
                       <div 
-                        className="flex items-center justify-between py-1 px-2 -mx-2 rounded-b-lg mb-2"
-                        style={{ backgroundColor: bgColor }}
+                        className="flex items-center justify-between py-2 px-3 rounded-b-xl mb-1"
+                        style={{ 
+                          backgroundColor: bgColor,
+                          borderBottom: `3px solid ${borderColor}`,
+                          borderLeft: `3px solid ${borderColor}`,
+                          borderRight: `3px solid ${borderColor}`,
+                        }}
                       >
                         {(() => {
                           const durationStyle = getDurationColor(segInfo.duration);
                           return (
-                            <div className="flex items-center gap-3 w-full">
-                              <div className={`h-0.5 flex-1 rounded ${isSelected ? 'bg-purple-400' : 'bg-gray-300'}`} />
-                              <span className={`text-xs font-medium px-2 py-0.5 rounded ${durationStyle.bg} ${durationStyle.text}`}>
+                            <>
+                              <span className="text-xs text-gray-500">
+                                до {formatTime(segInfo.endTime)}
+                              </span>
+                              <span className={`text-xs font-bold px-2 py-1 rounded-full ${durationStyle.bg} ${durationStyle.text}`}>
                                 {durationStyle.emoji} {Math.round(segInfo.duration)}с
                               </span>
                               <span className="text-xs text-gray-500">
                                 Score: {(segInfo.score * 100).toFixed(0)}%
                               </span>
-                              <div className={`h-0.5 flex-1 rounded ${isSelected ? 'bg-purple-400' : 'bg-gray-300'}`} />
-                            </div>
+                            </>
                           );
                         })()}
                       </div>
@@ -336,103 +450,131 @@ const TranscriptEditor = ({
             </div>
           </div>
 
-          {/* Right Panel - Selected Segment Controls */}
-          {selectedSegmentIdx !== null && segmentInfos[selectedSegmentIdx] && (
-            <div className="w-72 border-l bg-gray-50 p-4 overflow-y-auto">
-              <div className="sticky top-0">
-                <h3 className="font-bold text-gray-900 mb-4">
-                  Сегмент {selectedSegmentIdx + 1}
-                </h3>
-                
-                {(() => {
-                  const info = segmentInfos[selectedSegmentIdx];
-                  const durationStyle = getDurationColor(info.duration);
+          {/* RIGHT: Controls Panel */}
+          <div className="w-80 border-l bg-gray-50 overflow-y-auto">
+            {selectedSegmentIdx !== null && segmentInfos[selectedSegmentIdx] && (() => {
+              const info = segmentInfos[selectedSegmentIdx];
+              const durationStyle = getDurationColor(info.duration);
+              const borderColor = SEGMENT_BORDER_COLORS[info.colorIdx];
+              
+              return (
+                <div className="p-4 space-y-4">
+                  {/* Segment Navigation */}
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={goToPrevSegment}
+                      disabled={selectedSegmentIdx === 0}
+                      className="p-2 rounded-lg bg-white border hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      ← Пред.
+                    </button>
+                    <span 
+                      className="text-lg font-bold px-4 py-2 rounded-lg text-white"
+                      style={{ backgroundColor: borderColor }}
+                    >
+                      Сегмент {info.globalIndex}
+                    </span>
+                    <button
+                      onClick={goToNextSegment}
+                      disabled={selectedSegmentIdx === segmentBoundaries.length - 1}
+                      className="p-2 rounded-lg bg-white border hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      След. →
+                    </button>
+                  </div>
                   
-                  return (
-                    <div className="space-y-4">
-                      {/* Duration */}
-                      <div className={`p-3 rounded-lg ${durationStyle.bg}`}>
-                        <div className="flex items-center justify-between">
-                          <span className={`text-2xl font-bold ${durationStyle.text}`}>
-                            {durationStyle.emoji} {Math.round(info.duration)}с
-                          </span>
-                          <span className="text-sm text-gray-600">
-                            {formatTime(info.startTime)} - {formatTime(info.endTime)}
-                          </span>
+                  {/* Duration & Time */}
+                  <div className={`p-4 rounded-xl ${durationStyle.bg}`}>
+                    <div className="flex items-center justify-between">
+                      <span className={`text-3xl font-bold ${durationStyle.text}`}>
+                        {durationStyle.emoji} {Math.round(info.duration)}с
+                      </span>
+                      <div className="text-right">
+                        <div className="text-sm font-medium text-gray-700">
+                          {formatTime(info.startTime)} - {formatTime(info.endTime)}
                         </div>
-                      </div>
-                      
-                      {/* Score */}
-                      <div className="p-3 bg-white rounded-lg border">
-                        <span className="text-sm text-gray-500">Score</span>
-                        <div className="text-xl font-bold text-gray-900">
-                          {(info.score * 100).toFixed(0)}%
-                        </div>
-                      </div>
-                      
-                      {/* Start boundary controls */}
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-gray-500 uppercase">
-                          Начало сегмента
-                        </label>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={(e) => moveStart(selectedSegmentIdx, -1, e)}
-                            className="flex-1 py-2 px-3 bg-white border rounded-lg hover:bg-gray-50 transition font-medium"
-                          >
-                            ▲ Вверх
-                          </button>
-                          <button
-                            onClick={(e) => moveStart(selectedSegmentIdx, 1, e)}
-                            className="flex-1 py-2 px-3 bg-white border rounded-lg hover:bg-gray-50 transition font-medium"
-                          >
-                            ▼ Вниз
-                          </button>
-                        </div>
-                        <p className="text-xs text-gray-500">
-                          Предложение {info.startIdx + 1}
-                        </p>
-                      </div>
-                      
-                      {/* End boundary controls */}
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-gray-500 uppercase">
-                          Конец сегмента
-                        </label>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={(e) => moveEnd(selectedSegmentIdx, -1, e)}
-                            className="flex-1 py-2 px-3 bg-white border rounded-lg hover:bg-gray-50 transition font-medium"
-                          >
-                            ▲ Вверх
-                          </button>
-                          <button
-                            onClick={(e) => moveEnd(selectedSegmentIdx, 1, e)}
-                            className="flex-1 py-2 px-3 bg-white border rounded-lg hover:bg-gray-50 transition font-medium"
-                          >
-                            ▼ Вниз
-                          </button>
-                        </div>
-                        <p className="text-xs text-gray-500">
-                          Предложение {info.endIdx + 1}
-                        </p>
-                      </div>
-                      
-                      {/* Preview text */}
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-gray-500 uppercase">
-                          Текст сегмента
-                        </label>
-                        <div className="p-3 bg-white rounded-lg border text-sm text-gray-700 max-h-48 overflow-y-auto">
-                          {info.text}
+                        <div className="text-xs text-gray-500">
+                          Score: {(info.score * 100).toFixed(0)}%
                         </div>
                       </div>
                     </div>
-                  );
-                })()}
-              </div>
-            </div>
-          )}
+                  </div>
+                  
+                  {/* Duration Legend */}
+                  <div className="flex items-center justify-around text-xs bg-white rounded-lg p-2 border">
+                    <span>🟢 30-60с</span>
+                    <span>🟡 60-90с</span>
+                    <span>🟠 90-120с</span>
+                    <span>🔴 &gt;120с</span>
+                  </div>
+                  
+                  {/* START Boundary Controls */}
+                  <div className="bg-white rounded-xl p-4 border-2 border-green-200">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-green-500 font-bold text-lg">▶</span>
+                      <label className="text-sm font-bold text-green-700 uppercase">
+                        Начало сегмента
+                      </label>
+                    </div>
+                    <div className="flex gap-2 mb-2">
+                      <button
+                        onClick={(e) => moveStart(selectedSegmentIdx, -1, e)}
+                        className="flex-1 py-3 px-4 bg-green-50 border-2 border-green-300 rounded-lg hover:bg-green-100 transition font-bold text-green-700"
+                      >
+                        ⬆️ Раньше
+                      </button>
+                      <button
+                        onClick={(e) => moveStart(selectedSegmentIdx, 1, e)}
+                        className="flex-1 py-3 px-4 bg-green-50 border-2 border-green-300 rounded-lg hover:bg-green-100 transition font-bold text-green-700"
+                      >
+                        ⬇️ Позже
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500 text-center">
+                      Предложение #{info.startIdx + 1} • {formatTime(sentences[info.startIdx]?.start || 0)}
+                    </p>
+                  </div>
+                  
+                  {/* END Boundary Controls */}
+                  <div className="bg-white rounded-xl p-4 border-2 border-red-200">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-red-500 font-bold text-lg">◀</span>
+                      <label className="text-sm font-bold text-red-700 uppercase">
+                        Конец сегмента
+                      </label>
+                    </div>
+                    <div className="flex gap-2 mb-2">
+                      <button
+                        onClick={(e) => moveEnd(selectedSegmentIdx, -1, e)}
+                        className="flex-1 py-3 px-4 bg-red-50 border-2 border-red-300 rounded-lg hover:bg-red-100 transition font-bold text-red-700"
+                      >
+                        ⬆️ Раньше
+                      </button>
+                      <button
+                        onClick={(e) => moveEnd(selectedSegmentIdx, 1, e)}
+                        className="flex-1 py-3 px-4 bg-red-50 border-2 border-red-300 rounded-lg hover:bg-red-100 transition font-bold text-red-700"
+                      >
+                        ⬇️ Позже
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500 text-center">
+                      Предложение #{info.endIdx + 1} • {formatTime(sentences[info.endIdx]?.end || 0)}
+                    </p>
+                  </div>
+                  
+                  {/* Preview text */}
+                  <div className="bg-white rounded-xl p-4 border">
+                    <label className="text-xs font-bold text-gray-500 uppercase block mb-2">
+                      📝 Текст сегмента ({info.endIdx - info.startIdx + 1} предл.)
+                    </label>
+                    <div className="text-sm text-gray-700 max-h-40 overflow-y-auto leading-relaxed">
+                      {info.text}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       </div>
     </div>

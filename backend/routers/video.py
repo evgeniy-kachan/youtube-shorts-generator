@@ -2986,6 +2986,7 @@ async def get_transcript_sentences(video_id: str):
 async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
     """
     Update segment boundaries after manual adjustment in TranscriptEditor.
+    Rebuilds text_ru and dialogue from transcript_segments within new boundaries.
     """
     video_id = request.video_id
     
@@ -3010,18 +3011,35 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
                 seg["end_time"] = new_end
                 seg["duration"] = new_end - new_start
                 
-                # Rebuild text from transcript segments within new boundaries
+                # Rebuild text and dialogue from transcript segments within new boundaries
                 text_parts = []
+                new_dialogue = []
+                
                 for ts in transcript_segments:
                     ts_start = ts.get("start", 0)
                     ts_end = ts.get("end", 0)
                     # Include if overlaps with segment
                     if ts_end > new_start and ts_start < new_end:
-                        text_parts.append(ts.get("text", "").strip())
+                        # Use text_ru (Russian), fallback to text
+                        text = ts.get("text_ru") or ts.get("text", "")
+                        text_parts.append(text.strip())
+                        
+                        # Build dialogue entry
+                        new_dialogue.append({
+                            "speaker": ts.get("speaker", "SPEAKER_00"),
+                            "text": text.strip(),
+                            "text_ru": text.strip(),
+                            "start": ts_start,
+                            "end": ts_end,
+                        })
                 
                 if text_parts:
                     seg["text_ru"] = " ".join(text_parts)
                 
+                if new_dialogue:
+                    seg["dialogue"] = new_dialogue
+                
+                logger.debug(f"Segment {seg_id}: updated to {new_start:.2f}-{new_end:.2f}, {len(new_dialogue)} dialogue turns")
                 updated_count += 1
                 break
     
@@ -3037,6 +3055,7 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
                 "end_time": s["end_time"],
                 "duration": s["duration"],
                 "text_ru": s.get("text_ru", ""),
+                "dialogue": s.get("dialogue", []),
             }
             for s in existing_segments
         ],
