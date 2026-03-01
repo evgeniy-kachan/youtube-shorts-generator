@@ -63,9 +63,11 @@ const TranscriptEditor = ({
           startIdx = endIdx;
         }
         
+        // globalIndex = original position in DeepSeek results (sorted by score)
+        // This is the "Сегмент X" number that user sees in the main list
         return {
           id: seg.id,
-          globalIndex: originalIdx + 1, // 1-based global index from original order
+          globalIndex: originalIdx + 1, // 1-based: Сегмент 1, Сегмент 2, etc.
           startIdx,
           endIdx,
           score: seg.highlight_score || 0,
@@ -73,6 +75,11 @@ const TranscriptEditor = ({
           originalEnd: seg.end_time,
         };
       });
+      
+      // Sort by start time (chronological order in transcript)
+      // but keep original globalIndex for display
+      boundaries.sort((a, b) => a.startIdx - b.startIdx);
+      
       setSegmentBoundaries(boundaries);
       setSelectedSegmentIdx(0);
     }
