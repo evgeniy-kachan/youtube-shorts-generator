@@ -46,21 +46,32 @@ const TranscriptEditor = ({
   useEffect(() => {
     if (segments.length > 0 && sentences.length > 0) {
       const boundaries = segments.map((seg, originalIdx) => {
-        // Find sentence indices that match segment times
-        let startIdx = sentences.findIndex(s => s.start >= seg.start_time - 0.5);
-        if (startIdx === -1) startIdx = 0;
+        // Find sentence indices that OVERLAP with segment time range
+        // A sentence overlaps if: sentence.start < seg.end AND sentence.end > seg.start
+        const segStart = seg.start_time;
+        const segEnd = seg.end_time;
+        const tolerance = 0.5; // 500ms tolerance
         
+        let startIdx = -1;
         let endIdx = -1;
-        for (let i = sentences.length - 1; i >= 0; i--) {
-          if (sentences[i].end <= seg.end_time + 0.5) {
+        
+        for (let i = 0; i < sentences.length; i++) {
+          const s = sentences[i];
+          // Check if sentence overlaps with segment (with tolerance)
+          const overlaps = s.start < segEnd + tolerance && s.end > segStart - tolerance;
+          
+          if (overlaps) {
+            if (startIdx === -1) startIdx = i;
             endIdx = i;
-            break;
           }
         }
-        if (endIdx === -1) endIdx = sentences.length - 1;
         
-        if (startIdx > endIdx) {
-          startIdx = endIdx;
+        // Fallback if no overlap found
+        if (startIdx === -1) {
+          // Find closest sentence to segment start
+          startIdx = sentences.findIndex(s => s.start >= segStart - tolerance);
+          if (startIdx === -1) startIdx = 0;
+          endIdx = startIdx;
         }
         
         // globalIndex = original position in DeepSeek results (sorted by score)

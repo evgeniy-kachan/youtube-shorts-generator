@@ -387,6 +387,8 @@ class Translator:
         results_map = self._process_payloads(payloads)
 
         translations: List[str] = []
+        failed_indices: List[int] = []
+        
         for idx, original_text in enumerate(texts):
             segment_id = f"segment_{idx}"
             data = results_map.get(segment_id)
@@ -397,10 +399,38 @@ class Translator:
             else:
                 if data is None:
                     logger.warning(
-                        "DeepSeek translation missing for %s, using original text",
-                        segment_id,
+                        "DeepSeek translation missing for %s (len=%d chars), will retry",
+                        segment_id, len(original_text),
                     )
-                translations.append(original_text)
+                    failed_indices.append(idx)
+                translations.append(original_text)  # Placeholder, will retry
+        
+        # Retry failed translations individually (one at a time for reliability)
+        if failed_indices:
+            logger.info("Retrying %d failed translations individually...", len(failed_indices))
+            for idx in failed_indices:
+                original_text = texts[idx]
+                segment_id = f"segment_{idx}"
+                
+                # Build single-item payload for retry
+                retry_payload = [{
+                    "id": segment_id,
+                    "text": original_text,
+                }]
+                
+                try:
+                    retry_result = self._translate_chunk(retry_payload)
+                    data = retry_result.get(segment_id)
+                    if data and isinstance(data.get("subtitle_text"), str):
+                        translations[idx] = _fix_false_friends(data["subtitle_text"].strip())
+                        logger.info("Retry successful for %s", segment_id)
+                    else:
+                        logger.error(
+                            "Retry FAILED for %s, keeping original English text: %s...",
+                            segment_id, original_text[:50]
+                        )
+                except Exception as e:
+                    logger.error("Retry exception for %s: %s", segment_id, str(e))
 
         return translations
 

@@ -1020,27 +1020,72 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysi
     )
     logger.info(f"Found {len(filtered_highlights)} non-overlapping segments.")
     
-    tasks[task_id] = {"status": "processing", "progress": 0.7, "message": "Подготовка сегментов..."}
+    tasks[task_id] = {"status": "processing", "progress": 0.7, "message": "Перевод диалогов сегментов..."}
 
-    # 5. Text is already translated (done before DeepSeek analysis)
-    # Now we just need to:
-    # - Ensure text_ru is set for each segment (from dialogue or main text)
+    # 5. Translate dialogue turns in filtered highlights
+    # The main segment text is already translated, but dialogue turns have English text
+    # We need to translate each dialogue turn's text
+    
+    # Collect all dialogue texts that need translation
+    dialogue_texts_to_translate = []
+    dialogue_mapping = []  # (segment_idx, turn_idx) for each text
+    
+    for seg_idx, segment in enumerate(filtered_highlights):
+        if segment.get('dialogue'):
+            for turn_idx, turn in enumerate(segment['dialogue']):
+                turn_text = turn.get('text', '')
+                
+                # Check if text looks like English (needs translation)
+                # Simple heuristic: if text contains common English words, it's probably English
+                def looks_english(text: str) -> bool:
+                    if not text:
+                        return False
+                    english_markers = ['the ', ' the ', ' is ', ' are ', ' was ', ' were ', ' have ', ' has ', 
+                                       ' and ', ' or ', ' but ', ' that ', ' this ', ' with ', ' for ', ' you ',
+                                       ' I ', "I'm ", "I've ", " it ", " to ", " of ", " in ", " on "]
+                    text_lower = text.lower()
+                    return any(marker.lower() in text_lower for marker in english_markers)
+                
+                if turn_text and not turn.get('text_ru'):
+                    # If text looks English, queue for translation
+                    if looks_english(turn_text):
+                        dialogue_texts_to_translate.append(turn_text)
+                        dialogue_mapping.append((seg_idx, turn_idx))
+                    else:
+                        # Text is already Russian, just copy to text_ru
+                        turn['text_ru'] = turn_text
+    
+    if dialogue_texts_to_translate:
+        logger.info(f"Translating {len(dialogue_texts_to_translate)} dialogue turns to Russian...")
+        dialogue_translations = translator.translate_batch(dialogue_texts_to_translate)
+        
+        # Apply translations back to dialogue turns
+        for (seg_idx, turn_idx), translation in zip(dialogue_mapping, dialogue_translations):
+            turn = filtered_highlights[seg_idx]['dialogue'][turn_idx]
+            turn['text_en'] = turn.get('text', '')  # Keep English original
+            turn['text_ru'] = translation
+        
+        logger.info("Dialogue translation completed.")
+    
+    tasks[task_id] = {"status": "processing", "progress": 0.8, "message": "Подготовка сегментов..."}
+
+    # 6. Finalize segments
+    # - Ensure text_ru is set for each segment
     # - Apply markup for TTS
     markup_service = get_service("text_markup") if config.TTS_ENABLE_MARKUP else None
     
     for segment in filtered_highlights:
-        # Text is already in Russian (translated before DeepSeek)
-        # Just ensure text_ru and text_en are properly set
+        # Ensure text_ru and text_en are properly set at segment level
         if 'text_en' not in segment:
             segment['text_en'] = segment.get('text', '')
         if 'text_ru' not in segment:
             segment['text_ru'] = segment.get('text', '')
         
-        # If dialogue exists, ensure each turn has text_ru
+        # Rebuild segment text_ru from dialogue if available (now translated)
         if segment.get('dialogue'):
-            for turn in segment['dialogue']:
-                if 'text_ru' not in turn:
-                    turn['text_ru'] = turn.get('text', '')
+            dialogue_texts = [turn.get('text_ru', turn.get('text', '')) for turn in segment['dialogue']]
+            if dialogue_texts:
+                segment['text_ru'] = ' '.join(dialogue_texts)
 
         # Markup for TTS (for subtitles)
         if markup_service:
@@ -2948,22 +2993,83 @@ async def get_transcript_sentences(video_id: str):
     transcript_segments = cached.get("transcript_segments", [])
     segments = cached.get("segments", [])
     
+    # Check if NeMo diarization is available (more accurate speaker info)
+    nemo_diar = cached.get("nemo_diarization", {})
+    nemo_segments = nemo_diar.get("segments", []) if nemo_diar else []
+    
+    logger.info(f"[TranscriptEditor] Loading {len(transcript_segments)} transcript segments for {video_id}")
+    if nemo_segments:
+        logger.info(f"[TranscriptEditor] NeMo diarization available: {len(nemo_segments)} segments")
+    
     # Build sentences list from transcript_segments (full transcript, already translated)
     # Text is already in Russian (translated before DeepSeek analysis)
     sentences = []
     
+    # Build NeMo speaker lookup by time range for faster matching
+    def get_nemo_speaker(start_time: float, end_time: float) -> str:
+        """Find speaker from NeMo diarization for given time range."""
+        if not nemo_segments:
+            return ""
+        
+        best_speaker = ""
+        best_overlap = 0
+        
+        for ns in nemo_segments:
+            ns_start = ns.get("start", 0)
+            ns_end = ns.get("end", 0)
+            
+            # Calculate overlap
+            overlap_start = max(start_time, ns_start)
+            overlap_end = min(end_time, ns_end)
+            overlap = max(0, overlap_end - overlap_start)
+            
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_speaker = ns.get("speaker", "")
+        
+        return best_speaker
+    
     for ts in transcript_segments:
         # Use text_ru (Russian), fallback to text (which should also be Russian now)
         text = ts.get("text_ru") or ts.get("text", "")
+        start = ts.get("start", 0)
+        end = ts.get("end", 0)
+        
+        # Prefer NeMo speaker if available, fallback to original
+        speaker = ts.get("speaker", "")
+        if nemo_segments:
+            nemo_speaker = get_nemo_speaker(start, end)
+            if nemo_speaker:
+                speaker = nemo_speaker
+        
         sentences.append({
             "text": text.strip(),
-            "start": ts.get("start", 0),
-            "end": ts.get("end", 0),
-            "speaker": ts.get("speaker", ""),
+            "start": start,
+            "end": end,
+            "speaker": speaker,
         })
     
     # Sort by start time to ensure correct order
     sentences.sort(key=lambda x: x["start"])
+    
+    # Log gaps in transcript (for debugging)
+    gaps = []
+    for i in range(1, len(sentences)):
+        gap = sentences[i]["start"] - sentences[i-1]["end"]
+        if gap > 2.0:  # Gap > 2 seconds
+            gaps.append({
+                "after_idx": i-1,
+                "gap_seconds": round(gap, 1),
+                "from_time": sentences[i-1]["end"],
+                "to_time": sentences[i]["start"],
+            })
+    
+    if gaps:
+        logger.warning(f"[TranscriptEditor] Found {len(gaps)} gaps > 2s in transcript:")
+        for g in gaps[:10]:  # Log first 10
+            logger.warning(f"  Gap {g['gap_seconds']}s: {g['from_time']:.1f}s - {g['to_time']:.1f}s")
+    
+    logger.info(f"[TranscriptEditor] Returning {len(sentences)} sentences")
     
     return {
         "video_id": video_id,
