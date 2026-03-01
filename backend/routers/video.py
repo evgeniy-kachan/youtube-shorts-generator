@@ -2999,8 +2999,10 @@ async def get_transcript_sentences(video_id: str):
     sentences = []
     for seg in transcript_segments:
         # Each transcript segment has text, start, end, speaker
+        # Prefer text_ru (Russian translation), fallback to text (English original)
+        text = seg.get("text_ru") or seg.get("text", "")
         sentences.append({
-            "text": seg.get("text", "").strip(),
+            "text": text.strip(),
             "start": seg.get("start", 0),
             "end": seg.get("end", 0),
             "speaker": seg.get("speaker", ""),
