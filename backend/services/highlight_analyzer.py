@@ -938,207 +938,200 @@ class HighlightAnalyzer:
             f"{i+1}. {s}" for i, s in enumerate(sentences)
         )
         
-        prompt = f"""You are an editor creating short clips for YouTube Shorts / Instagram Reels from Russian podcasts.
+        prompt = f"""Ты — редактор, который создаёт короткие клипы для YouTube Shorts / Instagram Reels из русскоязычных подкастов.
 
-YOUR TASK:
-Find logical boundaries in this 10-minute transcript chunk. Each resulting segment will become a separate short video.
-
-============================================================================
-PART 1: SEGMENT LENGTH RULES (CRITICAL FOR SHORTS/REELS)
-============================================================================
-
-LENGTH HIERARCHY (from best to worst):
-
-1. IDEAL: 30-60 seconds (70-140 words)
-   → Best engagement, highest reach, perfect for shorts format
-   → Aim here whenever possible
-
-2. ACCEPTABLE: 60-90 seconds (140-210 words)
-   → Still usable, but less viral potential
-   → Only if the thought absolutely requires this length
-
-3. TOLERABLE: 90-120 seconds (210-280 words)
-   → Will be penalized in final scoring
-   → Use ONLY for exceptional content that cannot be split
-
-4. INVALID: >120 seconds
-   → Do NOT create segments longer than 120 seconds under any circumstances
-
-LENGTH EXCEPTIONS FOR COMPLETE ARGUMENTS:
-Complete arguments (thesis + evidence + conclusion) can go up to 120 seconds, BUT:
-- 60-90 seconds: ideal for most arguments
-- 90-120 seconds: allowed ONLY if evidence is detailed and necessary
-- The argument MUST be truly complete (question → answer → proof → conclusion)
-
-PREFERENCE RULE:
-If you can split a 90-second segment into 45+45 without breaking the logical flow — ALWAYS DO IT.
-Shorter complete thoughts are better than longer ones.
+ТВОЯ ЗАДАЧА:
+Найти логические границы в этом 10-минутном фрагменте транскрипции. Каждый получившийся сегмент станет отдельным коротким видео.
 
 ============================================================================
-PART 2: WHERE TO SPLIT
+ЧАСТЬ 1: ПРАВИЛА ДЛИНЫ СЕГМЕНТОВ (КРИТИЧНО ДЛЯ SHORTS/REELS)
 ============================================================================
 
-Split when:
-- Topic clearly changes ("Now let's talk about...", "Moving on to...")
-- New example or story begins
-- Question → answer cycle completes
-- Speaker changes (if multiple speakers)
+ИЕРАРХИЯ ДЛИНЫ (от лучшего к худшему):
+
+1. ИДЕАЛ: 30-60 секунд (70-140 слов)
+   → Лучшее вовлечение, максимальный охват, идеально для формата shorts
+   → Стремись к этому по возможности
+
+2. ДОПУСТИМО: 60-90 секунд (140-210 слов)
+   → Всё ещё работает, но меньше вирусный потенциал
+   → Только если мысль действительно требует такой длины
+
+3. ТЕРПИМО: 90-120 секунд (210-280 слов)
+   → Будет штрафоваться при финальной оценке
+   → Используй ТОЛЬКО для исключительного контента, который нельзя разделить
+
+4. НЕДОПУСТИМО: >120 секунд
+   → НЕ создавай сегменты длиннее 120 секунд ни при каких обстоятельствах
+
+ИСКЛЮЧЕНИЯ ДЛЯ ПОЛНЫХ АРГУМЕНТОВ:
+Полные аргументы (тезис + доказательства + вывод) могут быть до 120 секунд, НО:
+- 60-90 секунд: идеально для большинства аргументов
+- 90-120 секунд: допустимо ТОЛЬКО если доказательства детальны и необходимы
+- Аргумент ДОЛЖЕН быть действительно полным (вопрос → ответ → доказательство → вывод)
+
+ПРАВИЛО ПРЕДПОЧТЕНИЯ:
+Если можешь разделить 90-секундный сегмент на 45+45 без нарушения логики — ВСЕГДА ДЕЛАЙ ЭТО.
+Короткие законченные мысли лучше длинных.
 
 ============================================================================
-PART 3: WHERE NOT TO SPLIT (CRITICAL)
+ЧАСТЬ 2: ГДЕ ДЕЛИТЬ
 ============================================================================
 
-NEVER split in these cases:
+Дели когда:
+- Тема явно меняется («Теперь поговорим о...», «Переходим к...»)
+- Начинается новый пример или история
+- Завершается цикл вопрос → ответ
+- Меняется спикер (если несколько собеседников)
 
-1. TOPIC INTRODUCTION + EXPLANATION (DANGLING SETUP)
-   If sentence N introduces a person/concept and sentence N+1 explains it — they MUST stay together.
+============================================================================
+ЧАСТЬ 3: ГДЕ НЕ ДЕЛИТЬ (КРИТИЧНО)
+============================================================================
 
-   Examples:
-   "Его специализация — высокотемпературная сверхпроводимость. В этой области вышло 50 тысяч статей..."
-   → Topic introduced in sentence 1, explained in sentence 2 → ONE SEGMENT.
+НИКОГДА не дели в этих случаях:
 
-2. ARGUMENT STRUCTURE (CRITICAL)
-   When you see this pattern:
-   - Question or bold claim
-   - Response
-   - Evidence/examples supporting the claim
+1. ВВЕДЕНИЕ ТЕМЫ + ОБЪЯСНЕНИЕ (ВИСЯЩАЯ ЗАВЯЗКА)
+   Если предложение N вводит человека/концепцию, а предложение N+1 объясняет — они ДОЛЖНЫ быть вместе.
+
+   Примеры:
+   «Его специализация — высокотемпературная сверхпроводимость. В этой области вышло 50 тысяч статей...»
+   → Тема введена в предложении 1, объяснена в предложении 2 → ОДИН СЕГМЕНТ.
+
+2. СТРУКТУРА АРГУМЕНТА (КРИТИЧНО)
+   Когда видишь такой паттерн:
+   - Вопрос или смелое утверждение
+   - Ответ
+   - Доказательства/примеры в поддержку
    
-   This is ONE logical unit. DO NOT split between these parts.
+   Это ОДНА логическая единица. НЕ дели между этими частями.
 
-   Example of GOOD (keep together):
-   "Веришь в симуляцию? - Высокий процент. - Посмотри на видеоигры за 50 лет..."
-   → Question → answer → evidence → ONE SEGMENT
+   Пример ХОРОШО (держать вместе):
+   «Веришь в симуляцию? — Высокий процент. — Посмотри на видеоигры за 50 лет...»
+   → Вопрос → ответ → доказательство → ОДИН СЕГМЕНТ
 
-   Common mistake (BAD):
-   Splitting between the answer and its supporting evidence
-   → First segment: question + answer only (incomplete)
-   → Second segment: evidence only (no context)
+   Типичная ошибка (ПЛОХО):
+   Деление между ответом и его доказательством
+   → Первый сегмент: только вопрос + ответ (неполный)
+   → Второй сегмент: только доказательство (без контекста)
 
-3. MID-STORY
-   Never cut in the middle of an example, anecdote, or personal story
-   Wait for the punchline or conclusion
+3. СЕРЕДИНА ИСТОРИИ
+   Никогда не режь посреди примера, анекдота или личной истории
+   Дождись развязки или вывода
 
-4. SETUP + PAYOFF
-   If sentence sets up a question and next sentence answers it — keep together
+4. ЗАВЯЗКА + РАЗВЯЗКА
+   Если предложение задаёт вопрос, а следующее отвечает — держи вместе
 
-5. CONDITION + RESULT
-   "If you do X, then Y happens" — keep together
+5. УСЛОВИЕ + РЕЗУЛЬТАТ
+   «Если сделаешь X, то произойдёт Y» — держи вместе
 
-6. QUESTION + ANSWER (CRITICAL — NEVER SPLIT)
-   If you see a QUESTION followed by an ANSWER — they MUST be in ONE segment.
+6. ВОПРОС + ОТВЕТ (КРИТИЧНО — НИКОГДА НЕ ДЕЛИ)
+   Если видишь ВОПРОС, за которым следует ОТВЕТ — они ДОЛЖНЫ быть в ОДНОМ сегменте.
    
-   Pattern to detect:
-   - Sentence ends with "?" 
-   - Next 1-3 sentences are the answer
-   - Answer may be very short ("Да", "Нет", "Высокий процент", "Довольно высокий")
+   Паттерн для обнаружения:
+   - Предложение заканчивается на «?»
+   - Следующие 1-3 предложения — это ответ
+   - Ответ может быть очень коротким («Да», «Нет», «Высокий процент», «Довольно высокий»)
    
-   NEVER put boundary between question and its answer!
+   НИКОГДА не ставь границу между вопросом и его ответом!
    
-   Examples:
-   BAD: "Какой процент вы бы дали?" | "Довольно высокий."
-   GOOD: "Какой процент вы бы дали? Довольно высокий." (same segment)
+   Примеры:
+   ПЛОХО: «Какой процент вы бы дали?» | «Довольно высокий.»
+   ХОРОШО: «Какой процент вы бы дали? Довольно высокий.» (один сегмент)
    
-   BAD: "Вы верите в симуляцию?" | "Да, довольно высокий процент."
-   GOOD: "Вы верите в симуляцию? Да, довольно высокий процент." (same segment)
+   ПЛОХО: «Вы верите в симуляцию?» | «Да, довольно высокий процент.»
+   ХОРОШО: «Вы верите в симуляцию? Да, довольно высокий процент.» (один сегмент)
 
 ============================================================================
-PART 4: LIST HANDLING
+ЧАСТЬ 4: ОБРАБОТКА СПИСКОВ
 ============================================================================
 
-When speaker enumerates multiple ideas/examples:
+Когда спикер перечисляет несколько идей/примеров:
 
-- If each idea is EXPLAINED (30+ seconds of explanation) → separate segments
-- If ideas are just listed briefly without explanation → keep as one segment
+- Если каждая идея ОБЪЯСНЯЕТСЯ (30+ секунд объяснения) → отдельные сегменты
+- Если идеи просто перечислены кратко без объяснения → держи как один сегмент
 
-Examples:
-WRONG:
-"Here are ideas: A. B. C. D. E." with each just mentioned
-→ This is ONE segment (just a list)
+Примеры:
+НЕПРАВИЛЬНО:
+«Вот идеи: А. Б. В. Г. Д.» — каждая просто упомянута
+→ Это ОДИН сегмент (просто список)
 
-RIGHT:
-"First idea: [explanation 30 sec]. Second idea: [explanation 30 sec]"
-→ This is TWO segments, put boundary between them
-
-============================================================================
-PART 5: RETROSPECTIVE REFERENCES — NEW TOPIC SIGNALS (CRITICAL)
-============================================================================
-
-When speaker refers BACK to a previous discussion to START a new topic, 
-the reference phrase BELONGS TO THE NEW SEGMENT.
-
-RUSSIAN MARKERS:
-- "Вы ранее говорили о..."
-- "Ты упоминал..."
-- "Как вы сказали ранее..."
-- "Мы раньше обсуждали..."
-- "Возвращаясь к разговору о..."
-- "Помните, вы говорили про..."
-- "Вы упоминали о..."
-
-ENGLISH MARKERS (for reference):
-- "You mentioned earlier..."
-- "As you said before..."
-- "Going back to..."
-- "Returning to our discussion about..."
-- "Earlier you talked about..."
-
-CRITICAL RULE:
-These phrases INTRODUCE a topic change. 
-The boundary should be placed BEFORE such phrase.
-
-EXAMPLE:
-GOOD split:
-Segment 4: "...долг станет менее серьёзной проблемой. Да, скорее всего."
-Segment 5: "Вы ранее говорили о симуляции. Я люблю «Матрицу»..."
-
-BAD split (what happened):
-Segment 4: "...долг станет менее серьёзной проблемой. Да, скорее всего. Вы ранее говорили о симуляции."
-Segment 5: "Я люблю «Матрицу»..."
-
-WHY GOOD is correct:
-- "Вы ранее говорили" introduces the NEW topic (simulation)
-- Viewer immediately knows what's being discussed
-- The reference serves as context for the new topic
-
-WHY BAD is wrong:
-- The reference is stuck in the wrong segment
-- Segment 5 starts without context ("Я люблю «Матрицу»" — which Matrix?)
-- Listener is confused
+ПРАВИЛЬНО:
+«Первая идея: [объяснение 30 сек]. Вторая идея: [объяснение 30 сек]»
+→ Это ДВА сегмента, ставь границу между ними
 
 ============================================================================
-PART 6: THE TEXT TO ANALYZE
+ЧАСТЬ 5: РЕТРОСПЕКТИВНЫЕ ССЫЛКИ — СИГНАЛЫ НОВОЙ ТЕМЫ (КРИТИЧНО)
 ============================================================================
 
-NOTE: Sentences at the beginning of this chunk may be continuations from the previous chunk.
-If you see phrases like "Вы ранее говорили" or "Как я сказал" at the START, 
-check if the reference is explained WITHIN this chunk.
-If not, treat the FIRST 1-2 sentences as context-bringers and keep them with this chunk.
+Когда спикер ссылается НАЗАД на предыдущее обсуждение, чтобы НАЧАТЬ новую тему,
+фраза-ссылка ПРИНАДЛЕЖИТ НОВОМУ СЕГМЕНТУ.
 
-Here are the sentences with numbers. Each sentence is approximately 2-3 seconds long.
-Pay attention to logical connections, not just sentence boundaries.
+МАРКЕРЫ:
+- «Вы ранее говорили о...»
+- «Ты упоминал...»
+- «Как вы сказали ранее...»
+- «Мы раньше обсуждали...»
+- «Возвращаясь к разговору о...»
+- «Помните, вы говорили про...»
+- «Вы упоминали о...»
 
-SENTENCES:
+КРИТИЧЕСКОЕ ПРАВИЛО:
+Эти фразы ВВОДЯТ смену темы.
+Граница должна быть поставлена ПЕРЕД такой фразой.
+
+ПРИМЕР:
+ХОРОШЕЕ деление:
+Сегмент 4: «...долг станет менее серьёзной проблемой. Да, скорее всего.»
+Сегмент 5: «Вы ранее говорили о симуляции. Я люблю «Матрицу»...»
+
+ПЛОХОЕ деление:
+Сегмент 4: «...долг станет менее серьёзной проблемой. Да, скорее всего. Вы ранее говорили о симуляции.»
+Сегмент 5: «Я люблю «Матрицу»...»
+
+ПОЧЕМУ ХОРОШЕЕ правильно:
+- «Вы ранее говорили» вводит НОВУЮ тему (симуляция)
+- Зритель сразу понимает, о чём речь
+- Ссылка служит контекстом для новой темы
+
+ПОЧЕМУ ПЛОХОЕ неправильно:
+- Ссылка застряла в неправильном сегменте
+- Сегмент 5 начинается без контекста («Я люблю «Матрицу»» — какую Матрицу?)
+- Слушатель в замешательстве
+
+============================================================================
+ЧАСТЬ 6: ТЕКСТ ДЛЯ АНАЛИЗА
+============================================================================
+
+ПРИМЕЧАНИЕ: Предложения в начале этого фрагмента могут быть продолжением предыдущего фрагмента.
+Если видишь фразы типа «Вы ранее говорили» или «Как я сказал» В НАЧАЛЕ,
+проверь, объясняется ли ссылка ВНУТРИ этого фрагмента.
+Если нет, считай ПЕРВЫЕ 1-2 предложения контекстными и держи их с этим фрагментом.
+
+Вот предложения с номерами. Каждое предложение примерно 2-3 секунды.
+Обращай внимание на логические связи, а не только на границы предложений.
+
+ПРЕДЛОЖЕНИЯ:
 {numbered_sentences}
 
 ============================================================================
-PART 7: YOUR OUTPUT - STRICT FORMAT
+ЧАСТЬ 7: ТВОЙ ВЫВОД — СТРОГИЙ ФОРМАТ
 ============================================================================
 
-Return ONLY comma-separated sentence numbers where NEW segments should START.
+Верни ТОЛЬКО номера предложений через запятую, где должны НАЧИНАТЬСЯ новые сегменты.
 
-RULES:
-- Numbers must be integers between 2 and {len(sentences)}
-- Do NOT include sentence 1 (first segment always starts there)
-- Numbers must be in ascending order
-- Comma-separated (spaces optional)
+ПРАВИЛА:
+- Числа должны быть целыми от 2 до {len(sentences)}
+- НЕ включай предложение 1 (первый сегмент всегда начинается там)
+- Числа должны быть в порядке возрастания
+- Через запятую (пробелы опционально)
 
-Examples:
+Примеры:
 ✅ 4, 8, 15, 23
 ✅ 4,8,15,23
 
-If no boundaries needed: return exactly "NONE"
+Если границы не нужны: верни точно «NONE»
 
-BOUNDARIES:"""
+ГРАНИЦЫ:"""
 
         try:
             response = self.client.generate(prompt, max_tokens=100, temperature=0.3)
@@ -1623,363 +1616,330 @@ BOUNDARIES:"""
     def _analyze_segment_with_llm(self, segment: Dict) -> Dict[str, float]:
         """Analyze a single segment using LLM."""
         
-        prompt = f"""You are an editor who curates punchy clips from long-form podcasts and interviews (Diary of a CEO, Joe Rogan, Ali Abdaal, Huberman Lab, Lex Fridman). Guests include entrepreneurs, scientists, psychologists, doctors, athletes, authors, and thought leaders.
+        prompt = f"""Ты — редактор, который отбирает яркие клипы из длинных подкастов и интервью (вДудь, Diary of a CEO, Joe Rogan, Huberman Lab, Lex Fridman). Гости — предприниматели, учёные, психологи, врачи, спортсмены, авторы и лидеры мнений.
 
-Judge this fragment as a potential YouTube Short / Instagram Reel.
+Оцени этот фрагмент как потенциальный YouTube Short / Instagram Reel.
 
-TARGET LENGTH: 30-90 seconds (IDEAL: 30-60 seconds for best virality)
-WORD COUNT: ~70-210 words (140 words ≈ 60 seconds)
+ЦЕЛЕВАЯ ДЛИНА: 30-90 секунд (ИДЕАЛ: 30-60 секунд для лучшей виральности)
+КОЛИЧЕСТВО СЛОВ: ~70-210 слов (140 слов ≈ 60 секунд)
 
-Note: Segments longer than 90 seconds don't fit the Shorts/Reels format well.
+Примечание: Сегменты длиннее 90 секунд плохо подходят для формата Shorts/Reels.
 
-Evaluate for viewers who crave:
+Оценивай для зрителей, которые ищут:
 
-BUSINESS & ENTREPRENEURSHIP:
-- actionable business insights, growth tactics, metrics, frameworks, contrarian strategies
-- founder stories with specific numbers, pivots, failures, lessons learned
+БИЗНЕС И ПРЕДПРИНИМАТЕЛЬСТВО:
+- практичные бизнес-инсайты, тактики роста, метрики, фреймворки, контринтуитивные стратегии
+- истории основателей с конкретными цифрами, пивотами, провалами, извлечёнными уроками
 
-SCIENCE & RESEARCH:
-- fascinating scientific findings explained simply
-- counterintuitive research results that challenge assumptions
-- "here's what the data actually shows" moments
+НАУКА И ИССЛЕДОВАНИЯ:
+- увлекательные научные открытия, объяснённые просто
+- контринтуитивные результаты исследований, бросающие вызов предположениям
+- моменты «вот что на самом деле показывают данные»
 
-PSYCHOLOGY & SELF-IMPROVEMENT:
-- insights about human behavior, motivation, relationships
-- mental models, cognitive biases, decision-making frameworks
-- therapy/coaching breakthroughs with practical applications
+ПСИХОЛОГИЯ И САМОРАЗВИТИЕ:
+- инсайты о человеческом поведении, мотивации, отношениях
+- ментальные модели, когнитивные искажения, фреймворки принятия решений
+- прорывы в терапии/коучинге с практическим применением
 
-HEALTH & WELLNESS:
-- evidence-based health advice (sleep, nutrition, exercise, longevity)
-- specific protocols and routines with scientific backing
-- personal health transformations with measurable results
+ЗДОРОВЬЕ И ВЕЛНЕС:
+- доказательные советы по здоровью (сон, питание, упражнения, долголетие)
+- конкретные протоколы и рутины с научным обоснованием
+- личные трансформации здоровья с измеримыми результатами
 
-PRODUCTIVITY & LEARNING:
-- systems, tools, and methods for getting things done
-- learning techniques, study methods, skill acquisition
-- time management and energy optimization
+ПРОДУКТИВНОСТЬ И ОБУЧЕНИЕ:
+- системы, инструменты и методы для достижения результатов
+- техники обучения, методы изучения, освоение навыков
+- управление временем и оптимизация энергии
 
-PHILOSOPHY & LIFE:
-- profound life lessons from real experience
-- wisdom about relationships, purpose, meaning
-- perspective shifts that change how you see the world
+ФИЛОСОФИЯ И ЖИЗНЬ:
+- глубокие жизненные уроки из реального опыта
+- мудрость об отношениях, цели, смысле
+- сдвиги перспективы, меняющие взгляд на мир
 
-UNIVERSAL CRITERIA for high scores:
-- Strong POV: bold opinions backed by experience/evidence
-- Specificity: numbers, timeframes, concrete examples
-- Complete arc: setup → insight → takeaway
-- Emotional resonance: surprise, inspiration, validation, curiosity
+УНИВЕРСАЛЬНЫЕ КРИТЕРИИ для высоких оценок:
+- Сильная позиция: смелые мнения, подкреплённые опытом/доказательствами
+- Конкретика: цифры, временные рамки, конкретные примеры
+- Законченная арка: завязка → инсайт → вывод
+- Эмоциональный резонанс: удивление, вдохновение, подтверждение, любопытство
 
-Assume natural speech (~140 words per minute). Focus on fragments roughly 70–210 words long (≈30–90 seconds, ideally 30-60s).
+Предполагай естественную речь (~140 слов в минуту). Фокусируйся на фрагментах примерно 70–210 слов (≈30–90 секунд, идеально 30-60с).
 
-CONTEXT:
-Previous topic: {segment.get('prev_topic', 'Unknown')}
-Next topic: {segment.get('next_topic', 'Unknown')}
-Speaker: {segment.get('primary_speaker', 'Unknown')}
-Is video start: {segment.get('is_video_start', False)}
-Is video end: {segment.get('is_video_end', False)}
+КОНТЕКСТ:
+Предыдущая тема: {segment.get('prev_topic', 'Неизвестно')}
+Следующая тема: {segment.get('next_topic', 'Неизвестно')}
+Спикер: {segment.get('primary_speaker', 'Неизвестно')}
+Начало видео: {segment.get('is_video_start', False)}
+Конец видео: {segment.get('is_video_end', False)}
 
-IMPORTANT:
-- Use ONLY the provided text. Do not invent context.
-- Reward specificity: numbers, clear takeaways, step-by-step advice.
-- Penalize fluff, clichés, or passages that require too much surrounding context.
-- Prefer self-contained arcs (question → insight/answer).
+ВАЖНО:
+- Используй ТОЛЬКО предоставленный текст. Не выдумывай контекст.
+- Поощряй конкретику: цифры, чёткие выводы, пошаговые советы.
+- Штрафуй воду, клише или отрывки, требующие слишком много окружающего контекста.
+- Предпочитай самодостаточные арки (вопрос → инсайт/ответ).
 
-HANDLING "UNKNOWN" CONTEXT:
-• If "Previous topic" = "Unknown" BUT "Is video start" = False:
-  → There IS previous content, we just didn't include it. Be careful with needs_previous_context.
-• If "Next topic" = "Unknown" BUT "Is video end" = False:
-  → There IS more content after this! If segment ends on a cliffhanger, continuation likely EXISTS.
-  → Do NOT assume the story is unfinished — check "Is video end" first.
-• If "Is video end" = True AND segment ends incomplete:
-  → The video truly ends here. Final score will be capped at 0.20.
+ОБРАБОТКА «НЕИЗВЕСТНОГО» КОНТЕКСТА:
+• Если «Предыдущая тема» = «Неизвестно», НО «Начало видео» = False:
+  → Предыдущий контент ЕСТЬ, мы просто его не включили. Будь осторожен с needs_previous_context.
+• Если «Следующая тема» = «Неизвестно», НО «Конец видео» = False:
+  → После этого ЕСТЬ ещё контент! Если сегмент заканчивается на клиффхэнгере, продолжение скорее всего СУЩЕСТВУЕТ.
+  → НЕ предполагай, что история не закончена — сначала проверь «Конец видео».
+• Если «Конец видео» = True И сегмент заканчивается незавершённым:
+  → Видео действительно заканчивается здесь. Итоговая оценка будет ограничена 0.20.
 
-SEGMENT BOUNDARY DETECTION (CRITICAL):
+ОПРЕДЕЛЕНИЕ ГРАНИЦ СЕГМЕНТА (КРИТИЧНО):
 
-Set "needs_previous_context": true if the text:
-• STARTS with connectors: "And", "So", "That's why", "But", "Because", "Then", "He said", "She replied"
-  (Russian: "И", "А", "Так что", "Поэтому", "Но", "Потому что", "Тогда", "Он сказал", "Она ответила")
-• OR references something unexplained ("he did it", "the politician left", "that's when")
-• OR feels like a continuation/punchline without setup
-• OR starts mid-sentence or mid-thought
-• OR (SEMANTIC CHECK) the "Previous topic" describes a story/event that THIS segment is clearly 
-  a conclusion or lesson from. Example: prev="How I failed my first business" + text="Now I always 
-  require prepayment" → the lesson loses impact without the failure story.
-• OR (ORPHANED ANSWER) segment STARTS with a short answer (1-5 words) that answers a question:
-  - Short confirmations: "Да", "Нет", "Точно", "Конечно", "Да, скорее всего"
-  - Short answers: "Довольно высокий", "Примерно 50%", "Около года", "Три раза"
-  - If "Previous topic" likely contains the question → needs_previous_context: true, trim_first_sentences: 1
+Установи "needs_previous_context": true если текст:
+• НАЧИНАЕТСЯ со связок: «И», «А», «Так что», «Поэтому», «Но», «Потому что», «Тогда», «Он сказал», «Она ответила»
+• ИЛИ ссылается на что-то необъяснённое («он это сделал», «политик ушёл», «тогда-то»)
+• ИЛИ ощущается как продолжение/развязка без завязки
+• ИЛИ начинается с середины предложения или мысли
+• ИЛИ (СЕМАНТИЧЕСКАЯ ПРОВЕРКА) «Предыдущая тема» описывает историю/событие, а ЭТОТ сегмент явно является выводом или уроком из неё. Пример: пред=«Как я провалил первый бизнес» + текст=«Теперь я всегда требую предоплату» → урок теряет смысл без истории провала.
+• ИЛИ (ОСИРОТЕВШИЙ ОТВЕТ) сегмент НАЧИНАЕТСЯ с короткого ответа (1-5 слов), который отвечает на вопрос:
+  - Короткие подтверждения: «Да», «Нет», «Точно», «Конечно», «Да, скорее всего»
+  - Короткие ответы: «Довольно высокий», «Примерно 50%», «Около года», «Три раза»
+  - Если «Предыдущая тема» вероятно содержит вопрос → needs_previous_context: true, trim_first_sentences: 1
 
-Set "needs_next_context": true if the text:
-• ENDS mid-story (setup without punchline, buildup without payoff)
-• OR ends with cliffhangers: "and then—", "that's when—", "what happened next..."
-• OR poses a question that isn't answered in this segment
-• OR ends with a teaser/promise without delivery
-• OR the "Next topic" clearly contains the missing resolution
-• OR (SEMANTIC CHECK) the segment is clearly a setup/problem statement and "Next topic" 
-  contains the solution/answer. Example: text="I was losing $50K/month" + next="How I turned 
-  it around" → the problem without the solution is incomplete.
+Установи "needs_next_context": true если текст:
+• ЗАКАНЧИВАЕТСЯ посреди истории (завязка без развязки, нарастание без кульминации)
+• ИЛИ заканчивается клиффхэнгером: «и тогда—», «в тот момент—», «что произошло дальше...»
+• ИЛИ задаёт вопрос, на который нет ответа в этом сегменте
+• ИЛИ заканчивается тизером/обещанием без исполнения
+• ИЛИ «Следующая тема» явно содержит недостающее разрешение
+• ИЛИ (СЕМАНТИЧЕСКАЯ ПРОВЕРКА) сегмент явно является завязкой/постановкой проблемы, а «Следующая тема» содержит решение/ответ. Пример: текст=«Я терял $50К/месяц» + след=«Как я это исправил» → проблема без решения неполна.
 
-DANGLING SETUP DETECTION (for needs_next_context):
-• If the segment ENDS with a specific fact/detail that is NOT used within this segment:
-  - "His specialty was X" → but X is never mentioned again in THIS segment
-  - "The company was called Y" → but Y's story continues in next segment  
-  - "It happened in 1987" → but what happened is explained later
-• These "dangling setups" indicate the segment grabbed one sentence too many
-• Set needs_next_context: true if the LAST 1-2 sentences introduce new information 
-  that isn't resolved or used within the same segment
+ОПРЕДЕЛЕНИЕ ВИСЯЩЕЙ ЗАВЯЗКИ (для needs_next_context):
+• Если сегмент ЗАКАНЧИВАЕТСЯ конкретным фактом/деталью, которая НЕ используется в этом сегменте:
+  - «Его специализация была X» → но X больше не упоминается в ЭТОМ сегменте
+  - «Компания называлась Y» → но история Y продолжается в следующем сегменте
+  - «Это произошло в 1987» → но что произошло объясняется позже
+• Эти «висящие завязки» указывают, что сегмент захватил одно предложение лишнее
+• Установи needs_next_context: true если ПОСЛЕДНИЕ 1-2 предложения вводят новую информацию, которая не разрешается и не используется в том же сегменте
 
-Example of DANGLING SETUP:
-BAD ending: "...they were all frauds. His specialty was superconductivity."
-→ "superconductivity" is introduced but not used in THIS segment → needs_next_context: true
+Пример ВИСЯЩЕЙ ЗАВЯЗКИ:
+ПЛОХО: «...занимаются псевдонаукой или мелкими улучшениями без ценности. Его специализация — высокотемпературная сверхпроводимость.»
+→ «сверхпроводимость» введена, но не используется в ЭТОМ сегменте → needs_next_context: true, trim_last_sentences: 1
 
-RUSSIAN EXAMPLE (ВАЖНО для русского контента):
-ПЛОХО: "...занимаются псевдонаукой или мелкими улучшениями без ценности. Его специализация — высокотемпературная сверхпроводимость."
-→ "Его специализация — высокотемпературная сверхпроводимость" вводит тему, которая НЕ раскрывается в ЭТОМ сегменте
-→ needs_next_context: true, trim_last_sentences: 1
+ХОРОШО: «...занимаются псевдонаукой или мелкими улучшениями без ценности. Вот тогда всё изменилось.»
+→ Законченная мысль, нет висящей завязки → needs_next_context: false
 
-GOOD ending: "...they were all frauds. That's when everything changed."
-→ Complete thought, no dangling setup → needs_next_context: false
+КОРРЕКТИРОВКА ГРАНИЦ (trim_first_sentences / trim_last_sentences):
 
-BOUNDARY ADJUSTMENT (trim_first_sentences / trim_last_sentences):
+Когда обнаруживаешь проблему с границей, можешь предложить переместить предложения между сегментами.
 
-When you detect a boundary problem, you can suggest moving sentences between segments.
+Установи "trim_last_sentences": N (целое 0-3) если:
+• ПОСЛЕДНИЕ N предложений этого сегмента на самом деле являются ЗАВЯЗКОЙ для следующей темы
+• Эти предложения вводят новый субъект/человека/концепцию, которые НЕ развиваются ЗДЕСЬ
+• Пример: «...все они были мошенниками. Его специализация — сверхпроводимость.»
+  → «Его специализация — сверхпроводимость» — завязка для СЛЕДУЮЩЕГО сегмента → trim_last_sentences: 1
 
-Set "trim_last_sentences": N (integer 0-3) if:
-• The LAST N sentences of this segment are actually the SETUP for the next topic
-• These sentences introduce a new subject/person/concept that isn't developed HERE
-• Example: "...they were all frauds. His specialty was superconductivity." 
-  → "His specialty was superconductivity" is setup for NEXT segment → trim_last_sentences: 1
+Установи "trim_first_sentences": N (целое 0-3) если:
+• ПЕРВЫЕ N предложений на самом деле являются ВЫВОДОМ из предыдущей темы
+• Эти предложения ссылаются на что-то из предыдущего сегмента без объяснения
+• Пример: «Поэтому я теперь всегда требую предоплату. Переходим к маркетингу...»
+  → «Поэтому я теперь всегда требую предоплату» — вывод из ПРЕДЫДУЩЕГО → trim_first_sentences: 1
 
-Set "trim_first_sentences": N (integer 0-3) if:
-• The FIRST N sentences are actually the CONCLUSION of the previous topic
-• These sentences reference something from the previous segment without explanation
-• Example: "That's why I always require prepayment now. Moving on to marketing..."
-  → "That's why I always require prepayment now" is conclusion of PREVIOUS → trim_first_sentences: 1
+ВАЖНО для полей trim:
+• По умолчанию 0 (корректировка не нужна)
+• Предлагай только 1-3 предложения, не больше
+• Если needs_next_context=true из-за висящей завязки, установи trim_last_sentences соответственно
+• Если needs_previous_context=true из-за осиротевшего вывода, установи trim_first_sentences соответственно
 
-IMPORTANT for trim fields:
-• Default is 0 (no adjustment needed)
-• Only suggest 1-3 sentences, never more
-• If needs_next_context=true due to dangling setup, set trim_last_sentences accordingly
-• If needs_previous_context=true due to orphaned conclusion, set trim_first_sentences accordingly
+Когда ЛЮБОЙ флаг true:
+• Итоговая оценка будет ограничена 0.25 (неполные сегменты не являются самостоятельными клипами)
+• Сегмент всё ещё может иметь высокие другие оценки, если сам контент хорош
 
-When EITHER flag is true:
-• Final score will be capped at 0.25 (incomplete segments are not standalone clips)
-• The segment may still have high other scores if the content itself is good
+ЛОГИКА ОБЪЕДИНЕНИЯ (для сегментов, которым нужен оба контекста):
+Если сегменту нужен И предыдущий И следующий контекст (needs_previous_context И needs_next_context),
+и вместе с соседями образует законченную мысль (тезис + доказательства + вывод),
+оцени, создаст ли объединение лучший клип.
 
-MERGE LOGIC (for segments that need both contexts):
-If a segment needs BOTH previous AND next context (needs_previous_context AND needs_next_context),
-and together with neighbors forms a complete thought (thesis + evidence + conclusion),
-evaluate if merging would create a better clip.
+ОЦЕНКА ОБЪЕДИНЕНИЯ (заполни эти поля когда needs_previous_context ИЛИ needs_next_context = true):
+- "merge_benefit": Насколько объединение улучшит клип?
+  • "high" = Объединение НЕОБХОДИМО, сегмент неполон без соседей
+  • "medium" = Объединение заметно улучшит качество
+  • "low" = Объединение немного поможет, но сегмент смотрибелен сам по себе
+  • "none" = Сегмент полон, объединение не нужно
+- "estimated_merged_duration": Твоя оценка в секундах если объединить с соседями
+  • Если needs_previous_context: добавь ~30-60 секунд на предыдущий контекст
+  • Если needs_next_context: добавь ~30-60 секунд на следующий контекст
+  • Если оба: оцени общую объединённую длительность
+- "merged_completeness_score": Ожидаемая оценка completeness_arc (0.0-1.0) после объединения
 
-MERGE EVALUATION (fill these fields when needs_previous_context OR needs_next_context is true):
-- "merge_benefit": How much would merging improve the clip?
-  • "high" = Merging is ESSENTIAL, segment is incomplete without neighbors
-  • "medium" = Merging would improve quality noticeably  
-  • "low" = Merging would help slightly but segment is watchable alone
-  • "none" = Segment is complete, no merge needed
-- "estimated_merged_duration": Your estimate in seconds if merged with neighbor(s)
-  • If needs_previous_context: add ~30-60 seconds for previous context
-  • If needs_next_context: add ~30-60 seconds for next context
-  • If both: estimate total combined duration
-- "merged_completeness_score": Expected completeness_arc score (0.0-1.0) after merge
+ОГРАНИЧЕНИЯ ОБЪЕДИНЕНИЯ:
+- ИДЕАЛЬНАЯ длительность объединённого: 60-90 секунд (лучше всего для Shorts/Reels)
+- ДОПУСТИМО: 90-120 секунд (только для исключительного контента)
+- МАКСИМУМ: 120 секунд (длиннее НЕ объединять, используй trim вместо этого)
+- Если объединённый превысит 120 секунд, установи merge_benefit в "none"
 
-MERGE CONSTRAINTS:
-- IDEAL merged duration: 60-90 seconds (best for Shorts/Reels)
-- ACCEPTABLE: 90-120 seconds (only for exceptional content)
-- MAXIMUM: 120 seconds (anything longer should NOT be merged, use trims instead)
-- If merged would exceed 120 seconds, set merge_benefit to "none"
+ОПРЕДЕЛЕНИЕ СПИСКА vs АРГУМЕНТА:
+- Если сегмент — просто СПИСОК идей без развития (типа «вот 10 проблем: А, Б, В, Г...»)
+  → Значительно снизь ВСЕ оценки (это низкоценный контент для Shorts)
+  → Добавь комментарий, что это нужно разделить или пропустить
+- Если сегмент — полный АРГУМЕНТ (тезис → доказательства → вывод)
+  → Сохрани высокие оценки даже если 90-120 секунд
+  → Это ценный контент, стоящий своей длины
 
-LIST vs ARGUMENT DETECTION:
-- If segment is just a LIST of ideas without development (like "here are 10 problems: A, B, C, D...")
-  → Lower ALL scores significantly (this is low-value content for Shorts)
-  → Add comment suggesting this should be split or skipped
-- If segment is a complete ARGUMENT (thesis → evidence → conclusion)
-  → Keep scores high even if 90-120 seconds
-  → This is valuable content worth the length
+КАЛИБРОВОЧНЫЕ ПРИМЕРЫ (с новой системой оценки):
 
-CALIBRATION EXAMPLES (with new scoring system):
+=== ПРИМЕР ВЫСОКОЙ ОЦЕНКИ (итог ~0.82) ===
 
-=== HIGH SCORE EXAMPLE (final ~0.82) ===
+«Мне было 28, и я был должен 30 миллионов рублей. Вот что меня спасло: я позвонил каждому кредитору
+и договорился о скидке 60%. Потом построил бизнес на том, за что меня уволили — но уже для себя.
+Через 18 месяцев я был свободен от долгов.»
 
-"I was $400K in debt at 28. Here's what saved me: I called every creditor 
-and negotiated 60% settlements. Then I built a side business doing exactly 
-what got me fired — but for myself. In 18 months I was debt-free."
-
-Scores:
-- surprise_novelty: 0.7 (unexpected: 60% debt reduction is possible)
-- specificity_score: 0.9 ($400K, 60%, 18 months, age 28)
-- personal_connection: 0.8 (personal failure/redemption story)
-- actionability_score: 0.9 (clear steps: call creditors, negotiate, build business)
-- clarity_simplicity: 0.8 (simple language, clear structure)
-- completeness_arc: 0.9 (problem → actions → result)
-- hook_quality: 0.85 ("$400K in debt at 28" — instantly grabs attention)
+Оценки:
+- surprise_novelty: 0.7 (неожиданно: скидка 60% по долгам возможна)
+- specificity_score: 0.9 (30 млн, 60%, 18 месяцев, возраст 28)
+- personal_connection: 0.8 (личная история провала/искупления)
+- actionability_score: 0.9 (чёткие шаги: звонить кредиторам, договариваться, строить бизнес)
+- clarity_simplicity: 0.8 (простой язык, чёткая структура)
+- completeness_arc: 0.9 (проблема → действия → результат)
+- hook_quality: 0.85 («30 миллионов долга в 28» — мгновенно цепляет)
 - needs_previous_context: false
 - needs_next_context: false
 
-=== MEDIUM SCORE EXAMPLE (final ~0.45) ===
+=== ПРИМЕР СРЕДНЕЙ ОЦЕНКИ (итог ~0.45) ===
 
-"AI is going to change everything. We're already seeing it in our industry. 
-Companies that don't adapt will be left behind. The question is not if, but when."
+«ИИ изменит всё. Мы уже видим это в нашей индустрии.
+Компании, которые не адаптируются, останутся позади. Вопрос не в том, если, а когда.»
 
-Scores:
-- surprise_novelty: 0.2 (everyone says this)
-- specificity_score: 0.1 (no numbers, no examples, no timeline)
-- personal_connection: 0.1 (no personal story)
-- actionability_score: 0.1 (no steps, just "adapt")
-- clarity_simplicity: 0.7 (easy to understand)
-- completeness_arc: 0.5 (has a point, but no story)
-- hook_quality: 0.4 (generic opening)
+Оценки:
+- surprise_novelty: 0.2 (все это говорят)
+- specificity_score: 0.1 (нет цифр, примеров, сроков)
+- personal_connection: 0.1 (нет личной истории)
+- actionability_score: 0.1 (нет шагов, просто «адаптируйтесь»)
+- clarity_simplicity: 0.7 (легко понять)
+- completeness_arc: 0.5 (есть мысль, но нет истории)
+- hook_quality: 0.4 (общее начало)
 - needs_previous_context: false
 - needs_next_context: false
 
-=== LOW SCORE EXAMPLE — Incomplete (final capped at 0.25) ===
+=== ПРИМЕР НИЗКОЙ ОЦЕНКИ — Неполный (итог ограничен 0.25) ===
 
-"And said: 'Ready.' The politician left satisfied. Do you do the same 
-with politicians? I noticed when I get involved in politics, it ends badly."
+«И сказал: "Готово." Политик ушёл довольный. Ты так же поступаешь
+с политиками? Я заметил, когда я ввязываюсь в политику, это плохо заканчивается.»
 
-Scores:
-- surprise_novelty: 0.3 (potentially interesting)
-- specificity_score: 0.1 (no details)
-- personal_connection: 0.2 (mentions personal experience vaguely)
-- actionability_score: 0.0 (no advice)
-- clarity_simplicity: 0.3 (confusing without context)
-- completeness_arc: 0.2 (missing beginning)
-- hook_quality: 0.1 ("And said" — terrible hook)
-- needs_previous_context: TRUE (who said? about what?)
+Оценки:
+- surprise_novelty: 0.3 (потенциально интересно)
+- specificity_score: 0.1 (нет деталей)
+- personal_connection: 0.2 (упоминает личный опыт размыто)
+- actionability_score: 0.0 (нет советов)
+- clarity_simplicity: 0.3 (непонятно без контекста)
+- completeness_arc: 0.2 (нет начала)
+- hook_quality: 0.1 («И сказал» — ужасный хук)
+- needs_previous_context: TRUE (кто сказал? о чём?)
 - needs_next_context: false
-→ Final score CAPPED at 0.25 due to incomplete context
+→ Итоговая оценка ОГРАНИЧЕНА 0.25 из-за неполного контекста
 
-=== PLATITUDES EXAMPLE (final ~0.20) ===
+=== ПРИМЕР БАНАЛЬНОСТЕЙ (итог ~0.20) ===
 
-"The key to success is persistence. Never give up on your dreams. 
-Believe in yourself. You can do anything you set your mind to."
+«Ключ к успеху — настойчивость. Никогда не сдавайся.
+Верь в себя. Ты можешь достичь всего, к чему стремишься.»
 
-Scores:
-- surprise_novelty: 0.0 (the opposite of surprising)
-- specificity_score: 0.0 (zero specifics)
-- personal_connection: 0.0 (no personal story)
-- actionability_score: 0.1 (just "persist" and "believe")
-- clarity_simplicity: 0.8 (easy to understand)
-- completeness_arc: 0.3 (has a message, but no story)
-- hook_quality: 0.2 (cliché opening)
+Оценки:
+- surprise_novelty: 0.0 (противоположность удивительному)
+- specificity_score: 0.0 (ноль конкретики)
+- personal_connection: 0.0 (нет личной истории)
+- actionability_score: 0.1 (просто «будь настойчив» и «верь»)
+- clarity_simplicity: 0.8 (легко понять)
+- completeness_arc: 0.3 (есть посыл, но нет истории)
+- hook_quality: 0.2 (клишированное начало)
 - needs_previous_context: false
 - needs_next_context: false
 
-=== DANGLING SETUP EXAMPLE (trim_last_sentences) ===
+=== ПРИМЕР ВИСЯЩЕЙ ЗАВЯЗКИ (trim_last_sentences) ===
 
-РУССКИЙ ПРИМЕР (для русского контента):
-Текст сегмента: "В науке много табу: ставить под сомнение дарвинизм, исследования 
+Текст сегмента: «В науке много табу: ставить под сомнение дарвинизм, исследования 
 стволовых клеток, изменение климата — это опасно. Но он выбрал тему ещё опаснее. 
 Он считал, что большинство так называемых учёных попросту воруют государственные 
 деньги, занимаются псевдонаукой или мелкими улучшениями без ценности. 
-Его специализация — высокотемпературная сверхпроводимость."
+Его специализация — высокотемпературная сверхпроводимость.»
 
-Следующий сегмент начинается: "Он сказал мне: в этой области вышло 50 тысяч статей..."
+Следующий сегмент начинается: «Он сказал мне: в этой области вышло 50 тысяч статей...»
 
-Анализ: Последнее предложение "Его специализация — высокотемпературная сверхпроводимость"
+Анализ: Последнее предложение «Его специализация — высокотемпературная сверхпроводимость»
 вводит конкретную область, которая НЕ обсуждается в ЭТОМ сегменте, но ЯВЛЯЕТСЯ главной
-темой СЛЕДУЮЩЕГО сегмента ("в этой области вышло 50 тысяч статей..."). Это DANGLING 
-SETUP — сегмент заканчивается новой информацией, которая имеет смысл только со следующей частью.
+темой СЛЕДУЮЩЕГО сегмента («в этой области вышло 50 тысяч статей...»). Это ВИСЯЩАЯ 
+ЗАВЯЗКА — сегмент заканчивается новой информацией, которая имеет смысл только со следующей частью.
 
 Оценки:
 - completeness_arc: 0.5 (хорошая арка испорчена висящим последним предложением)
 - needs_next_context: TRUE (деталь о специализации требует следующий сегмент)
-- trim_last_sentences: 1 (переместить "Его специализация..." в следующий сегмент)
-→ Итоговый score ОГРАНИЧЕН 0.25 из-за dangling setup
+- trim_last_sentences: 1 (переместить «Его специализация...» в следующий сегмент)
+→ Итоговая оценка ОГРАНИЧЕНА 0.25 из-за висящей завязки
 
-ENGLISH EXAMPLE:
-Segment text: "There are many taboos in science: questioning Darwinism, stem cell 
-research, climate change — it's dangerous. But he chose an even more dangerous topic. 
-He claimed that most so-called scientists simply steal government money, engage in 
-pseudoscience or trivial research without value. His specialty was high-temperature 
-superconductivity."
-
-Next topic: "He said that in this field, 50,000 papers were published, and only 25 
-of them actually advanced science..."
-
-Analysis: The last sentence "His specialty was high-temperature superconductivity" 
-introduces a specific field that is NOT discussed in THIS segment, but IS the main 
-topic of the NEXT segment ("in this field, 50,000 papers..."). This is a DANGLING 
-SETUP — the segment ends with new information that only makes sense with the next part.
-
-Scores:
-- completeness_arc: 0.5 (good arc ruined by dangling last sentence)
-- needs_next_context: TRUE (the specialty detail needs the next segment for payoff)
-- trim_last_sentences: 1 (move "His specialty was..." to next segment)
-→ Final score CAPPED at 0.25 due to dangling setup
-
-TEXT:
+ТЕКСТ:
 "{segment['text']}"
 
-SCORING DIMENSIONS (each measures ONE specific thing):
+КРИТЕРИИ ОЦЕНКИ (каждый измеряет ОДНУ конкретную вещь):
 
 1. surprise_novelty (0.0–1.0)
-   What: Counterintuitive insight, challenges assumptions, reveals something unexpected
-   NOT: Importance or usefulness of information
-   High: "Sleeping MORE than 9 hours is as bad as sleeping less than 6"
-   Low: "Sleep is important for health"
+   Что: Контринтуитивный инсайт, бросает вызов предположениям, раскрывает неожиданное
+   НЕ: Важность или полезность информации
+   Высоко: «Спать БОЛЬШЕ 9 часов так же вредно, как меньше 6»
+   Низко: «Сон важен для здоровья»
 
 2. specificity_score (0.0–1.0)
-   What: Concrete numbers, dates, names, measurable results, specific examples
-   NOT: Quality of the idea or emotional delivery
-   High: "$400K debt → 60% discount → 18 months → debt-free"
-   Low: "I had a lot of debt and eventually paid it off"
+   Что: Конкретные цифры, даты, имена, измеримые результаты, конкретные примеры
+   НЕ: Качество идеи или эмоциональная подача
+   Высоко: «30 млн долга → скидка 60% → 18 месяцев → свободен от долгов»
+   Низко: «У меня было много долгов и в итоге я их выплатил»
 
 3. personal_connection (0.0–1.0)
-   What: Personal story, vulnerability, emotional narrative, relatable experience
-   NOT: Practical usefulness or novelty
-   High: "At my father's funeral, I realized no one mentioned his money..."
-   Low: "Studies show people value relationships over wealth"
+   Что: Личная история, уязвимость, эмоциональный нарратив, близкий опыт
+   НЕ: Практическая полезность или новизна
+   Высоко: «На похоронах отца я понял, что никто не упомянул его деньги...»
+   Низко: «Исследования показывают, что люди ценят отношения выше богатства»
 
 4. actionability_score (0.0–1.0)
-   What: Clear instructions, steps, protocols, "do X, then Y, avoid Z"
-   NOT: Importance of the problem or emotional weight
-   High: "Call each creditor, ask for 60% reduction, document everything"
-   Low: "You should try to negotiate with creditors"
+   Что: Чёткие инструкции, шаги, протоколы, «сделай X, потом Y, избегай Z»
+   НЕ: Важность проблемы или эмоциональный вес
+   Высоко: «Позвони каждому кредитору, попроси скидку 60%, документируй всё»
+   Низко: «Тебе стоит попробовать договориться с кредиторами»
 
 5. clarity_simplicity (0.0–1.0)
-   What: Accessible language, no jargon, well-structured, easy to follow
-   NOT: Depth or originality of the thought
-   High: Complex topic explained with everyday examples
-   Low: Dense academic language, assumes prior knowledge
+   Что: Доступный язык, без жаргона, хорошая структура, легко следить
+   НЕ: Глубина или оригинальность мысли
+   Высоко: Сложная тема объяснена на бытовых примерах
+   Низко: Плотный академический язык, требует предварительных знаний
 
 6. completeness_arc (0.0–1.0)
-   What: Has beginning, middle, end. Problem → action → result/lesson
-   NOT: Quality of each individual element
-   High: "I was broke → did X → now I'm successful"
-   Low: "Here's what I did..." (no setup or result)
+   Что: Есть начало, середина, конец. Проблема → действие → результат/урок
+   НЕ: Качество каждого отдельного элемента
+   Высоко: «Я был банкротом → сделал X → теперь успешен»
+   Низко: «Вот что я сделал...» (нет завязки или результата)
 
 7. hook_quality (0.0–1.0)
-   What: ONLY the first 5-10 words. Does it grab attention immediately?
-   NOT: Quality of the rest of the clip
-   High: "Everything you know about diets is wrong"
-   Low: "So, yeah, I was thinking about this..."
+   Что: ТОЛЬКО первые 5-10 слов. Цепляет ли внимание сразу?
+   НЕ: Качество остальной части клипа
+   Высоко: «Всё, что ты знаешь о диетах — неправда»
+   Низко: «Ну, да, я тут думал об этом...»
 
 8. needs_previous_context (true/false)
-   Does this segment require the previous one to make sense?
+   Требует ли этот сегмент предыдущий, чтобы иметь смысл?
 
 9. needs_next_context (true/false)
-   Does this segment require the next one for a complete thought?
-   INCLUDES dangling setups: last sentence introduces something not used in THIS segment.
+   Требует ли этот сегмент следующий для законченной мысли?
+   ВКЛЮЧАЕТ висящие завязки: последнее предложение вводит что-то, не использованное в ЭТОМ сегменте.
 
 10. trim_first_sentences (0-3)
-    How many sentences from the START should move to the PREVIOUS segment?
-    Use when first sentences are conclusions of the previous topic.
+    Сколько предложений с НАЧАЛА должны перейти в ПРЕДЫДУЩИЙ сегмент?
+    Используй когда первые предложения — выводы из предыдущей темы.
 
 11. trim_last_sentences (0-3)
-    How many sentences from the END should move to the NEXT segment?
-    Use when last sentences are setup for the next topic (dangling setup).
+    Сколько предложений с КОНЦА должны перейти в СЛЕДУЮЩИЙ сегмент?
+    Используй когда последние предложения — завязка для следующей темы (висящая завязка).
 
-SCORING PROCESS:
-1. First check needs_previous_context and needs_next_context (including dangling setups!)
-2. If needs_next_context due to dangling setup, set trim_last_sentences accordingly
-3. If needs_previous_context due to orphaned conclusion, set trim_first_sentences accordingly
-4. Then evaluate completeness_arc (most important for standalone clips)
-5. Score remaining 6 criteria independently
-6. Be strict: 0.8+ requires exceptional quality in that dimension
+ПРОЦЕСС ОЦЕНКИ:
+1. Сначала проверь needs_previous_context и needs_next_context (включая висящие завязки!)
+2. Если needs_next_context из-за висящей завязки, установи trim_last_sentences соответственно
+3. Если needs_previous_context из-за осиротевшего вывода, установи trim_first_sentences соответственно
+4. Затем оцени completeness_arc (самое важное для самостоятельных клипов)
+5. Оцени оставшиеся 6 критериев независимо
+6. Будь строг: 0.8+ требует исключительного качества по этому измерению
 
-OUTPUT FORMAT:
-Respond ONLY with valid JSON (no explanations, no markdown):
+ФОРМАТ ВЫВОДА:
+Ответь ТОЛЬКО валидным JSON (без объяснений, без markdown):
 {{
   "surprise_novelty": 0.0,
   "specificity_score": 0.0,
@@ -2002,8 +1962,8 @@ Respond ONLY with valid JSON (no explanations, no markdown):
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an editor who scores transcript fragments for viral short-form video potential. "
-                        "Deliver concise JSON scores between 0 and 1.",
+                        "content": "Ты — редактор, который оценивает фрагменты транскрипции на потенциал вирусного короткого видео. "
+                        "Выдавай лаконичные JSON-оценки от 0 до 1.",
                     },
                     {"role": "user", "content": prompt},
                 ],

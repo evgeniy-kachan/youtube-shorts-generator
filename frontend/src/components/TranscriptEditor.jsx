@@ -38,18 +38,36 @@ const TranscriptEditor = ({
     if (segments.length > 0 && sentences.length > 0) {
       const boundaries = segments.map(seg => {
         // Find sentence indices that match segment times
-        const startIdx = sentences.findIndex(s => s.start >= seg.start_time - 0.5);
-        const endIdx = sentences.findIndex(s => s.end >= seg.end_time - 0.5);
+        // startIdx: first sentence that starts at or after segment start
+        let startIdx = sentences.findIndex(s => s.start >= seg.start_time - 0.5);
+        if (startIdx === -1) startIdx = 0;
+        
+        // endIdx: last sentence that ends at or before segment end
+        let endIdx = -1;
+        for (let i = sentences.length - 1; i >= 0; i--) {
+          if (sentences[i].end <= seg.end_time + 0.5) {
+            endIdx = i;
+            break;
+          }
+        }
+        if (endIdx === -1) endIdx = sentences.length - 1;
+        
+        // Ensure startIdx <= endIdx
+        if (startIdx > endIdx) {
+          startIdx = endIdx;
+        }
+        
         return {
           id: seg.id,
-          startIdx: Math.max(0, startIdx),
-          endIdx: endIdx >= 0 ? endIdx : sentences.length - 1,
-          score: seg.highlight_score,
+          startIdx,
+          endIdx,
+          score: seg.highlight_score || 0,
           originalStart: seg.start_time,
           originalEnd: seg.end_time,
         };
       });
       setSegmentBoundaries(boundaries);
+      console.log('Initialized boundaries:', boundaries);
     }
   }, [segments, sentences]);
 
@@ -74,39 +92,87 @@ const TranscriptEditor = ({
   }, [segmentBoundaries, sentences]);
 
   // Move segment start boundary
-  const moveStart = useCallback((segIdx, direction) => {
+  const moveStart = useCallback((segIdx, direction, e) => {
+    if (e) e.stopPropagation();
+    console.log('moveStart called:', { segIdx, direction, sentencesLength: sentences.length });
+    
+    if (segIdx === null || segIdx === undefined) {
+      console.log('Blocked: segIdx is null/undefined');
+      return;
+    }
+    
     setSegmentBoundaries(prev => {
       const newBoundaries = [...prev];
       const current = newBoundaries[segIdx];
+      if (!current) {
+        console.log('No current boundary found for segIdx:', segIdx);
+        return prev;
+      }
       const newStartIdx = current.startIdx + direction;
       
+      console.log('moveStart:', { current: current.startIdx, newStartIdx, endIdx: current.endIdx });
+      
       // Constraints
-      if (newStartIdx < 0) return prev;
-      if (newStartIdx > current.endIdx) return prev;
+      if (newStartIdx < 0) {
+        console.log('Blocked: newStartIdx < 0');
+        return prev;
+      }
+      if (newStartIdx > current.endIdx) {
+        console.log('Blocked: newStartIdx > endIdx');
+        return prev;
+      }
       
       // Don't overlap with previous segment
-      if (segIdx > 0 && newStartIdx <= newBoundaries[segIdx - 1].endIdx) return prev;
+      if (segIdx > 0 && newStartIdx <= newBoundaries[segIdx - 1].endIdx) {
+        console.log('Blocked: would overlap with previous');
+        return prev;
+      }
       
       newBoundaries[segIdx] = { ...current, startIdx: newStartIdx };
+      console.log('Success: new startIdx =', newStartIdx);
       return newBoundaries;
     });
-  }, []);
+  }, [sentences.length]);
 
   // Move segment end boundary
-  const moveEnd = useCallback((segIdx, direction) => {
+  const moveEnd = useCallback((segIdx, direction, e) => {
+    if (e) e.stopPropagation();
+    console.log('moveEnd called:', { segIdx, direction, sentencesLength: sentences.length });
+    
+    if (segIdx === null || segIdx === undefined) {
+      console.log('Blocked: segIdx is null/undefined');
+      return;
+    }
+    
     setSegmentBoundaries(prev => {
       const newBoundaries = [...prev];
       const current = newBoundaries[segIdx];
+      if (!current) {
+        console.log('No current boundary found for segIdx:', segIdx);
+        return prev;
+      }
       const newEndIdx = current.endIdx + direction;
       
+      console.log('moveEnd:', { current: current.endIdx, newEndIdx, startIdx: current.startIdx });
+      
       // Constraints
-      if (newEndIdx >= sentences.length) return prev;
-      if (newEndIdx < current.startIdx) return prev;
+      if (newEndIdx >= sentences.length) {
+        console.log('Blocked: newEndIdx >= sentences.length', sentences.length);
+        return prev;
+      }
+      if (newEndIdx < current.startIdx) {
+        console.log('Blocked: newEndIdx < startIdx');
+        return prev;
+      }
       
       // Don't overlap with next segment
-      if (segIdx < newBoundaries.length - 1 && newEndIdx >= newBoundaries[segIdx + 1].startIdx) return prev;
+      if (segIdx < newBoundaries.length - 1 && newEndIdx >= newBoundaries[segIdx + 1].startIdx) {
+        console.log('Blocked: would overlap with next');
+        return prev;
+      }
       
       newBoundaries[segIdx] = { ...current, endIdx: newEndIdx };
+      console.log('Success: new endIdx =', newEndIdx);
       return newBoundaries;
     });
   }, [sentences.length]);
@@ -311,13 +377,13 @@ const TranscriptEditor = ({
                         </label>
                         <div className="flex gap-2">
                           <button
-                            onClick={() => moveStart(selectedSegmentIdx, -1)}
+                            onClick={(e) => moveStart(selectedSegmentIdx, -1, e)}
                             className="flex-1 py-2 px-3 bg-white border rounded-lg hover:bg-gray-50 transition font-medium"
                           >
                             ▲ Вверх
                           </button>
                           <button
-                            onClick={() => moveStart(selectedSegmentIdx, 1)}
+                            onClick={(e) => moveStart(selectedSegmentIdx, 1, e)}
                             className="flex-1 py-2 px-3 bg-white border rounded-lg hover:bg-gray-50 transition font-medium"
                           >
                             ▼ Вниз
@@ -335,13 +401,13 @@ const TranscriptEditor = ({
                         </label>
                         <div className="flex gap-2">
                           <button
-                            onClick={() => moveEnd(selectedSegmentIdx, -1)}
+                            onClick={(e) => moveEnd(selectedSegmentIdx, -1, e)}
                             className="flex-1 py-2 px-3 bg-white border rounded-lg hover:bg-gray-50 transition font-medium"
                           >
                             ▲ Вверх
                           </button>
                           <button
-                            onClick={() => moveEnd(selectedSegmentIdx, 1)}
+                            onClick={(e) => moveEnd(selectedSegmentIdx, 1, e)}
                             className="flex-1 py-2 px-3 bg-white border rounded-lg hover:bg-gray-50 transition font-medium"
                           >
                             ▼ Вниз

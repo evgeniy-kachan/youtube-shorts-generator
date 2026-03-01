@@ -980,7 +980,25 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysi
     video_duration = segments[-1]['end'] if segments else 0.0
     min_highlight_count = get_min_highlights(video_duration)
 
-    # 3. Analyze for highlights
+    # 3. Translate ALL text to Russian BEFORE DeepSeek analysis
+    # This way DeepSeek works with Russian text and editor has Russian ready
+    tasks[task_id] = {"status": "processing", "progress": 0.4, "message": "Перевод текста на русский..."}
+    
+    translator = get_service("translation")
+    texts_to_translate = [seg.get("text", "") for seg in segments]
+    
+    logger.info(f"Translating {len(texts_to_translate)} transcript segments to Russian...")
+    translations = translator.translate_batch(texts_to_translate)
+    
+    # Store both English original and Russian translation
+    for seg, translation in zip(segments, translations):
+        seg["text_en"] = seg["text"]  # Keep English original
+        seg["text"] = translation      # Main text is now Russian
+        seg["text_ru"] = translation   # Also store as text_ru for consistency
+    
+    logger.info("Full transcript translation completed.")
+
+    # 4. Analyze for highlights (now with Russian text)
     # Select model based on analysis_mode: 'fast' = deepseek-chat, 'deep' = deepseek-reasoner
     analysis_model = "deepseek-reasoner" if analysis_mode == "deep" else "deepseek-chat"
     mode_label = "глубокий (R1)" if analysis_mode == "deep" else "быстрый"
@@ -1002,102 +1020,43 @@ def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysi
     )
     logger.info(f"Found {len(filtered_highlights)} non-overlapping segments.")
     
-    tasks[task_id] = {"status": "processing", "progress": 0.7, "message": "Translating segments..."}
+    tasks[task_id] = {"status": "processing", "progress": 0.7, "message": "Подготовка сегментов..."}
 
-    # 5. Translate text to Russian
-    translator = get_service("translation")
+    # 5. Text is already translated (done before DeepSeek analysis)
+    # Now we just need to:
+    # - Ensure text_ru is set for each segment (from dialogue or main text)
+    # - Apply markup for TTS
     markup_service = get_service("text_markup") if config.TTS_ENABLE_MARKUP else None
     
-    # Prepare texts for translation
-    # We collect ALL dialogue turns from ALL segments to batch translate them
-    all_turns = []
-    for seg in filtered_highlights:
-        # If dialogue structure is present, use it. Otherwise fallback to main text.
-        if seg.get('dialogue'):
-            for turn in seg['dialogue']:
-                all_turns.append(turn)
-        else:
-            # Fake turn for segments without dialogue structure
-            all_turns.append({'text': seg['text'], 'parent_seg': seg})
-
-    texts_to_translate = [turn['text'] for turn in all_turns]
-    
-    logger.info(f"Starting batch translation for {len(texts_to_translate)} items...")
-    translations = translator.translate_batch(texts_to_translate)
-    
-    if os.getenv("DEBUG_SAVE_TRANSLATIONS", "0") == "1":
-        debug_dir = Path(config.TEMP_DIR) / "debug"
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        debug_path = debug_dir / f"{video_id}_translations.txt"
-        with open(debug_path, "w", encoding="utf-8") as debug_file:
-            for original, translated in zip(texts_to_translate, translations):
-                debug_file.write("=== ORIGINAL ===\n")
-                debug_file.write(original.strip() + "\n")
-                debug_file.write("--- TRANSLATED ---\n")
-                debug_file.write((translated or "").strip() + "\n\n")
-    
-    logger.info("Batch translation finished. Assigning results...")
-
-    # Assign translations back to dialogue turns
-    for i, turn in enumerate(all_turns):
-        turn['text_ru'] = translations[i]
-        
-        # Markup (only if needed, though for dialogue we might want to do it later or now)
-        # For now, let's just store raw translated text in the turn
-    
-    # Reconstruct full Russian text for each segment
     for segment in filtered_highlights:
-        segment['text_en'] = segment.pop('text')  # Rename original text
+        # Text is already in Russian (translated before DeepSeek)
+        # Just ensure text_ru and text_en are properly set
+        if 'text_en' not in segment:
+            segment['text_en'] = segment.get('text', '')
+        if 'text_ru' not in segment:
+            segment['text_ru'] = segment.get('text', '')
         
+        # If dialogue exists, ensure each turn has text_ru
         if segment.get('dialogue'):
-            # Join translated turns to form the full segment text
-            ru_parts = [turn['text_ru'] for turn in segment['dialogue']]
-            full_ru = " ".join(ru_parts)
-            segment['text_ru'] = full_ru
-        else:
-            # Should correspond to the logic above where we appended a fake turn
-            # But wait, 'all_turns' has references. The loop above updated 'turn' dicts.
-            # If we used 'parent_seg', we need to retrieve it.
-            # Actually, simpler: if no dialogue, we just used the text directly.
-            # Let's handle the 'fake turn' case properly.
-            # Since 'all_turns' contains mutable dicts from 'dialogue', they are updated in place.
-            # For the fallback case, we need to manually update the segment.
-            pass # Handled by reconstruction below if dialogue exists.
-                 # If NO dialogue, we need to find which turn belonged to this segment.
-    
-    # Fix for segments without dialogue (fallback)
-    # Since we flattened everything into 'all_turns', we need to know which turns belong to which segment
-    # Re-iterating is safer
-    
-    current_turn_idx = 0
-    for segment in filtered_highlights:
-        if segment.get('dialogue'):
-            num_turns = len(segment['dialogue'])
-            # These turns were updated in place in 'all_turns' list
-            ru_parts = [t.get('text_ru', '') for t in segment['dialogue']]
-            segment['text_ru'] = " ".join(ru_parts)
-            current_turn_idx += num_turns
-        else:
-            # Single text item
-            segment['text_ru'] = translations[current_turn_idx]
-            current_turn_idx += 1
+            for turn in segment['dialogue']:
+                if 'text_ru' not in turn:
+                    turn['text_ru'] = turn.get('text', '')
 
-        # Markup for the FULL text (for subtitles)
+        # Markup for TTS (for subtitles)
         if markup_service:
-            # logger.info("Calling TextMarkup for segment %s", segment['id'])
             segment['text_ru_tts'] = markup_service.mark_text(segment['text_ru'])
         else:
-            # logger.info("Markup service unavailable, using raw text for segment %s", segment['id'])
             segment['text_ru_tts'] = segment['text_ru']
 
-    logger.info("Translation results assigned.")
+    logger.info("Segments prepared with Russian text.")
 
     # Cache the result
+    # IMPORTANT: Use 'segments' (translated) not 'transcription_result['segments']' (original English)
     analysis_result = {
         'video_id': video_id,
         'video_path': video_path,
         'segments': filtered_highlights,
-        'transcript_segments': transcription_result['segments'],
+        'transcript_segments': segments,  # Already translated to Russian
         'thumbnail_path': thumbnail_path,
     }
     analysis_results_cache[video_id] = analysis_result
@@ -1396,15 +1355,12 @@ def _process_segments_task(
                 # Refine turn boundaries using word-level timestamps
                 _refine_turn_boundaries(segment['dialogue'])
                 
-                # Isochronic translation with precise timings
-                try:
-                    translator = Translator()
-                    segment['dialogue'] = translator.translate_with_timings(
-                        dialogue_turns=segment['dialogue'],
-                        segment_context=segment.get('title', ''),
-                    )
-                except Exception as trans_exc:
-                    logger.warning("Isochronic translation failed: %s", trans_exc)
+                # Text is already translated to Russian during analysis phase
+                # Just ensure text_ru is set for each turn (copy from 'text' if needed)
+                for turn in segment['dialogue']:
+                    if not turn.get('text_ru'):
+                        turn['text_ru'] = turn.get('text', '')
+                
                 tts_service.synthesize_dialogue(
                     dialogue_turns=segment['dialogue'],
                     output_path=audio_path,
@@ -1438,14 +1394,11 @@ def _process_segments_task(
                         
                         _refine_turn_boundaries(segment['dialogue'])
                         
-                        try:
-                            translator = Translator()
-                            segment['dialogue'] = translator.translate_with_timings(
-                                dialogue_turns=segment['dialogue'],
-                                segment_context=segment.get('title', ''),
-                            )
-                        except Exception as trans_exc:
-                            logger.warning("Isochronic translation failed: %s", trans_exc)
+                        # Text is already translated to Russian during analysis phase
+                        # Just ensure text_ru is set for each turn (copy from 'text' if needed)
+                        for turn in segment['dialogue']:
+                            if not turn.get('text_ru'):
+                                turn['text_ru'] = turn.get('text', '')
                         
                         tts_service.synthesize_dialogue(
                             dialogue_turns=segment['dialogue'],
@@ -2995,31 +2948,19 @@ async def get_transcript_sentences(video_id: str):
     transcript_segments = cached.get("transcript_segments", [])
     segments = cached.get("segments", [])
     
-    # Build sentences list from segments' dialogue (has Russian translation)
-    # Each segment has dialogue with text_ru for each turn
+    # Build sentences list from transcript_segments (full transcript, already translated)
+    # Text is already in Russian (translated before DeepSeek analysis)
     sentences = []
     
-    for seg in segments:
-        dialogue = seg.get("dialogue", [])
-        if dialogue:
-            for turn in dialogue:
-                # Use text_ru (Russian translation), fallback to text (English)
-                text = turn.get("text_ru") or turn.get("text", "")
-                sentences.append({
-                    "text": text.strip(),
-                    "start": turn.get("start", 0),
-                    "end": turn.get("end", 0),
-                    "speaker": turn.get("speaker", ""),
-                })
-        else:
-            # Fallback: use segment's text_ru directly
-            text = seg.get("text_ru") or seg.get("text_en") or seg.get("text", "")
-            sentences.append({
-                "text": text.strip(),
-                "start": seg.get("start_time", 0),
-                "end": seg.get("end_time", 0),
-                "speaker": seg.get("primary_speaker", ""),
-            })
+    for ts in transcript_segments:
+        # Use text_ru (Russian), fallback to text (which should also be Russian now)
+        text = ts.get("text_ru") or ts.get("text", "")
+        sentences.append({
+            "text": text.strip(),
+            "start": ts.get("start", 0),
+            "end": ts.get("end", 0),
+            "speaker": ts.get("speaker", ""),
+        })
     
     # Sort by start time to ensure correct order
     sentences.sort(key=lambda x: x["start"])
