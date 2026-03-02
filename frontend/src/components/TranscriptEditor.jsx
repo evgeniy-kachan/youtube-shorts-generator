@@ -132,6 +132,20 @@ const TranscriptEditor = ({
       // but keep original globalIndex for display
       boundaries.sort((a, b) => a.startIdx - b.startIdx);
       
+      // Resolve overlaps: when segments share sentences at boundaries,
+      // the EARLIER segment keeps them (matches DeepSeek text assignment).
+      // Example: Segment 1 ends with "Знаешь что?" (0:59), Segment 2 starts at 0:59
+      // → Segment 1 keeps "Знаешь что?", Segment 2 starts at next sentence
+      for (let i = 1; i < boundaries.length; i++) {
+        if (boundaries[i].startIdx <= boundaries[i - 1].endIdx) {
+          boundaries[i].startIdx = boundaries[i - 1].endIdx + 1;
+          // Keep at least 1 sentence in the segment
+          if (boundaries[i].startIdx > boundaries[i].endIdx) {
+            boundaries[i].startIdx = boundaries[i].endIdx;
+          }
+        }
+      }
+      
       setSegmentBoundaries(boundaries);
       setSelectedSegmentIdx(0);
     }
