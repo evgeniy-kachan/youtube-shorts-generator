@@ -424,18 +424,19 @@ def _ensure_dialogue_russian(segment: dict, translator) -> None:
     """
     Ensure all dialogue turns in a segment have Russian text_ru.
     
+    Uses translate_with_timings (STAGE1_PROMPT) for isochronic translation
+    that fits the exact duration of each turn from Whisper timestamps.
+    
     Handles three cases:
     1. Existing translated turns (from analysis phase) → text_ru already Russian ✓
     2. Pseudo-dialogue from English Whisper words → text is English, needs translation
     3. NeMo-rediarized turns from English words → text is English, needs translation
-    
-    Uses batch translation for efficiency.
     """
     dialogue = segment.get('dialogue')
     if not dialogue:
         return
     
-    # Collect turns that need translation
+    # Collect turns that need translation (have English text, no Russian)
     turns_needing_translation = []
     for idx, turn in enumerate(dialogue):
         text_ru = turn.get('text_ru', '')
@@ -450,36 +451,70 @@ def _ensure_dialogue_russian(segment: dict, translator) -> None:
             turn['text_ru'] = text
             continue
         
-        # Text is English (from words or not yet translated) - queue for translation
+        # Text is English (from words or not yet translated) - needs translation
         source_text = text_ru or text
         if source_text and source_text.strip():
-            turns_needing_translation.append((idx, source_text))
+            turns_needing_translation.append(idx)
     
     if not turns_needing_translation:
         return
     
-    # Batch translate all English turns
+    # Build dialogue turns for translate_with_timings (with Whisper timestamps)
+    # This uses STAGE1_PROMPT which calculates target_ru_words from duration
     logger.info(
-        "Translating %d dialogue turns to Russian for segment %s",
+        "Translating %d dialogue turns with ISOCHRONIC timing for segment %s",
         len(turns_needing_translation), segment.get('id', '?')
     )
     
-    texts_to_translate = [t[1] for t in turns_needing_translation]
+    # Prepare turns for translation (only those needing it)
+    turns_for_translation = []
+    for idx in turns_needing_translation:
+        turn = dialogue[idx]
+        source_text = turn.get('text_ru') or turn.get('text', '')
+        turns_for_translation.append({
+            'speaker': turn.get('speaker', f'SPEAKER_{idx:02d}'),
+            'text': source_text,  # English text to translate
+            'start': turn.get('start', 0),
+            'end': turn.get('end', 0),
+        })
     
     try:
-        translations = translator.translate_batch(texts_to_translate)
+        # Use translate_with_timings which uses STAGE1_PROMPT with duration targets
+        # This produces translations optimized for the exact timing of each turn
+        translated_turns = translator.translate_with_timings(
+            turns_for_translation,
+            segment_context=segment.get('text_en', '')[:200]  # Context for better translation
+        )
         
-        for (turn_idx, original_text), translation in zip(turns_needing_translation, translations):
-            turn = dialogue[turn_idx]
-            turn['text_en'] = original_text  # Preserve English
-            turn['text_ru'] = translation     # Set Russian
+        # Apply translations back to original dialogue
+        for i, idx in enumerate(turns_needing_translation):
+            turn = dialogue[idx]
+            translated = translated_turns[i]
+            turn['text_en'] = turn.get('text_ru') or turn.get('text', '')  # Preserve English
+            turn['text_ru'] = translated.get('text_ru', turn['text_en'])   # Set Russian
+            
+            # Log with timing info
+            duration = turn.get('end', 0) - turn.get('start', 0)
+            en_words = len(turn['text_en'].split())
+            ru_words = len(turn['text_ru'].split())
             logger.info(
-                "Translated turn %d: '%s' → '%s'",
-                turn_idx, original_text[:50], translation[:50]
+                "Isochronic turn %d (%.1fs): EN %d words → RU %d words | '%s' → '%s'",
+                idx, duration, en_words, ru_words,
+                turn['text_en'][:40], turn['text_ru'][:40]
             )
     except Exception as e:
-        logger.error("Failed to translate dialogue turns for %s: %s", segment.get('id'), e)
-        # Fallback: copy text as-is (will be English but won't crash)
+        logger.error("Failed isochronic translation for %s: %s, falling back to batch", segment.get('id'), e)
+        # Fallback to simple batch translation
+        texts_to_translate = [dialogue[idx].get('text_ru') or dialogue[idx].get('text', '') 
+                             for idx in turns_needing_translation]
+        try:
+            translations = translator.translate_batch(texts_to_translate)
+            for idx, translation in zip(turns_needing_translation, translations):
+                turn = dialogue[idx]
+                turn['text_en'] = turn.get('text_ru') or turn.get('text', '')
+                turn['text_ru'] = translation
+        except Exception as e2:
+            logger.error("Fallback translation also failed: %s", e2)
         for turn_idx, original_text in turns_needing_translation:
             turn = dialogue[turn_idx]
             if not turn.get('text_ru'):
@@ -1401,10 +1436,16 @@ def _process_segments_task(
                 num_speakers if num_speakers > 0 else 'auto'
             )
             
-            # If user specified num_speakers >= 2 but diarization found only 1, force multi-speaker
+            # Speaker override: ONLY if user explicitly provided change_times or change_phrases
+            # Do NOT force multi-speaker just because num_speakers > detected_speakers
+            # Trust NeMo/diarization results — if it found 1 speaker, use 1 voice
             detected_speakers = len(speakers_in_segment)
-            if num_speakers >= 2 and detected_speakers < num_speakers and dialogue:
-                # Parse speaker change times/phrases (relative to segment start)
+            
+            # Check if user provided explicit speaker change hints
+            has_explicit_hints = bool(speaker_change_phrases) or bool(speaker_change_times)
+            
+            if has_explicit_hints and num_speakers >= 2 and dialogue:
+                # User explicitly told us where speakers change — apply override
                 change_times = []
                 
                 # Priority: phrases > times
@@ -1433,13 +1474,13 @@ def _process_segments_task(
                     except ValueError:
                         logger.warning("Invalid speaker_change_times format: %s", speaker_change_times)
                 
-                speaker_names = [f"SPEAKER_{i:02d}" for i in range(num_speakers)]
-                segment_start = float(segment.get('start_time', 0))
-                
                 if change_times:
+                    speaker_names = [f"SPEAKER_{i:02d}" for i in range(num_speakers)]
+                    segment_start = float(segment.get('start_time', 0))
+                    
                     # Use time-based speaker assignment
                     logger.info(
-                        "SPEAKER OVERRIDE [%s]: Using time-based assignment. Change times: %s (relative to segment start)",
+                        "SPEAKER OVERRIDE [%s]: Using explicit time-based assignment. Change times: %s",
                         segment['id'], change_times
                     )
                     for turn in dialogue:
@@ -1454,16 +1495,20 @@ def _process_segments_task(
                             "Turn at %.1fs -> %s (change_times=%s)",
                             turn_start, turn['speaker'], change_times
                         )
+                    speakers_in_segment = set(speaker_names)
                 else:
-                    # Fallback to alternating assignment
+                    # No valid change times found — trust diarization
                     logger.info(
-                        "SPEAKER OVERRIDE [%s]: User requested %d speakers but only %d detected. Assigning alternating speakers.",
-                        segment['id'], num_speakers, detected_speakers
+                        "SPEAKER OVERRIDE [%s]: No valid change hints found, trusting diarization (%d speakers)",
+                        segment['id'], detected_speakers
                     )
-                    for idx, turn in enumerate(dialogue):
-                        turn['speaker'] = speaker_names[idx % num_speakers]
-                
-                speakers_in_segment = set(speaker_names)
+            elif num_speakers >= 2 and detected_speakers < num_speakers:
+                # User requested more speakers but didn't provide hints — just log, don't force
+                logger.info(
+                    "SPEAKER INFO [%s]: User requested %d speakers but diarization found %d. "
+                    "Using diarization result. To override, provide speaker_change_times or speaker_change_phrases.",
+                    segment['id'], num_speakers, detected_speakers
+                )
             
             # Check if we have a dialogue structure for multi-speaker synthesis
             has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
