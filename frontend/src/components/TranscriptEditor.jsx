@@ -109,8 +109,9 @@ const TranscriptEditor = ({
       
       // Sort by tier (strict first, then extended, then fallback)
       // Within same tier, keep original array order
+      // IMPORTANT: use ?? not || because tierOrder['strict'] = 0 and (0 || 1) = 1 in JS!
       indexed.sort((a, b) => {
-        const tierDiff = (tierOrder[a.tier] || 1) - (tierOrder[b.tier] || 1);
+        const tierDiff = (tierOrder[a.tier] ?? 1) - (tierOrder[b.tier] ?? 1);
         if (tierDiff !== 0) return tierDiff;
         return a.idx - b.idx; // Preserve original order within tier
       });
