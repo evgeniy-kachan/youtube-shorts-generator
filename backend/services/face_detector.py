@@ -1099,33 +1099,79 @@ class FaceDetector:
                                         scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
                                     )
                             else:
-                                left_sizes: list[float] = []
-                                right_sizes: list[float] = []
                                 mid_pos = (left_pos + right_pos) / 2.0
-                                
-                                for faces in all_faces:
-                                    for f in faces:
-                                        pos = f["center_x"] / frame_width
-                                        face_size = f.get("area", f.get("w", 0) * f.get("h", 0))
-                                        if pos < mid_pos:
-                                            left_sizes.append(face_size)
-                                        else:
-                                            right_sizes.append(face_size)
-                                
+
+                                def _split_left_right(faces_list):
+                                    """Sum face areas on left vs right of mid_pos."""
+                                    l_sizes: list[float] = []
+                                    r_sizes: list[float] = []
+                                    for faces in faces_list:
+                                        for f in faces:
+                                            pos = f["center_x"] / frame_width
+                                            face_size = f.get("area", f.get("w", 0) * f.get("h", 0))
+                                            if pos < mid_pos:
+                                                l_sizes.append(face_size)
+                                            else:
+                                                r_sizes.append(face_size)
+                                    return l_sizes, r_sizes
+
+                                # Full-scene sizes
+                                left_sizes, right_sizes = _split_left_right(all_faces)
                                 avg_left = sum(left_sizes) / len(left_sizes) if left_sizes else 0
                                 avg_right = sum(right_sizes) / len(right_sizes) if right_sizes else 0
-                                
-                                if avg_left > avg_right * 1.2:
+
+                                # Last-40% sizes — check if composition changed toward the end
+                                split_idx = max(1, int(len(all_faces) * 0.6))
+                                late_faces = all_faces[split_idx:]
+                                late_left_sizes, late_right_sizes = _split_left_right(late_faces)
+                                late_avg_left  = sum(late_left_sizes)  / len(late_left_sizes)  if late_left_sizes  else 0
+                                late_avg_right = sum(late_right_sizes) / len(late_right_sizes) if late_right_sizes else 0
+
+                                # Determine if the late window clearly favours one side:
+                                # - only one side has faces, OR
+                                # - one side is 2× bigger than the other in the late window
+                                late_only_left  = late_avg_left  > 0 and late_avg_right == 0
+                                late_only_right = late_avg_right > 0 and late_avg_left  == 0
+                                late_prefer_left  = late_avg_left  > late_avg_right * 2.0
+                                late_prefer_right = late_avg_right > late_avg_left  * 2.0
+
+                                use_late = (
+                                    len(late_faces) >= 2  # need enough samples
+                                    and (late_only_left or late_only_right or late_prefer_left or late_prefer_right)
+                                )
+
+                                if use_late:
+                                    if late_only_left or late_prefer_left:
+                                        scene_focus = max(safe_min, min(safe_max, left_pos))
+                                        logger.info(
+                                            "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION "
+                                            "→ LATE-40%% FAVOURS LEFT "
+                                            "(full: L=%.0f R=%.0f | late: L=%.0f R=%.0f) → focus=%.3f",
+                                            scene_idx, scene_start_t, scene_end_t,
+                                            avg_left, avg_right, late_avg_left, late_avg_right, scene_focus,
+                                        )
+                                    else:
+                                        scene_focus = max(safe_min, min(safe_max, right_pos))
+                                        logger.info(
+                                            "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION "
+                                            "→ LATE-40%% FAVOURS RIGHT "
+                                            "(full: L=%.0f R=%.0f | late: L=%.0f R=%.0f) → focus=%.3f",
+                                            scene_idx, scene_start_t, scene_end_t,
+                                            avg_left, avg_right, late_avg_left, late_avg_right, scene_focus,
+                                        )
+                                elif avg_left > avg_right * 1.2:
                                     scene_focus = max(safe_min, min(safe_max, left_pos))
                                     logger.info(
-                                        "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → LARGER LEFT (%.0f vs %.0f) → focus=%.3f",
-                                        scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus
+                                        "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION "
+                                        "→ LARGER LEFT (%.0f vs %.0f) → focus=%.3f",
+                                        scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus,
                                     )
                                 else:
                                     scene_focus = max(safe_min, min(safe_max, right_pos))
                                     logger.info(
-                                        "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION → RIGHT (%.0f vs %.0f) → focus=%.3f",
-                                        scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus
+                                        "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION "
+                                        "→ RIGHT (%.0f vs %.0f) → focus=%.3f",
+                                        scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus,
                                     )
                 else:
                     scene_focus = last_valid_focus
