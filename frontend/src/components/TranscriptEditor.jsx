@@ -45,33 +45,71 @@ const TranscriptEditor = ({
   // Initialize boundaries from segments
   useEffect(() => {
     if (segments.length > 0 && sentences.length > 0) {
+      // Helper: normalize text for matching (collapse whitespace, trim)
+      const norm = (t) => (t || '').replace(/\s+/g, ' ').trim();
+      
       const boundaries = segments.map((seg, originalIdx) => {
-        // Find sentence indices that OVERLAP with segment time range
-        // Segment times come from DeepSeek which may have adjusted boundaries
+        const segText = norm(seg.text);
         const segStart = seg.start_time;
         const segEnd = seg.end_time;
         
         let startIdx = -1;
         let endIdx = -1;
         
-        // Find ALL sentences that overlap with segment time range
-        // A sentence belongs to a segment if its START falls within segment range
-        // This gives precise boundaries matching DeepSeek's assignment
-        for (let i = 0; i < sentences.length; i++) {
-          const s = sentences[i];
-          // Sentence belongs to segment if its start time is within [segStart - 0.5, segEnd)
-          // Small 0.5s tolerance for timing rounding only
-          const overlaps = s.start >= segStart - 0.5 && s.start < segEnd + 0.5;
+        // === PRIMARY: Text-based matching ===
+        // DeepSeek's segment text is built from the same Whisper sentences.
+        // Find the FIRST sentence whose text matches the START of segment text.
+        // Find the LAST sentence whose text matches the END of segment text.
+        if (segText.length > 0) {
+          // Find START: sentence near segStart whose text begins the segment
+          for (let i = 0; i < sentences.length; i++) {
+            const sentText = norm(sentences[i].text);
+            if (sentText.length < 2) continue;
+            // Time proximity check to avoid false matches (e.g. "Да." at wrong position)
+            if (Math.abs(sentences[i].start - segStart) < 10) {
+              if (segText.startsWith(sentText)) {
+                startIdx = i;
+                break;
+              }
+            }
+          }
           
-          if (overlaps) {
-            if (startIdx === -1) startIdx = i;
-            endIdx = i;
+          // Find END: sentence near segEnd whose text ends the segment
+          const searchFrom = startIdx >= 0 ? startIdx : 0;
+          for (let i = sentences.length - 1; i >= searchFrom; i--) {
+            const sentText = norm(sentences[i].text);
+            if (sentText.length < 2) continue;
+            // Last sentence should be within segment time range
+            if (sentences[i].start >= segStart - 1 && sentences[i].start <= segEnd + 2) {
+              if (segText.endsWith(sentText)) {
+                endIdx = i;
+                break;
+              }
+            }
+          }
+          
+          // Validate: startIdx must be <= endIdx
+          if (startIdx >= 0 && endIdx >= 0 && startIdx > endIdx) {
+            startIdx = -1;
+            endIdx = -1;
           }
         }
         
-        // Fallback if no overlap found
+        // === FALLBACK: Time-based matching ===
+        if (startIdx === -1 || endIdx === -1) {
+          startIdx = -1;
+          endIdx = -1;
+          for (let i = 0; i < sentences.length; i++) {
+            const s = sentences[i];
+            if (s.start >= segStart - 0.5 && s.start < segEnd + 0.5) {
+              if (startIdx === -1) startIdx = i;
+              endIdx = i;
+            }
+          }
+        }
+        
+        // === LAST RESORT: closest sentence ===
         if (startIdx === -1) {
-          // Find closest sentence to segment start
           let minDist = Infinity;
           for (let i = 0; i < sentences.length; i++) {
             const dist = Math.abs(sentences[i].start - segStart);
@@ -82,6 +120,8 @@ const TranscriptEditor = ({
           }
           endIdx = startIdx;
         }
+        
+        if (startIdx > endIdx) endIdx = startIdx;
         
         return {
           id: seg.id,
