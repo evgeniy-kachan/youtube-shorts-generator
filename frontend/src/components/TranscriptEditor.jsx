@@ -90,11 +90,13 @@ const TranscriptEditor = ({
           }
         }
         
-        // globalIndex = original position in DeepSeek results (sorted by score)
-        // This is the "Сегмент X" number that user sees in the main list
+        // Extract segment number from id (e.g., "segment_5" -> 5)
+        // This is the original DeepSeek number that user sees in the main list
+        const segmentNumber = parseInt(seg.id?.replace('segment_', '') || '0', 10) + 1;
+        
         return {
           id: seg.id,
-          globalIndex: originalIdx + 1, // 1-based: Сегмент 1, Сегмент 2, etc.
+          globalIndex: segmentNumber, // Original DeepSeek number: Сегмент 1, Сегмент 2, etc.
           startIdx,
           endIdx,
           score: seg.highlight_score || 0,
