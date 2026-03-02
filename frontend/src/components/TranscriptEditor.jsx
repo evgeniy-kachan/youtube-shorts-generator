@@ -275,11 +275,32 @@ const TranscriptEditor = ({
     onClose?.();
   }, [segmentInfos, onSegmentsChange, onClose]);
 
-  // Get segment index for a sentence
-  const getSentenceSegment = useCallback((sentenceIdx) => {
+  // Get ALL segments that contain this sentence (for background coloring)
+  const getSentenceSegments = useCallback((sentenceIdx) => {
+    const result = [];
     for (let i = 0; i < segmentBoundaries.length; i++) {
       const b = segmentBoundaries[i];
       if (sentenceIdx >= b.startIdx && sentenceIdx <= b.endIdx) {
+        result.push(i);
+      }
+    }
+    return result;
+  }, [segmentBoundaries]);
+  
+  // Check if this sentence is the START of any segment
+  const getSegmentStartingHere = useCallback((sentenceIdx) => {
+    for (let i = 0; i < segmentBoundaries.length; i++) {
+      if (segmentBoundaries[i].startIdx === sentenceIdx) {
+        return i;
+      }
+    }
+    return -1;
+  }, [segmentBoundaries]);
+  
+  // Check if this sentence is the END of any segment
+  const getSegmentEndingHere = useCallback((sentenceIdx) => {
+    for (let i = 0; i < segmentBoundaries.length; i++) {
+      if (segmentBoundaries[i].endIdx === sentenceIdx) {
         return i;
       }
     }
@@ -369,47 +390,59 @@ const TranscriptEditor = ({
           <div className="flex-1 overflow-y-auto p-4 pt-6 bg-white">
             <div className="max-w-3xl mx-auto pb-8">
               {sentences.map((sentence, idx) => {
-                const segIdx = getSentenceSegment(idx);
-                const segInfo = segIdx >= 0 ? segmentInfos[segIdx] : null;
-                const isSelected = segIdx === selectedSegmentIdx;
-                const isSegmentStart = segInfo && idx === segInfo.startIdx;
-                const isSegmentEnd = segInfo && idx === segInfo.endIdx;
+                // Check if any segment STARTS at this sentence
+                const startingSegIdx = getSegmentStartingHere(idx);
+                const startingSegInfo = startingSegIdx >= 0 ? segmentInfos[startingSegIdx] : null;
+                
+                // Check if any segment ENDS at this sentence
+                const endingSegIdx = getSegmentEndingHere(idx);
+                const endingSegInfo = endingSegIdx >= 0 ? segmentInfos[endingSegIdx] : null;
+                
+                // Get all segments containing this sentence (for background)
+                const containingSegs = getSentenceSegments(idx);
+                const primarySegIdx = containingSegs.length > 0 ? containingSegs[0] : -1;
+                const primarySegInfo = primarySegIdx >= 0 ? segmentInfos[primarySegIdx] : null;
+                
+                // Is this sentence in the currently selected segment?
+                const isInSelectedSegment = containingSegs.includes(selectedSegmentIdx);
                 
                 // Show speaker only when it changes from previous sentence
                 const prevSpeaker = idx > 0 ? sentences[idx - 1]?.speaker : null;
                 const showSpeaker = sentence.speaker && sentence.speaker !== prevSpeaker;
                 
-                const bgColor = segInfo ? SEGMENT_COLORS[segInfo.colorIdx] : 'transparent';
-                const borderColor = segInfo ? SEGMENT_BORDER_COLORS[segInfo.colorIdx] : 'transparent';
+                // Use primary segment for background coloring
+                const bgColor = primarySegInfo ? SEGMENT_COLORS[primarySegInfo.colorIdx] : 'transparent';
+                const borderColor = primarySegInfo ? SEGMENT_BORDER_COLORS[primarySegInfo.colorIdx] : 'transparent';
                 
                 return (
                   <div
                     key={idx}
                     ref={el => sentenceRefs.current[idx] = el}
-                    className={`relative transition-all ${isSelected ? 'z-10' : ''}`}
-                    onClick={() => segIdx >= 0 && setSelectedSegmentIdx(segIdx)}
+                    className={`relative transition-all ${isInSelectedSegment ? 'z-10' : ''}`}
+                    onClick={() => primarySegIdx >= 0 && setSelectedSegmentIdx(primarySegIdx)}
                   >
-                    {/* Segment start marker */}
-                    {isSegmentStart && (
+                    {/* Segment start marker - shown when ANY segment starts here */}
+                    {startingSegInfo && (
                       <div 
                         className="flex items-center gap-2 py-2 px-3 rounded-t-xl mt-4 cursor-pointer"
                         style={{ 
-                          backgroundColor: bgColor,
-                          borderTop: `4px solid ${borderColor}`,
-                          borderLeft: `4px solid ${borderColor}`,
-                          borderRight: `4px solid ${borderColor}`,
+                          backgroundColor: SEGMENT_COLORS[startingSegInfo.colorIdx],
+                          borderTop: `4px solid ${SEGMENT_BORDER_COLORS[startingSegInfo.colorIdx]}`,
+                          borderLeft: `4px solid ${SEGMENT_BORDER_COLORS[startingSegInfo.colorIdx]}`,
+                          borderRight: `4px solid ${SEGMENT_BORDER_COLORS[startingSegInfo.colorIdx]}`,
                         }}
+                        onClick={(e) => { e.stopPropagation(); setSelectedSegmentIdx(startingSegIdx); }}
                       >
                         <span 
                           className="text-xs font-bold px-2 py-1 rounded-full text-white"
-                          style={{ backgroundColor: borderColor }}
+                          style={{ backgroundColor: SEGMENT_BORDER_COLORS[startingSegInfo.colorIdx] }}
                         >
-                          Сегмент {segInfo.globalIndex}
+                          Сегмент {startingSegInfo.globalIndex}
                         </span>
                         <span className="text-xs text-gray-500">
-                          {formatTime(segInfo.startTime)}
+                          {formatTime(startingSegInfo.startTime)}
                         </span>
-                        {isSelected && (
+                        {startingSegIdx === selectedSegmentIdx && (
                           <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full ml-auto">
                             ✏️ редактируется
                           </span>
@@ -422,9 +455,9 @@ const TranscriptEditor = ({
                       <div 
                         className="px-4 py-1"
                         style={{ 
-                          backgroundColor: segInfo ? bgColor : 'transparent',
-                          borderLeft: segInfo ? `4px solid ${borderColor}` : 'none',
-                          borderRight: segInfo ? `4px solid ${borderColor}` : 'none',
+                          backgroundColor: primarySegInfo ? bgColor : 'transparent',
+                          borderLeft: primarySegInfo ? `4px solid ${borderColor}` : 'none',
+                          borderRight: primarySegInfo ? `4px solid ${borderColor}` : 'none',
                         }}
                       >
                         <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded inline-block">
@@ -436,12 +469,12 @@ const TranscriptEditor = ({
                     {/* Sentence content */}
                     <div
                       className={`px-4 py-1.5 cursor-pointer transition-all ${
-                        isSelected ? 'bg-purple-50/50' : ''
+                        isInSelectedSegment ? 'bg-purple-50/50' : ''
                       }`}
                       style={{ 
-                        backgroundColor: segInfo ? bgColor : 'transparent',
-                        borderLeft: segInfo ? `4px solid ${borderColor}` : 'none',
-                        borderRight: segInfo ? `4px solid ${borderColor}` : 'none',
+                        backgroundColor: primarySegInfo ? bgColor : 'transparent',
+                        borderLeft: primarySegInfo ? `4px solid ${borderColor}` : 'none',
+                        borderRight: primarySegInfo ? `4px solid ${borderColor}` : 'none',
                       }}
                     >
                       <div className="flex items-start gap-3">
@@ -450,18 +483,18 @@ const TranscriptEditor = ({
                           {idx + 1}
                         </span>
                         
-                        {/* Start marker */}
-                        {isSegmentStart && isSelected && (
+                        {/* Start marker for selected segment */}
+                        {startingSegIdx === selectedSegmentIdx && startingSegInfo && (
                           <span className="text-green-500 font-bold flex-shrink-0">▶</span>
                         )}
                         
                         {/* Text */}
-                        <span className={`text-sm flex-1 ${isSelected ? 'text-gray-900' : 'text-gray-700'}`}>
+                        <span className={`text-sm flex-1 ${isInSelectedSegment ? 'text-gray-900' : 'text-gray-700'}`}>
                           {sentence.text}
                         </span>
                         
-                        {/* End marker */}
-                        {isSegmentEnd && isSelected && (
+                        {/* End marker for selected segment */}
+                        {endingSegIdx === selectedSegmentIdx && endingSegInfo && (
                           <span className="text-red-500 font-bold flex-shrink-0">◀</span>
                         )}
                         
@@ -472,29 +505,30 @@ const TranscriptEditor = ({
                       </div>
                     </div>
                     
-                    {/* Segment end marker */}
-                    {isSegmentEnd && segInfo && (
+                    {/* Segment end marker - shown when ANY segment ends here */}
+                    {endingSegInfo && (
                       <div 
                         className="flex items-center justify-between py-2 px-3 rounded-b-xl mb-2"
                         style={{ 
-                          backgroundColor: bgColor,
-                          borderBottom: `4px solid ${borderColor}`,
-                          borderLeft: `4px solid ${borderColor}`,
-                          borderRight: `4px solid ${borderColor}`,
+                          backgroundColor: SEGMENT_COLORS[endingSegInfo.colorIdx],
+                          borderBottom: `4px solid ${SEGMENT_BORDER_COLORS[endingSegInfo.colorIdx]}`,
+                          borderLeft: `4px solid ${SEGMENT_BORDER_COLORS[endingSegInfo.colorIdx]}`,
+                          borderRight: `4px solid ${SEGMENT_BORDER_COLORS[endingSegInfo.colorIdx]}`,
                         }}
+                        onClick={(e) => { e.stopPropagation(); setSelectedSegmentIdx(endingSegIdx); }}
                       >
                         {(() => {
-                          const durationStyle = getDurationColor(segInfo.duration);
+                          const durationStyle = getDurationColor(endingSegInfo.duration);
                           return (
                             <>
                               <span className="text-xs text-gray-500">
-                                до {formatTime(segInfo.endTime)}
+                                до {formatTime(endingSegInfo.endTime)}
                               </span>
                               <span className={`text-xs font-bold px-2 py-1 rounded-full ${durationStyle.bg} ${durationStyle.text}`}>
-                                {durationStyle.emoji} {Math.round(segInfo.duration)}с
+                                {durationStyle.emoji} {Math.round(endingSegInfo.duration)}с
                               </span>
                               <span className="text-xs text-gray-500">
-                                Score: {(segInfo.score * 100).toFixed(0)}%
+                                Score: {(endingSegInfo.score * 100).toFixed(0)}%
                               </span>
                             </>
                           );
