@@ -47,61 +47,47 @@ const TranscriptEditor = ({
     if (segments.length > 0 && sentences.length > 0) {
       const boundaries = segments.map((seg, originalIdx) => {
         // Find sentence indices that OVERLAP with segment time range
-        // Use larger tolerance because DeepSeek segments may have adjusted boundaries
+        // Segment times come from DeepSeek which may have adjusted boundaries
         const segStart = seg.start_time;
         const segEnd = seg.end_time;
-        const tolerance = 2.0; // 2 second tolerance for boundary adjustments
         
         let startIdx = -1;
         let endIdx = -1;
         
-        // First, try to find by text match (most reliable)
-        // Get first few words of segment text to match
-        const segTextStart = (seg.text || '').trim().split(/\s+/).slice(0, 5).join(' ').toLowerCase();
-        
-        if (segTextStart.length > 10) {
-          for (let i = 0; i < sentences.length; i++) {
-            const sentenceText = (sentences[i].text || '').toLowerCase();
-            if (sentenceText.includes(segTextStart.slice(0, 20))) {
-              startIdx = i;
-              break;
-            }
+        // Find ALL sentences that overlap with segment time range
+        // A sentence overlaps if its time range intersects with segment time range
+        for (let i = 0; i < sentences.length; i++) {
+          const s = sentences[i];
+          // Sentence overlaps if: NOT (sentence ends before segment starts OR sentence starts after segment ends)
+          // With 3 second tolerance to catch edge cases
+          const overlaps = !(s.end < segStart - 3 || s.start > segEnd + 3);
+          
+          if (overlaps) {
+            if (startIdx === -1) startIdx = i;
+            endIdx = i;
           }
         }
         
-        // If text match found, find end by time
-        if (startIdx !== -1) {
-          for (let i = startIdx; i < sentences.length; i++) {
-            const s = sentences[i];
-            if (s.end <= segEnd + tolerance) {
-              endIdx = i;
-            } else if (s.start > segEnd + tolerance) {
-              break;
-            }
-          }
-          if (endIdx === -1) endIdx = startIdx;
-        }
-        
-        // Fallback: find by time overlap
-        if (startIdx === -1) {
-          for (let i = 0; i < sentences.length; i++) {
-            const s = sentences[i];
-            // Check if sentence overlaps with segment (with tolerance)
-            const overlaps = s.start < segEnd + tolerance && s.end > segStart - tolerance;
-            
-            if (overlaps) {
-              if (startIdx === -1) startIdx = i;
-              endIdx = i;
-            }
-          }
-        }
-        
-        // Final fallback if no overlap found
+        // Fallback if no overlap found
         if (startIdx === -1) {
           // Find closest sentence to segment start
-          startIdx = sentences.findIndex(s => s.start >= segStart - tolerance);
-          if (startIdx === -1) startIdx = 0;
+          let minDist = Infinity;
+          for (let i = 0; i < sentences.length; i++) {
+            const dist = Math.abs(sentences[i].start - segStart);
+            if (dist < minDist) {
+              minDist = dist;
+              startIdx = i;
+            }
+          }
           endIdx = startIdx;
+        }
+        
+        // Debug: log segment boundary detection
+        if (originalIdx < 3) {
+          console.log(`Segment ${originalIdx + 1}: time ${segStart.toFixed(1)}-${segEnd.toFixed(1)}, sentences ${startIdx}-${endIdx}`);
+          if (startIdx >= 0) {
+            console.log(`  First sentence: "${sentences[startIdx]?.text?.slice(0, 50)}..." at ${sentences[startIdx]?.start?.toFixed(1)}-${sentences[startIdx]?.end?.toFixed(1)}`);
+          }
         }
         
         // globalIndex = original position in DeepSeek results (sorted by score)
