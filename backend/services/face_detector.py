@@ -1106,11 +1106,11 @@ class FaceDetector:
                                 for faces in all_faces:
                                     for f in faces:
                                         pos = f["center_x"] / frame_width
-                                        face_w = f.get("face_w", 50)
+                                        face_size = f.get("area", f.get("w", 0) * f.get("h", 0))
                                         if pos < mid_pos:
-                                            left_sizes.append(face_w)
+                                            left_sizes.append(face_size)
                                         else:
-                                            right_sizes.append(face_w)
+                                            right_sizes.append(face_size)
                                 
                                 avg_left = sum(left_sizes) / len(left_sizes) if left_sizes else 0
                                 avg_right = sum(right_sizes) / len(right_sizes) if right_sizes else 0
