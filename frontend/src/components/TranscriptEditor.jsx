@@ -366,8 +366,8 @@ const TranscriptEditor = ({
         </div>
 
           {/* CENTER: Transcript with highlighted segments */}
-          <div className="flex-1 overflow-y-auto p-4 bg-white">
-            <div className="max-w-3xl mx-auto">
+          <div className="flex-1 overflow-y-auto p-4 pt-6 bg-white">
+            <div className="max-w-3xl mx-auto pb-8">
               {sentences.map((sentence, idx) => {
                 const segIdx = getSentenceSegment(idx);
                 const segInfo = segIdx >= 0 ? segmentInfos[segIdx] : null;
