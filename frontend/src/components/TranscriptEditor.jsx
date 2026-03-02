@@ -344,7 +344,7 @@ const TranscriptEditor = ({
 
           {/* CENTER: Transcript with highlighted segments */}
           <div className="flex-1 overflow-y-auto p-4 bg-white">
-            <div className="max-w-3xl mx-auto space-y-0">
+            <div className="max-w-3xl mx-auto">
               {sentences.map((sentence, idx) => {
                 const segIdx = getSentenceSegment(idx);
                 const segInfo = segIdx >= 0 ? segmentInfos[segIdx] : null;
@@ -369,12 +369,12 @@ const TranscriptEditor = ({
                     {/* Segment start marker */}
                     {isSegmentStart && (
                       <div 
-                        className="flex items-center gap-2 py-2 px-3 rounded-t-xl mt-3 cursor-pointer"
+                        className="flex items-center gap-2 py-2 px-3 rounded-t-xl mt-4 cursor-pointer"
                         style={{ 
                           backgroundColor: bgColor,
-                          borderTop: `3px solid ${borderColor}`,
-                          borderLeft: `3px solid ${borderColor}`,
-                          borderRight: `3px solid ${borderColor}`,
+                          borderTop: `4px solid ${borderColor}`,
+                          borderLeft: `4px solid ${borderColor}`,
+                          borderRight: `4px solid ${borderColor}`,
                         }}
                       >
                         <span 
@@ -400,8 +400,8 @@ const TranscriptEditor = ({
                         className="px-4 py-1"
                         style={{ 
                           backgroundColor: segInfo ? bgColor : 'transparent',
-                          borderLeft: segInfo ? `3px solid ${borderColor}` : 'none',
-                          borderRight: segInfo ? `3px solid ${borderColor}` : 'none',
+                          borderLeft: segInfo ? `4px solid ${borderColor}` : 'none',
+                          borderRight: segInfo ? `4px solid ${borderColor}` : 'none',
                         }}
                       >
                         <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded inline-block">
@@ -417,8 +417,8 @@ const TranscriptEditor = ({
                       }`}
                       style={{ 
                         backgroundColor: segInfo ? bgColor : 'transparent',
-                        borderLeft: segInfo ? `3px solid ${borderColor}` : 'none',
-                        borderRight: segInfo ? `3px solid ${borderColor}` : 'none',
+                        borderLeft: segInfo ? `4px solid ${borderColor}` : 'none',
+                        borderRight: segInfo ? `4px solid ${borderColor}` : 'none',
                       }}
                     >
                       <div className="flex items-start gap-3">
@@ -452,12 +452,12 @@ const TranscriptEditor = ({
                     {/* Segment end marker */}
                     {isSegmentEnd && segInfo && (
                       <div 
-                        className="flex items-center justify-between py-2 px-3 rounded-b-xl mb-1"
+                        className="flex items-center justify-between py-2 px-3 rounded-b-xl mb-2"
                         style={{ 
                           backgroundColor: bgColor,
-                          borderBottom: `3px solid ${borderColor}`,
-                          borderLeft: `3px solid ${borderColor}`,
-                          borderRight: `3px solid ${borderColor}`,
+                          borderBottom: `4px solid ${borderColor}`,
+                          borderLeft: `4px solid ${borderColor}`,
+                          borderRight: `4px solid ${borderColor}`,
                         }}
                       >
                         {(() => {
