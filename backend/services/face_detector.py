@@ -720,7 +720,7 @@ class FaceDetector:
     
     # Face-jump detection constants
     FACE_JUMP_SAMPLE_INTERVAL = 0.3  # Sample face position every 0.3 seconds
-    FACE_JUMP_THRESHOLD = 0.15  # 15% position change = camera switch (lowered from 25%)
+    FACE_JUMP_THRESHOLD = 0.10  # 10% position change = camera switch (was 15%, lowered to catch more switches)
     MIN_SUBSCENE_DURATION = 2.0  # Minimum duration for a sub-scene (seconds)
     
     def _detect_face_jumps(
@@ -855,9 +855,9 @@ class FaceDetector:
         scaled_width = int(frame_width * scale_factor)
         
         # When face IS detected, allow wide range but keep margin for face width
-        # (no longer using tight 0.30-0.70 bounds that pushed faces to edges)
-        safe_min = 0.15  # Leave room for face width on left
-        safe_max = 0.85  # Leave room for face width on right
+        # Narrowed from 0.15-0.85 to 0.20-0.80 to reduce risk of cutting off faces at edges
+        safe_min = 0.20  # Leave room for face width on left
+        safe_max = 0.80  # Leave room for face width on right
         
         # ============================================================
         # STEP 1: TransNetV2 scene detection
