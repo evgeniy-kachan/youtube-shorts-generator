@@ -1022,6 +1022,15 @@ class FaceDetector:
                         # --- Two real faces of similar size ---
                         left_pos = min(all_positions)
                         right_pos = max(all_positions)
+
+                        # Cluster average positions (more robust than min/max which can be outliers).
+                        # left_pos / right_pos are kept for span calculation only.
+                        # left_focus_pos / right_focus_pos are used for actual crop focus.
+                        _mid = (left_pos + right_pos) / 2.0
+                        _left_cluster  = [p for p in all_positions if p <  _mid]
+                        _right_cluster = [p for p in all_positions if p >= _mid]
+                        left_focus_pos  = sum(_left_cluster)  / len(_left_cluster)  if _left_cluster  else left_pos
+                        right_focus_pos = sum(_right_cluster) / len(_right_cluster) if _right_cluster else right_pos
                         
                         left_px = left_pos * scaled_width
                         right_px = right_pos * scaled_width
@@ -1056,7 +1065,7 @@ class FaceDetector:
                                 scene_idx, scene_start_t, scene_end_t, single_face_spread
                             )
                             if required_width <= self.CROP_WIDTH_PX:
-                                center_pos = (left_pos + right_pos) / 2.0
+                                center_pos = (left_focus_pos + right_focus_pos) / 2.0
                                 scene_focus = max(safe_min, min(safe_max, center_pos))
                                 logger.info(
                                     "  → 2 FACES FIT (span=%dpx) → center=%.3f",
@@ -1066,16 +1075,16 @@ class FaceDetector:
                                 speaking_speaker = speaker_at_time.get(round(scene_start_t, 1))
                                 if speaking_speaker and dialogue:
                                     if "00" in speaking_speaker or "0" == speaking_speaker[-1]:
-                                        scene_focus = max(safe_min, min(safe_max, left_pos))
+                                        scene_focus = max(safe_min, min(safe_max, left_focus_pos))
                                         logger.info("  → SPEAKER-AWARE: %s (left) → focus=%.3f", speaking_speaker, scene_focus)
                                     else:
-                                        scene_focus = max(safe_min, min(safe_max, right_pos))
+                                        scene_focus = max(safe_min, min(safe_max, right_focus_pos))
                                         logger.info("  → SPEAKER-AWARE: %s (right) → focus=%.3f", speaking_speaker, scene_focus)
                                 else:
-                                    scene_focus = max(safe_min, min(safe_max, right_pos))
+                                    scene_focus = max(safe_min, min(safe_max, right_focus_pos))
                                     logger.info("  → NO DIARIZATION → right speaker focus=%.3f", scene_focus)
                         elif required_width <= self.CROP_WIDTH_PX:
-                            center_pos = (left_pos + right_pos) / 2.0
+                            center_pos = (left_focus_pos + right_focus_pos) / 2.0
                             scene_focus = max(safe_min, min(safe_max, center_pos))
                             logger.info(
                                 "Scene %d [%.2f-%.2f]: 2 FACES FIT (span=%dpx < %dpx) → center=%.3f",
@@ -1087,19 +1096,19 @@ class FaceDetector:
                             
                             if speaking_speaker and dialogue:
                                 if "00" in speaking_speaker or "0" == speaking_speaker[-1]:
-                                    scene_focus = max(safe_min, min(safe_max, left_pos))
+                                    scene_focus = max(safe_min, min(safe_max, left_focus_pos))
                                     logger.info(
                                         "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT → SPEAKER-AWARE: %s (left) → focus=%.3f",
                                         scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
                                     )
                                 else:
-                                    scene_focus = max(safe_min, min(safe_max, right_pos))
+                                    scene_focus = max(safe_min, min(safe_max, right_focus_pos))
                                     logger.info(
                                         "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT → SPEAKER-AWARE: %s (right) → focus=%.3f",
                                         scene_idx, scene_start_t, scene_end_t, speaking_speaker, scene_focus
                                     )
                             else:
-                                mid_pos = (left_pos + right_pos) / 2.0
+                                mid_pos = (left_focus_pos + right_focus_pos) / 2.0
 
                                 def _split_left_right(faces_list):
                                     """Sum face areas on left vs right of mid_pos."""
@@ -1142,7 +1151,7 @@ class FaceDetector:
 
                                 if use_late:
                                     if late_only_left or late_prefer_left:
-                                        scene_focus = max(safe_min, min(safe_max, left_pos))
+                                        scene_focus = max(safe_min, min(safe_max, left_focus_pos))
                                         logger.info(
                                             "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION "
                                             "→ LATE-40%% FAVOURS LEFT "
@@ -1151,7 +1160,7 @@ class FaceDetector:
                                             avg_left, avg_right, late_avg_left, late_avg_right, scene_focus,
                                         )
                                     else:
-                                        scene_focus = max(safe_min, min(safe_max, right_pos))
+                                        scene_focus = max(safe_min, min(safe_max, right_focus_pos))
                                         logger.info(
                                             "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION "
                                             "→ LATE-40%% FAVOURS RIGHT "
@@ -1160,14 +1169,14 @@ class FaceDetector:
                                             avg_left, avg_right, late_avg_left, late_avg_right, scene_focus,
                                         )
                                 elif avg_left > avg_right * 1.2:
-                                    scene_focus = max(safe_min, min(safe_max, left_pos))
+                                    scene_focus = max(safe_min, min(safe_max, left_focus_pos))
                                     logger.info(
                                         "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION "
                                         "→ LARGER LEFT (%.0f vs %.0f) → focus=%.3f",
                                         scene_idx, scene_start_t, scene_end_t, avg_left, avg_right, scene_focus,
                                     )
                                 else:
-                                    scene_focus = max(safe_min, min(safe_max, right_pos))
+                                    scene_focus = max(safe_min, min(safe_max, right_focus_pos))
                                     logger.info(
                                         "Scene %d [%.2f-%.2f]: 2 FACES DON'T FIT, NO DIARIZATION "
                                         "→ RIGHT (%.0f vs %.0f) → focus=%.3f",
