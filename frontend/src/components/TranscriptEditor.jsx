@@ -398,9 +398,13 @@ const TranscriptEditor = ({
                 const prevSpeaker = idx > 0 ? sentences[idx - 1]?.speaker : null;
                 const showSpeaker = sentence.speaker && sentence.speaker !== prevSpeaker;
                 
-                // Background from primary segment
+                // Background from primary segment — stable, never changes on click/selection
                 const bgColor = primarySegInfo ? SEGMENT_COLORS[primarySegInfo.colorIdx] : 'transparent';
-                const leftBorderColor = primarySegInfo ? SEGMENT_BORDER_COLORS[primarySegInfo.colorIdx] : 'transparent';
+                const segBorderColor = primarySegInfo ? SEGMENT_BORDER_COLORS[primarySegInfo.colorIdx] : 'transparent';
+                // Left border: purple for selected segment sentences, segment color otherwise
+                const leftBorder = isInSelectedSegment 
+                  ? '3px solid rgb(139, 92, 246)' 
+                  : (primarySegInfo ? `3px solid ${segBorderColor}` : 'none');
                 
                 return (
                   <div
@@ -417,11 +421,13 @@ const TranscriptEditor = ({
                       const sInfo = segmentInfos[segIdx];
                       if (!sInfo) return null;
                       const sColor = SEGMENT_BORDER_COLORS[sInfo.colorIdx];
+                      const sBg = SEGMENT_COLORS[sInfo.colorIdx];
+                      const isSelected = segIdx === selectedSegmentIdx;
                       return (
                         <div
                           key={`start-${segIdx}`}
-                          className="flex items-center gap-1.5 py-1 px-3 mt-2 cursor-pointer"
-                          style={{ borderLeft: `3px solid ${sColor}` }}
+                          className={`flex items-center gap-2 py-1.5 px-3 mt-3 rounded-lg cursor-pointer ${isSelected ? 'ring-2 ring-purple-400' : ''}`}
+                          style={{ backgroundColor: sBg, borderLeft: `3px solid ${sColor}` }}
                           onClick={(e) => { e.stopPropagation(); setSelectedSegmentIdx(segIdx); }}
                         >
                           <span 
@@ -430,10 +436,10 @@ const TranscriptEditor = ({
                           >
                             {sInfo.globalIndex}
                           </span>
-                          <span className="text-xs text-gray-500">
-                            {formatTime(sInfo.startTime)}-{formatTime(sInfo.endTime)}
+                          <span className="text-xs text-gray-600">
+                            {formatTime(sInfo.startTime)} – {formatTime(sInfo.endTime)}
                           </span>
-                          {segIdx === selectedSegmentIdx && (
+                          {isSelected && (
                             <span className="text-xs text-purple-600 ml-auto">✏️</span>
                           )}
                         </div>
@@ -444,10 +450,7 @@ const TranscriptEditor = ({
                     {showSpeaker && (
                       <div 
                         className="px-3 py-0.5"
-                        style={{ 
-                          backgroundColor: bgColor,
-                          borderLeft: primarySegInfo ? `3px solid ${leftBorderColor}` : '3px solid transparent',
-                        }}
+                        style={{ backgroundColor: bgColor, borderLeft: leftBorder }}
                       >
                         <span className="text-xs font-semibold text-indigo-500">
                           🎤 {sentence.speaker}
@@ -458,10 +461,7 @@ const TranscriptEditor = ({
                     {/* Sentence content */}
                     <div
                       className="px-3 py-1 cursor-pointer"
-                      style={{ 
-                        backgroundColor: isInSelectedSegment ? 'rgba(139, 92, 246, 0.08)' : bgColor,
-                        borderLeft: primarySegInfo ? `3px solid ${leftBorderColor}` : '3px solid transparent',
-                      }}
+                      style={{ backgroundColor: bgColor, borderLeft: leftBorder }}
                     >
                       <div className="flex items-start gap-2">
                         <span className="text-xs text-gray-300 font-mono w-5 flex-shrink-0 mt-0.5 text-right">
@@ -472,7 +472,7 @@ const TranscriptEditor = ({
                           <span className="text-green-500 text-xs flex-shrink-0 mt-0.5">▶</span>
                         )}
                         
-                        <span className={`text-sm flex-1 leading-relaxed ${isInSelectedSegment ? 'text-gray-900' : primarySegInfo ? 'text-gray-700' : 'text-gray-500'}`}>
+                        <span className={`text-sm flex-1 leading-relaxed ${isInSelectedSegment ? 'text-gray-900 font-medium' : primarySegInfo ? 'text-gray-700' : 'text-gray-400'}`}>
                           {sentence.text}
                         </span>
                         
@@ -486,24 +486,28 @@ const TranscriptEditor = ({
                       </div>
                     </div>
                     
-                    {/* END markers for ALL segments ending at this sentence */}
+                    {/* END markers — subtle line, details only for selected segment */}
                     {info.ending.map(segIdx => {
                       const eInfo = segmentInfos[segIdx];
                       if (!eInfo) return null;
                       const eColor = SEGMENT_BORDER_COLORS[eInfo.colorIdx];
+                      const isSelectedEnd = segIdx === selectedSegmentIdx;
                       return (
                         <div
                           key={`end-${segIdx}`}
-                          className="flex items-center gap-2 py-0.5 px-3 mb-1 cursor-pointer"
-                          style={{ borderLeft: `3px solid ${eColor}` }}
+                          className="flex items-center gap-2 px-3 cursor-pointer"
+                          style={{ padding: isSelectedEnd ? '4px 12px' : '1px 12px' }}
                           onClick={(e) => { e.stopPropagation(); setSelectedSegmentIdx(segIdx); }}
                         >
-                          <span className="text-xs text-gray-400">
-                            ── конец {eInfo.globalIndex} ──
-                          </span>
-                          <span className="text-xs text-gray-400">
-                            {Math.round(eInfo.duration)}с
-                          </span>
+                          <div className="flex-1 h-px" style={{ backgroundColor: eColor, opacity: isSelectedEnd ? 0.5 : 0.15 }} />
+                          {isSelectedEnd && (
+                            <span className="text-[10px] text-purple-400 whitespace-nowrap px-2">
+                              ◀ {Math.round(eInfo.duration)}с
+                            </span>
+                          )}
+                          {isSelectedEnd && (
+                            <div className="flex-1 h-px" style={{ backgroundColor: eColor, opacity: 0.5 }} />
+                          )}
                         </div>
                       );
                     })}
