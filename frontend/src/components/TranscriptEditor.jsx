@@ -126,9 +126,20 @@ const TranscriptEditor = ({
         b.globalIndex = globalIndexMap[i] || (i + 1);
       });
       
+      // Debug: log numbering
+      console.log('=== Segment numbering debug ===');
+      boundaries.forEach((b, i) => {
+        console.log(`API order ${i}: id=${b.id}, tier=${b.tier}, score=${b.score}, globalIndex=${b.globalIndex}, time=${b.originalStart?.toFixed(0)}-${b.originalEnd?.toFixed(0)}`);
+      });
+      
       // Sort by start time (chronological order in transcript)
       // but keep original globalIndex for display
       boundaries.sort((a, b) => a.startIdx - b.startIdx);
+      
+      console.log('=== After chronological sort ===');
+      boundaries.forEach((b, i) => {
+        console.log(`Display order ${i}: Сегмент ${b.globalIndex} (${b.tier}), sentences ${b.startIdx}-${b.endIdx}`);
+      });
       
       setSegmentBoundaries(boundaries);
       setSelectedSegmentIdx(0);
@@ -416,30 +427,24 @@ const TranscriptEditor = ({
                       const sInfo = segmentInfos[segIdx];
                       if (!sInfo) return null;
                       const sColor = SEGMENT_BORDER_COLORS[sInfo.colorIdx];
-                      const sBg = SEGMENT_COLORS[sInfo.colorIdx];
                       return (
                         <div
                           key={`start-${segIdx}`}
-                          className="flex items-center gap-2 py-2 px-3 rounded-xl mt-3 mb-1 cursor-pointer shadow-sm"
-                          style={{ 
-                            backgroundColor: sBg,
-                            border: `3px solid ${sColor}`,
-                          }}
+                          className="flex items-center gap-1.5 py-1 px-3 mt-2 cursor-pointer"
+                          style={{ borderLeft: `3px solid ${sColor}` }}
                           onClick={(e) => { e.stopPropagation(); setSelectedSegmentIdx(segIdx); }}
                         >
                           <span 
-                            className="text-xs font-bold px-2 py-1 rounded-full text-white"
+                            className="text-xs font-bold px-1.5 py-0.5 rounded text-white"
                             style={{ backgroundColor: sColor }}
                           >
-                            Сегмент {sInfo.globalIndex}
+                            {sInfo.globalIndex}
                           </span>
-                          <span className="text-xs text-gray-600 font-medium">
-                            {formatTime(sInfo.startTime)} - {formatTime(sInfo.endTime)}
+                          <span className="text-xs text-gray-500">
+                            {formatTime(sInfo.startTime)}-{formatTime(sInfo.endTime)}
                           </span>
                           {segIdx === selectedSegmentIdx && (
-                            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full ml-auto font-medium">
-                              ✏️ редактируется
-                            </span>
+                            <span className="text-xs text-purple-600 ml-auto">✏️</span>
                           )}
                         </div>
                       );
@@ -447,46 +452,45 @@ const TranscriptEditor = ({
                     
                     {/* Speaker change indicator */}
                     {showSpeaker && (
-                      <div className="px-4 py-1" style={{ backgroundColor: bgColor }}>
-                        <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded inline-block">
-                          🎤 {sentence.speaker}:
+                      <div 
+                        className="px-3 py-0.5"
+                        style={{ 
+                          backgroundColor: bgColor,
+                          borderLeft: primarySegInfo ? `3px solid ${leftBorderColor}` : '3px solid transparent',
+                        }}
+                      >
+                        <span className="text-xs font-semibold text-indigo-500">
+                          🎤 {sentence.speaker}
                         </span>
                       </div>
                     )}
                     
                     {/* Sentence content */}
                     <div
-                      className={`px-4 py-1.5 cursor-pointer transition-colors ${
-                        isInSelectedSegment ? 'ring-1 ring-purple-200' : ''
-                      }`}
+                      className="px-3 py-1 cursor-pointer"
                       style={{ 
-                        backgroundColor: bgColor,
-                        borderLeft: primarySegInfo ? `4px solid ${leftBorderColor}` : '4px solid transparent',
+                        backgroundColor: isInSelectedSegment ? 'rgba(139, 92, 246, 0.08)' : bgColor,
+                        borderLeft: primarySegInfo ? `3px solid ${leftBorderColor}` : '3px solid transparent',
                       }}
                     >
-                      <div className="flex items-start gap-3">
-                        {/* Sentence number */}
-                        <span className="text-xs text-gray-300 font-mono w-6 flex-shrink-0 mt-0.5">
+                      <div className="flex items-start gap-2">
+                        <span className="text-xs text-gray-300 font-mono w-5 flex-shrink-0 mt-0.5 text-right">
                           {idx + 1}
                         </span>
                         
-                        {/* Start marker for selected segment */}
                         {info.starting.includes(selectedSegmentIdx) && (
-                          <span className="text-green-500 font-bold flex-shrink-0">▶</span>
+                          <span className="text-green-500 text-xs flex-shrink-0 mt-0.5">▶</span>
                         )}
                         
-                        {/* Text */}
-                        <span className={`text-sm flex-1 ${isInSelectedSegment ? 'text-gray-900 font-medium' : primarySegInfo ? 'text-gray-800' : 'text-gray-600'}`}>
+                        <span className={`text-sm flex-1 leading-relaxed ${isInSelectedSegment ? 'text-gray-900' : primarySegInfo ? 'text-gray-700' : 'text-gray-500'}`}>
                           {sentence.text}
                         </span>
                         
-                        {/* End marker for selected segment */}
                         {info.ending.includes(selectedSegmentIdx) && (
-                          <span className="text-red-500 font-bold flex-shrink-0">◀</span>
+                          <span className="text-red-500 text-xs flex-shrink-0 mt-0.5">◀</span>
                         )}
                         
-                        {/* Time */}
-                        <span className="text-xs text-gray-400 flex-shrink-0 mt-0.5 font-mono">
+                        <span className="text-xs text-gray-300 flex-shrink-0 mt-0.5 font-mono">
                           {formatTime(sentence.start)}
                         </span>
                       </div>
@@ -497,28 +501,18 @@ const TranscriptEditor = ({
                       const eInfo = segmentInfos[segIdx];
                       if (!eInfo) return null;
                       const eColor = SEGMENT_BORDER_COLORS[eInfo.colorIdx];
-                      const eBg = SEGMENT_COLORS[eInfo.colorIdx];
-                      const durationStyle = getDurationColor(eInfo.duration);
                       return (
                         <div
                           key={`end-${segIdx}`}
-                          className="flex items-center justify-between py-1.5 px-3 rounded-lg mb-2 mt-1 cursor-pointer"
-                          style={{ 
-                            backgroundColor: eBg,
-                            borderBottom: `3px solid ${eColor}`,
-                            borderLeft: `3px solid ${eColor}`,
-                            borderRight: `3px solid ${eColor}`,
-                          }}
+                          className="flex items-center gap-2 py-0.5 px-3 mb-1 cursor-pointer"
+                          style={{ borderLeft: `3px solid ${eColor}` }}
                           onClick={(e) => { e.stopPropagation(); setSelectedSegmentIdx(segIdx); }}
                         >
-                          <span className="text-xs text-gray-500">
-                            ─ конец Сегмент {eInfo.globalIndex} ─
+                          <span className="text-xs text-gray-400">
+                            ── конец {eInfo.globalIndex} ──
                           </span>
-                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${durationStyle.bg} ${durationStyle.text}`}>
-                            {durationStyle.emoji} {Math.round(eInfo.duration)}с
-                          </span>
-                          <span className="text-xs text-gray-500">
-                            Score: {(eInfo.score * 100).toFixed(0)}%
+                          <span className="text-xs text-gray-400">
+                            {Math.round(eInfo.duration)}с
                           </span>
                         </div>
                       );
