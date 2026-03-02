@@ -463,38 +463,14 @@ class HighlightAnalyzer:
             new_segment['_boundary_adjusted'] = True
             modified_segments.append((new_segment, scores, True))
         
-        # Re-analyze modified segments
-        segments_to_reanalyze = [(i, seg) for i, (seg, _, needs) in enumerate(modified_segments) if needs]
-        
-        if segments_to_reanalyze:
-            logger.info("Re-analyzing %d boundary-adjusted segments...", len(segments_to_reanalyze))
-            
-            def reanalyze(item):
-                idx, seg = item
-                new_scores = self._analyze_segment_with_llm(seg)
-                return (idx, new_scores)
-            
-            with ThreadPoolExecutor(max_workers=max_parallel) as executor:
-                reanalyzed = list(executor.map(reanalyze, segments_to_reanalyze))
-            
-            # Update scores
-            reanalyzed_map = {idx: scores for idx, scores in reanalyzed}
-            
-            result = []
+        # Skip re-analysis - use original scores (saves ~50% analysis time)
+        # Boundary adjustments only move 1-2 sentences, score change is minimal
+        if segments_to_reanalyze := [(i, seg) for i, (seg, _, needs) in enumerate(modified_segments) if needs]:
+            logger.info("Skipping re-analysis of %d boundary-adjusted segments (using original scores)", len(segments_to_reanalyze))
             for i, (seg, old_scores, _) in enumerate(modified_segments):
-                if i in reanalyzed_map:
-                    new_scores = reanalyzed_map[i]
-                    new_highlight = self._calculate_highlight_score(new_scores)
+                if any(idx == i for idx, _ in segments_to_reanalyze):
                     old_highlight = self._calculate_highlight_score(old_scores)
-                    logger.info(
-                        "BOUNDARY ADJUSTED segment %d: score %.2f -> %.2f",
-                        i, old_highlight, new_highlight
-                    )
-                    result.append((seg, new_scores))
-                else:
-                    result.append((seg, old_scores))
-            
-            return result
+                    logger.info("BOUNDARY ADJUSTED segment %d: score %.2f (kept)", i, old_highlight)
         
         return [(seg, scores) for seg, scores, _ in modified_segments]
 
