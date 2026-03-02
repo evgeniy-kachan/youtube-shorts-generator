@@ -413,6 +413,79 @@ def _split_words_by_pauses(
     return phrases
 
 
+def _has_cyrillic(text: str) -> bool:
+    """Check if text contains Cyrillic characters (i.e., is Russian)."""
+    if not text:
+        return False
+    return any('\u0400' <= ch <= '\u04FF' for ch in text)
+
+
+def _ensure_dialogue_russian(segment: dict, translator) -> None:
+    """
+    Ensure all dialogue turns in a segment have Russian text_ru.
+    
+    Handles three cases:
+    1. Existing translated turns (from analysis phase) → text_ru already Russian ✓
+    2. Pseudo-dialogue from English Whisper words → text is English, needs translation
+    3. NeMo-rediarized turns from English words → text is English, needs translation
+    
+    Uses batch translation for efficiency.
+    """
+    dialogue = segment.get('dialogue')
+    if not dialogue:
+        return
+    
+    # Collect turns that need translation
+    turns_needing_translation = []
+    for idx, turn in enumerate(dialogue):
+        text_ru = turn.get('text_ru', '')
+        text = turn.get('text', '')
+        
+        # If text_ru exists and has Cyrillic, it's already Russian
+        if text_ru and _has_cyrillic(text_ru):
+            continue
+        
+        # If text_ru is empty but text has Cyrillic (already Russian), copy it
+        if not text_ru and text and _has_cyrillic(text):
+            turn['text_ru'] = text
+            continue
+        
+        # Text is English (from words or not yet translated) - queue for translation
+        source_text = text_ru or text
+        if source_text and source_text.strip():
+            turns_needing_translation.append((idx, source_text))
+    
+    if not turns_needing_translation:
+        return
+    
+    # Batch translate all English turns
+    logger.info(
+        "Translating %d dialogue turns to Russian for segment %s",
+        len(turns_needing_translation), segment.get('id', '?')
+    )
+    
+    texts_to_translate = [t[1] for t in turns_needing_translation]
+    
+    try:
+        translations = translator.translate_batch(texts_to_translate)
+        
+        for (turn_idx, original_text), translation in zip(turns_needing_translation, translations):
+            turn = dialogue[turn_idx]
+            turn['text_en'] = original_text  # Preserve English
+            turn['text_ru'] = translation     # Set Russian
+            logger.info(
+                "Translated turn %d: '%s' → '%s'",
+                turn_idx, original_text[:50], translation[:50]
+            )
+    except Exception as e:
+        logger.error("Failed to translate dialogue turns for %s: %s", segment.get('id'), e)
+        # Fallback: copy text as-is (will be English but won't crash)
+        for turn_idx, original_text in turns_needing_translation:
+            turn = dialogue[turn_idx]
+            if not turn.get('text_ru'):
+                turn['text_ru'] = original_text
+
+
 def _create_pseudo_dialogue_from_words(
     words: list[dict],
     speaker: str,
@@ -1254,6 +1327,11 @@ def _process_segments_task(
             
         # 2. Generate audio for each segment
         tasks[task_id] = {"status": "processing", "progress": 0.3, "message": "Generating audio..."}
+        
+        # Translator for ensuring dialogue turns are in Russian
+        # (pseudo-dialogue from Whisper words and NeMo-rediarized turns contain English text)
+        translator = get_service("translation")
+        
         tts_service = get_tts_service(tts_provider)
         voice_plan = None
         if (tts_provider or "").lower() == "elevenlabs":
@@ -1400,11 +1478,10 @@ def _process_segments_task(
                 # Refine turn boundaries using word-level timestamps
                 _refine_turn_boundaries(segment['dialogue'])
                 
-                # Text is already translated to Russian during analysis phase
-                # Just ensure text_ru is set for each turn (copy from 'text' if needed)
-                for turn in segment['dialogue']:
-                    if not turn.get('text_ru'):
-                        turn['text_ru'] = turn.get('text', '')
+                # Ensure all dialogue turns have Russian text
+                # Existing turns from analysis should have text_ru, but NeMo-rediarized
+                # turns are rebuilt from English words and need translation
+                _ensure_dialogue_russian(segment, translator)
                 
                 tts_service.synthesize_dialogue(
                     dialogue_turns=segment['dialogue'],
@@ -1439,11 +1516,9 @@ def _process_segments_task(
                         
                         _refine_turn_boundaries(segment['dialogue'])
                         
-                        # Text is already translated to Russian during analysis phase
-                        # Just ensure text_ru is set for each turn (copy from 'text' if needed)
-                        for turn in segment['dialogue']:
-                            if not turn.get('text_ru'):
-                                turn['text_ru'] = turn.get('text', '')
+                        # Pseudo-dialogue is created from ENGLISH Whisper words!
+                        # Must translate to Russian before TTS
+                        _ensure_dialogue_russian(segment, translator)
                         
                         tts_service.synthesize_dialogue(
                             dialogue_turns=segment['dialogue'],

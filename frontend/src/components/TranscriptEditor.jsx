@@ -127,20 +127,9 @@ const TranscriptEditor = ({
         b.globalIndex = globalIndexMap[i] || (i + 1);
       });
       
-      // Debug: log numbering
-      console.log('=== Segment numbering debug ===');
-      boundaries.forEach((b, i) => {
-        console.log(`API order ${i}: id=${b.id}, tier=${b.tier}, score=${b.score}, globalIndex=${b.globalIndex}, time=${b.originalStart?.toFixed(0)}-${b.originalEnd?.toFixed(0)}`);
-      });
-      
       // Sort by start time (chronological order in transcript)
       // but keep original globalIndex for display
       boundaries.sort((a, b) => a.startIdx - b.startIdx);
-      
-      console.log('=== After chronological sort ===');
-      boundaries.forEach((b, i) => {
-        console.log(`Display order ${i}: Сегмент ${b.globalIndex} (${b.tier}), sentences ${b.startIdx}-${b.endIdx}`);
-      });
       
       setSegmentBoundaries(boundaries);
       setSelectedSegmentIdx(0);
