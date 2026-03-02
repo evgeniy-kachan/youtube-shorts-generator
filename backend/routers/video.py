@@ -3082,6 +3082,7 @@ async def get_transcript_sentences(video_id: str):
                 "duration": s["duration"],
                 "highlight_score": s.get("highlight_score", 0),
                 "tier": s.get("tier", "extended"),
+                "text": s.get("text_ru") or s.get("text", ""),
             }
             for s in segments
         ],

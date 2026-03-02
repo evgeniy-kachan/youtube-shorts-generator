@@ -82,27 +82,48 @@ const TranscriptEditor = ({
           endIdx = startIdx;
         }
         
-        // Debug: log segment boundary detection
-        if (originalIdx < 3) {
-          console.log(`Segment ${originalIdx + 1}: time ${segStart.toFixed(1)}-${segEnd.toFixed(1)}, sentences ${startIdx}-${endIdx}`);
-          if (startIdx >= 0) {
-            console.log(`  First sentence: "${sentences[startIdx]?.text?.slice(0, 50)}..." at ${sentences[startIdx]?.start?.toFixed(1)}-${sentences[startIdx]?.end?.toFixed(1)}`);
-          }
-        }
-        
-        // Extract segment number from id (e.g., "segment_5" -> 5)
-        // This is the original DeepSeek number that user sees in the main list
-        const segmentNumber = parseInt(seg.id?.replace('segment_', '') || '0', 10) + 1;
-        
         return {
           id: seg.id,
-          globalIndex: segmentNumber, // Original DeepSeek number: Сегмент 1, Сегмент 2, etc.
+          globalIndex: -1, // Will be set below
+          tier: seg.tier || 'extended',
           startIdx,
           endIdx,
           score: seg.highlight_score || 0,
           originalStart: seg.start_time,
           originalEnd: seg.end_time,
         };
+      });
+      
+      // Assign globalIndex matching SegmentsList numbering:
+      // SegmentsList groups by tier (strict → extended → fallback)
+      // and numbers them sequentially. We replicate this order.
+      // segments array comes in original order from API.
+      // SegmentsList splits into tiers keeping original array order within each tier.
+      const tierOrder = { strict: 0, extended: 1, fallback: 2 };
+      
+      // Create indexed list to track original positions
+      const indexed = segments.map((seg, i) => ({ 
+        idx: i, 
+        tier: seg.tier || 'extended' 
+      }));
+      
+      // Sort by tier (strict first, then extended, then fallback)
+      // Within same tier, keep original array order
+      indexed.sort((a, b) => {
+        const tierDiff = (tierOrder[a.tier] || 1) - (tierOrder[b.tier] || 1);
+        if (tierDiff !== 0) return tierDiff;
+        return a.idx - b.idx; // Preserve original order within tier
+      });
+      
+      // Assign globalIndex: position in tier-sorted list + 1
+      const globalIndexMap = {};
+      indexed.forEach((item, pos) => {
+        globalIndexMap[item.idx] = pos + 1;
+      });
+      
+      // Apply to boundaries (which are in same order as segments at this point)
+      boundaries.forEach((b, i) => {
+        b.globalIndex = globalIndexMap[i] || (i + 1);
       });
       
       // Sort by start time (chronological order in transcript)
@@ -302,7 +323,7 @@ const TranscriptEditor = ({
         </div>
 
         {/* Main Content - 3 columns */}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 min-h-0">
           
           {/* LEFT: Segment List (quick navigation) */}
           <div className="w-56 border-r bg-gray-50 overflow-y-auto">
@@ -342,7 +363,7 @@ const TranscriptEditor = ({
                 );
               })}
             </div>
-          </div>
+        </div>
 
           {/* CENTER: Transcript with highlighted segments */}
           <div className="flex-1 overflow-y-auto p-4 bg-white">
@@ -489,8 +510,8 @@ const TranscriptEditor = ({
           {/* RIGHT: Controls Panel */}
           <div className="w-80 border-l bg-gray-50 overflow-y-auto">
             {selectedSegmentIdx !== null && segmentInfos[selectedSegmentIdx] && (() => {
-              const info = segmentInfos[selectedSegmentIdx];
-              const durationStyle = getDurationColor(info.duration);
+                  const info = segmentInfos[selectedSegmentIdx];
+                  const durationStyle = getDurationColor(info.duration);
               const borderColor = SEGMENT_BORDER_COLORS[info.colorIdx];
               
               return (
@@ -521,13 +542,13 @@ const TranscriptEditor = ({
                   
                   {/* Duration & Time */}
                   <div className={`p-4 rounded-xl ${durationStyle.bg}`}>
-                    <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between">
                       <span className={`text-3xl font-bold ${durationStyle.text}`}>
-                        {durationStyle.emoji} {Math.round(info.duration)}с
-                      </span>
+                            {durationStyle.emoji} {Math.round(info.duration)}с
+                          </span>
                       <div className="text-right">
                         <div className="text-sm font-medium text-gray-700">
-                          {formatTime(info.startTime)} - {formatTime(info.endTime)}
+                            {formatTime(info.startTime)} - {formatTime(info.endTime)}
                         </div>
                         <div className="text-xs text-gray-500">
                           Score: {(info.score * 100).toFixed(0)}%
@@ -542,75 +563,75 @@ const TranscriptEditor = ({
                     <span>🟡 60-90с</span>
                     <span>🟠 90-120с</span>
                     <span>🔴 &gt;120с</span>
-                  </div>
-                  
+                      </div>
+                      
                   {/* START Boundary Controls */}
                   <div className="bg-white rounded-xl p-4 border-2 border-green-200">
                     <div className="flex items-center gap-2 mb-3">
                       <span className="text-green-500 font-bold text-lg">▶</span>
                       <label className="text-sm font-bold text-green-700 uppercase">
-                        Начало сегмента
-                      </label>
+                          Начало сегмента
+                        </label>
                     </div>
                     <div className="flex gap-2 mb-2">
-                      <button
+                          <button
                         onClick={(e) => moveStart(selectedSegmentIdx, -1, e)}
                         className="flex-1 py-3 px-4 bg-green-50 border-2 border-green-300 rounded-lg hover:bg-green-100 transition font-bold text-green-700"
-                      >
+                          >
                         ⬆️ Раньше
-                      </button>
-                      <button
+                          </button>
+                          <button
                         onClick={(e) => moveStart(selectedSegmentIdx, 1, e)}
                         className="flex-1 py-3 px-4 bg-green-50 border-2 border-green-300 rounded-lg hover:bg-green-100 transition font-bold text-green-700"
-                      >
+                          >
                         ⬇️ Позже
-                      </button>
-                    </div>
+                          </button>
+                        </div>
                     <p className="text-xs text-gray-500 text-center">
                       Предложение #{info.startIdx + 1} • {formatTime(sentences[info.startIdx]?.start || 0)}
-                    </p>
-                  </div>
-                  
+                        </p>
+                      </div>
+                      
                   {/* END Boundary Controls */}
                   <div className="bg-white rounded-xl p-4 border-2 border-red-200">
                     <div className="flex items-center gap-2 mb-3">
                       <span className="text-red-500 font-bold text-lg">◀</span>
                       <label className="text-sm font-bold text-red-700 uppercase">
-                        Конец сегмента
-                      </label>
+                          Конец сегмента
+                        </label>
                     </div>
                     <div className="flex gap-2 mb-2">
-                      <button
+                          <button
                         onClick={(e) => moveEnd(selectedSegmentIdx, -1, e)}
                         className="flex-1 py-3 px-4 bg-red-50 border-2 border-red-300 rounded-lg hover:bg-red-100 transition font-bold text-red-700"
-                      >
+                          >
                         ⬆️ Раньше
-                      </button>
-                      <button
+                          </button>
+                          <button
                         onClick={(e) => moveEnd(selectedSegmentIdx, 1, e)}
                         className="flex-1 py-3 px-4 bg-red-50 border-2 border-red-300 rounded-lg hover:bg-red-100 transition font-bold text-red-700"
-                      >
+                          >
                         ⬇️ Позже
-                      </button>
-                    </div>
+                          </button>
+                        </div>
                     <p className="text-xs text-gray-500 text-center">
                       Предложение #{info.endIdx + 1} • {formatTime(sentences[info.endIdx]?.end || 0)}
-                    </p>
-                  </div>
-                  
-                  {/* Preview text */}
+                        </p>
+                      </div>
+                      
+                      {/* Preview text */}
                   <div className="bg-white rounded-xl p-4 border">
                     <label className="text-xs font-bold text-gray-500 uppercase block mb-2">
                       📝 Текст сегмента ({info.endIdx - info.startIdx + 1} предл.)
-                    </label>
+                        </label>
                     <div className="text-sm text-gray-700 max-h-40 overflow-y-auto leading-relaxed">
-                      {info.text}
+                          {info.text}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
+                  );
+                })()}
+              </div>
         </div>
       </div>
     </div>
