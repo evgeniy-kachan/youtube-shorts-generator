@@ -1295,23 +1295,108 @@ class FaceDetector:
 
         return cleaned
     
-    def diagnose_final_crop(self, video_path: str, max_samples: int = 3) -> None:
+    def diagnose_final_crop(self, video_path: str, max_samples: int = 6) -> None:
         """
-        Diagnostic: check where faces ended up in the final cropped video.
+        POST-CROP DIAGNOSTIC: check where faces ended up in the final cropped video.
         Logs face positions in the 1080px wide frame to verify crop quality.
+        
+        Good crop: face center_x is 20%-80% of frame width (not cut off at edges).
+        Bad crop:  face center_x < 10% or > 90% (face partially off-screen).
         """
         capture = cv2.VideoCapture(video_path)
         if not capture.isOpened():
-            logger.warning("Diagnose: unable to open video %s", video_path)
+            logger.warning("[POST-CROP] Unable to open video %s", video_path)
             return
         
         frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+        frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1080
+        frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
         step = max(frame_count // max_samples, 1)
         sample_indices = list(range(0, frame_count, step))[:max_samples]
         
-        # POST-CROP DIAGNOSTIC disabled to reduce log noise
-        # Enable for debugging face crop issues
+        logger.info(
+            "[POST-CROP] Diagnosing %s: %dx%d, %d frames, %.1f fps, sampling %d frames",
+            video_path, frame_width, frame_height, frame_count, fps, len(sample_indices),
+        )
+        
+        issues = []
+        total_faces = 0
+        
+        for sample_idx, frame_idx in enumerate(sample_indices):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                logger.warning("[POST-CROP] Frame %d: could not read", frame_idx)
+                continue
+            
+            time_sec = frame_idx / fps if fps > 0 else 0
+            faces = self._detect_faces(frame)
+            
+            if not faces:
+                logger.info("[POST-CROP] t=%.1fs (frame %d): NO faces detected", time_sec, frame_idx)
+                continue
+            
+            for fi, f in enumerate(faces):
+                total_faces += 1
+                cx = f["center_x"]
+                cy = f["center_y"]
+                fw = f.get("w", 0)
+                fh = f.get("h", 0)
+                score = f.get("score", 0)
+                
+                # Face bbox edges
+                face_left = cx - fw / 2
+                face_right = cx + fw / 2
+                face_top = cy - fh / 2
+                face_bottom = cy + fh / 2
+                
+                # Ratios (0-1) in final frame
+                cx_ratio = cx / frame_width if frame_width > 0 else 0.5
+                cy_ratio = cy / frame_height if frame_height > 0 else 0.5
+                left_ratio = face_left / frame_width if frame_width > 0 else 0
+                right_ratio = face_right / frame_width if frame_width > 0 else 1
+                
+                # Quality assessment
+                cut_left = face_left < 0
+                cut_right = face_right > frame_width
+                cut_top = face_top < 0
+                cut_bottom = face_bottom > frame_height
+                is_cut = cut_left or cut_right or cut_top or cut_bottom
+                
+                # Edge warning: face center too close to edge
+                is_edge = cx_ratio < 0.10 or cx_ratio > 0.90
+                
+                status = "✅ OK"
+                if is_cut:
+                    status = "❌ CUT OFF"
+                    issues.append(f"t={time_sec:.1f}s face {fi} CUT OFF (cx={cx_ratio:.2f})")
+                elif is_edge:
+                    status = "⚠️ EDGE"
+                    issues.append(f"t={time_sec:.1f}s face {fi} at EDGE (cx={cx_ratio:.2f})")
+                
+                logger.info(
+                    "[POST-CROP] t=%.1fs face %d: %s center=(%.0f,%.0f) ratio=(%.2f,%.2f) "
+                    "bbox=[%.0f,%.0f,%.0f,%.0f] size=%.0fx%.0f score=%.2f",
+                    time_sec, fi, status,
+                    cx, cy, cx_ratio, cy_ratio,
+                    face_left, face_top, face_right, face_bottom,
+                    fw, fh, score,
+                )
+        
         capture.release()
+        
+        # Summary
+        if issues:
+            logger.warning(
+                "[POST-CROP] ⚠️ CROP QUALITY ISSUES in %s: %d problems out of %d faces:\n  %s",
+                video_path, len(issues), total_faces, "\n  ".join(issues),
+            )
+        else:
+            logger.info(
+                "[POST-CROP] ✅ Crop looks good for %s: %d faces checked, all within frame",
+                video_path, total_faces,
+            )
     
     def _get_primary_speaker(
         self,
