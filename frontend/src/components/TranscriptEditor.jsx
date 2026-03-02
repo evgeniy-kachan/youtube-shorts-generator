@@ -55,12 +55,13 @@ const TranscriptEditor = ({
         let endIdx = -1;
         
         // Find ALL sentences that overlap with segment time range
-        // A sentence overlaps if its time range intersects with segment time range
+        // A sentence belongs to a segment if its START falls within segment range
+        // This gives precise boundaries matching DeepSeek's assignment
         for (let i = 0; i < sentences.length; i++) {
           const s = sentences[i];
-          // Sentence overlaps if: NOT (sentence ends before segment starts OR sentence starts after segment ends)
-          // With 3 second tolerance to catch edge cases
-          const overlaps = !(s.end < segStart - 3 || s.start > segEnd + 3);
+          // Sentence belongs to segment if its start time is within [segStart - 0.5, segEnd)
+          // Small 0.5s tolerance for timing rounding only
+          const overlaps = s.start >= segStart - 0.5 && s.start < segEnd + 0.5;
           
           if (overlaps) {
             if (startIdx === -1) startIdx = i;
