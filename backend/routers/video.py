@@ -437,26 +437,31 @@ def _ensure_dialogue_russian(segment: dict, translator) -> None:
         return
     
     # Collect turns that need Stage1 isochronic translation.
-    # Stage1 ALWAYS runs on the English source (Whisper `text` field) to produce
-    # timing-optimized Russian, even when `text_ru` from the fast batch-translate
-    # already exists.  The isochronic pass overwrites text_ru with a better fit.
+    # Stage1 uses the English source (text_en or text if not Cyrillic) to produce
+    # timing-optimized Russian via STAGE1_PROMPT with per-turn duration targets.
     turns_needing_translation = []
     for idx, turn in enumerate(dialogue):
         text_ru = turn.get('text_ru', '')
         text    = turn.get('text', '')
+        text_en = turn.get('text_en', '')  # English original preserved from transcript_segments
 
-        # Determine the English source for Stage1.
-        # `text` stores the original Whisper English; `text_ru` is the fast Russian.
-        # If `text` is Cyrillic it means English was never stored → fall back to text_ru.
-        if text and not _has_cyrillic(text):
+        # Priority: use text_en (English original) if available,
+        # otherwise fall back to text if it's not Cyrillic (legacy path).
+        english_source = ''
+        if text_en and not _has_cyrillic(text_en):
+            english_source = text_en
+        elif text and not _has_cyrillic(text):
+            english_source = text
+
+        if english_source:
             # English source available → Stage1 can produce isochronic Russian
+            # Store it in text_en for the translation step to use
+            turn['text_en'] = english_source
             turns_needing_translation.append(idx)
-        elif not text_ru and text and _has_cyrillic(text):
-            # Only Russian available, no English → just ensure text_ru is set
-            turn['text_ru'] = text
-        elif not text_ru and _has_cyrillic(text_ru if text_ru else ''):
-            pass  # already fine
-        # If neither has content, leave as-is
+        elif not text_ru:
+            # Only Russian available, no English → ensure text_ru is set
+            turn['text_ru'] = text or text_en or ''
+        # If text_ru already exists and no English source → use existing fast translation
     
     if not turns_needing_translation:
         return
@@ -472,12 +477,12 @@ def _ensure_dialogue_russian(segment: dict, translator) -> None:
     turns_for_translation = []
     for idx in turns_needing_translation:
         turn = dialogue[idx]
-        # Always use the English original (`text`) as the Stage1 source.
-        # `text` was preserved from Whisper so Stage1 can produce isochronic Russian.
-        source_text = turn.get('text', '') or turn.get('text_ru', '')
+        # Use text_en (English original preserved from transcript_segments / highlight_analyzer).
+        # Fall back to text if text_en is missing (legacy path for pseudo-dialogue from words).
+        source_text = turn.get('text_en', '') or turn.get('text', '')
         turns_for_translation.append({
             'speaker': turn.get('speaker', f'SPEAKER_{idx:02d}'),
-            'text': source_text,  # English source for isochronic translation
+            'text': source_text,  # English source for Stage1 isochronic translation
             'start': turn.get('start', 0),
             'end': turn.get('end', 0),
         })
@@ -3300,7 +3305,9 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
                                 key=lambda t: abs(t.get("start", 0) - s_start),
                                 default=None,
                             )
-                        text_en = (ts_match.get("text", "") if ts_match else "") or text_ru
+                        # text_en from transcript_segments; note: ts_match["text"] is Russian
+                        # (overwritten during translation), so use "text_en" key explicitly.
+                        text_en = (ts_match.get("text_en", "") if ts_match else "") or text_ru
 
                         text_parts.append(text_ru)  # display/fallback
                         speaker = s.get("speaker") or "SPEAKER_00"

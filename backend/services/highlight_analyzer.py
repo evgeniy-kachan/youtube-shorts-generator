@@ -1242,6 +1242,8 @@ class HighlightAnalyzer:
                 current_turn = {
                     "speaker": first_seg.get("speaker"),
                     "text": first_seg.get("text", "").strip(),
+                    # text_en: English original (needed for Stage1 isochronic translation at render)
+                    "text_en": first_seg.get("text_en", "").strip(),
                     "start": first_seg["start"],
                     "end": first_seg["end"],
                     "words": list(first_seg.get("words") or []),  # Word timestamps!
@@ -1250,11 +1252,14 @@ class HighlightAnalyzer:
                 for seg in chunk_segments[1:]:
                     speaker = seg.get("speaker")
                     text_part = seg.get("text", "").strip()
+                    text_en_part = seg.get("text_en", "").strip()
                     seg_words = seg.get("words") or []
                     
                     if speaker == current_turn["speaker"]:
                         # Same speaker, append text and words
                         current_turn["text"] += " " + text_part
+                        if text_en_part:
+                            current_turn["text_en"] = (current_turn.get("text_en", "") + " " + text_en_part).strip()
                         current_turn["end"] = seg["end"]
                         current_turn["words"].extend(seg_words)
                     else:
@@ -1264,6 +1269,7 @@ class HighlightAnalyzer:
                         current_turn = {
                             "speaker": speaker,
                             "text": text_part,
+                            "text_en": text_en_part,
                             "start": seg["start"],
                             "end": seg["end"],
                             "words": list(seg_words),  # Word timestamps for new turn

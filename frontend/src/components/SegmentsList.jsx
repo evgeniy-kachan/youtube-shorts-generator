@@ -372,13 +372,17 @@ const SegmentsList = ({
     }
   }, [videoId]);
 
-  // Save updated segment boundaries
-  const handleSegmentBoundariesUpdate = useCallback(async (updatedSegments) => {
+  // Save updated segment boundaries (and optionally apply selection from editor)
+  const handleSegmentBoundariesUpdate = useCallback(async (updatedSegments, checkedIds) => {
     if (!videoId) return;
     try {
       const result = await updateSegmentBoundaries(videoId, updatedSegments);
       if (result.success && onSegmentsUpdate) {
         onSegmentsUpdate(result.segments);
+      }
+      // If user checked segments in the editor, apply that selection
+      if (checkedIds && checkedIds.length > 0) {
+        setSelectedSegments(checkedIds);
       }
     } catch (error) {
       console.error('Failed to update boundaries:', error);
@@ -1367,6 +1371,7 @@ const SegmentsList = ({
         <TranscriptEditor
           sentences={transcriptData.sentences}
           segments={transcriptData.segments}
+          initialSelectedIds={selectedSegments}
           onSegmentsChange={handleSegmentBoundariesUpdate}
           onClose={() => setShowTranscriptEditor(false)}
         />

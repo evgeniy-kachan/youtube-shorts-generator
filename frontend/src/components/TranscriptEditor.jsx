@@ -34,12 +34,17 @@ const formatTime = (seconds) => {
 const TranscriptEditor = ({
   sentences = [],
   segments = [],
+  initialSelectedIds = [],   // IDs already selected in SegmentsList
   onSegmentsChange,
   onClose,
 }) => {
   // Local state for segment boundaries (sentence indices)
   const [segmentBoundaries, setSegmentBoundaries] = useState([]);
   const [selectedSegmentIdx, setSelectedSegmentIdx] = useState(0);
+  // Which segments are checked (will be selected for render after saving)
+  const [checkedSegmentIds, setCheckedSegmentIds] = useState(
+    () => new Set(initialSelectedIds)
+  );
   const sentenceRefs = useRef({});
   
   // Initialize boundaries from segments
@@ -319,7 +324,19 @@ const TranscriptEditor = ({
     });
   }, [sentences.length]);
 
+  // Toggle check state for a segment (select/deselect for render)
+  const toggleChecked = useCallback((segId, e) => {
+    if (e) e.stopPropagation();
+    setCheckedSegmentIds(prev => {
+      const next = new Set(prev);
+      if (next.has(segId)) next.delete(segId);
+      else next.add(segId);
+      return next;
+    });
+  }, []);
+
   // Save changes — send the actual sentences so the backend doesn't need time-based re-matching
+  // Also returns checkedIds so SegmentsList can apply the selection immediately
   const handleSave = useCallback(() => {
     const updatedSegments = segmentInfos.map(info => {
       const segSentences = sentences.slice(info.startIdx, info.endIdx + 1);
@@ -337,9 +354,9 @@ const TranscriptEditor = ({
         })),
       };
     });
-    onSegmentsChange?.(updatedSegments);
+    onSegmentsChange?.(updatedSegments, Array.from(checkedSegmentIds));
     onClose?.();
-  }, [segmentInfos, sentences, onSegmentsChange, onClose]);
+  }, [segmentInfos, sentences, checkedSegmentIds, onSegmentsChange, onClose]);
 
   // Build a lookup map for each sentence: which segments contain it, start here, end here
   const sentenceLookup = useMemo(() => {
@@ -388,9 +405,16 @@ const TranscriptEditor = ({
         <div className="flex items-center justify-between p-4 border-b bg-gradient-to-r from-purple-50 to-indigo-50">
           <div>
             <h2 className="text-xl font-bold text-gray-900">✂️ Редактор границ сегментов</h2>
-            <p className="text-sm text-gray-500">Выберите сегмент слева → настройте границы справа</p>
+            <p className="text-sm text-gray-500">
+              Отметьте ✅ нужные сегменты → отредактируйте границы → Сохранить и создать видео
+            </p>
           </div>
           <div className="flex items-center gap-3">
+            {checkedSegmentIds.size > 0 && (
+              <span className="text-sm font-semibold text-purple-700 bg-purple-100 px-3 py-1 rounded-full">
+                📹 {checkedSegmentIds.size} выбрано
+              </span>
+            )}
             <button
               onClick={onClose}
               className="px-4 py-2 text-gray-600 hover:text-gray-900 transition"
@@ -401,7 +425,9 @@ const TranscriptEditor = ({
               onClick={handleSave}
               className="px-6 py-2 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition shadow-lg"
             >
-              💾 Сохранить
+              {checkedSegmentIds.size > 0
+                ? `💾 Сохранить (${checkedSegmentIds.size} выбрано)`
+                : '💾 Сохранить'}
             </button>
           </div>
         </div>
@@ -414,36 +440,73 @@ const TranscriptEditor = ({
             <div className="p-3 border-b bg-white sticky top-0 z-10">
               <h3 className="font-semibold text-gray-700 text-sm">📋 Сегменты ({segmentBoundaries.length})</h3>
             </div>
+            {/* Select all / deselect all shortcuts */}
+            <div className="px-3 py-2 border-b flex gap-2">
+              <button
+                onClick={() => setCheckedSegmentIds(new Set(segmentInfos.map(i => i.id)))}
+                className="flex-1 text-xs py-1 px-2 bg-green-50 border border-green-200 rounded text-green-700 hover:bg-green-100"
+              >
+                ✅ Все
+              </button>
+              <button
+                onClick={() => setCheckedSegmentIds(new Set())}
+                className="flex-1 text-xs py-1 px-2 bg-gray-50 border border-gray-200 rounded text-gray-600 hover:bg-gray-100"
+              >
+                ☐ Снять
+              </button>
+            </div>
             <div className="p-2 space-y-1">
               {segmentInfos.map((info, idx) => {
                 const isSelected = idx === selectedSegmentIdx;
+                const isChecked = checkedSegmentIds.has(info.id);
                 const durationStyle = getDurationColor(info.duration);
                 const borderColor = SEGMENT_BORDER_COLORS[info.colorIdx];
                 
                 return (
-                  <button
+                  <div
                     key={info.id}
-                    onClick={() => selectSegmentWithScroll(idx)}
-                    className={`w-full text-left p-3 rounded-lg transition-all ${
-                      isSelected 
-                        ? 'bg-white shadow-md ring-2 ring-purple-400' 
+                    className={`rounded-lg transition-all ${
+                      isSelected
+                        ? 'bg-white shadow-md ring-2 ring-purple-400'
                         : 'hover:bg-white hover:shadow-sm'
                     }`}
                     style={{ borderLeft: `4px solid ${borderColor}` }}
                   >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-semibold text-gray-900">Сегмент {info.globalIndex}</span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${durationStyle.bg} ${durationStyle.text}`}>
-                        {durationStyle.emoji} {Math.round(info.duration)}с
+                    {/* Checkbox row */}
+                    <div
+                      className="flex items-center gap-2 px-2 pt-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => toggleChecked(info.id, e)}
+                        className="w-4 h-4 accent-purple-600 cursor-pointer flex-shrink-0"
+                        title={isChecked ? 'Убрать из рендера' : 'Добавить в рендер'}
+                      />
+                      <span className={`text-xs font-semibold ${isChecked ? 'text-purple-700' : 'text-gray-400'}`}>
+                        {isChecked ? '📹 В рендер' : 'не выбран'}
                       </span>
                     </div>
-                    <div className="text-xs text-gray-500">
-                      {formatTime(info.startTime)} - {formatTime(info.endTime)}
-                    </div>
-                    <div className="text-xs text-gray-400 mt-1 line-clamp-2">
-                      {info.text.slice(0, 60)}...
-                    </div>
-                  </button>
+                    {/* Segment info (click = navigate) */}
+                    <button
+                      onClick={() => selectSegmentWithScroll(idx)}
+                      className="w-full text-left p-2"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-semibold text-gray-900">Сегмент {info.globalIndex}</span>
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${durationStyle.bg} ${durationStyle.text}`}>
+                          {durationStyle.emoji} {Math.round(info.duration)}с
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {formatTime(info.startTime)} - {formatTime(info.endTime)}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-1 line-clamp-2">
+                        {info.text.slice(0, 60)}...
+                      </div>
+                    </button>
+                  </div>
                 );
               })}
             </div>
