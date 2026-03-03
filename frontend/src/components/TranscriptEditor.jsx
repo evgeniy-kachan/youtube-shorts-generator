@@ -319,17 +319,27 @@ const TranscriptEditor = ({
     });
   }, [sentences.length]);
 
-  // Save changes
+  // Save changes — send the actual sentences so the backend doesn't need time-based re-matching
   const handleSave = useCallback(() => {
-    const updatedSegments = segmentInfos.map(info => ({
-      id: info.id,
-      start_time: info.startTime,
-      end_time: info.endTime,
-      duration: info.duration,
-    }));
+    const updatedSegments = segmentInfos.map(info => {
+      const segSentences = sentences.slice(info.startIdx, info.endIdx + 1);
+      return {
+        id: info.id,
+        start_time: info.startTime,
+        end_time: info.endTime,
+        duration: info.duration,
+        // Pass sentences directly so backend can rebuild text/dialogue reliably
+        sentences: segSentences.map(s => ({
+          text: s.text,
+          start: s.start,
+          end: s.end,
+          speaker: s.speaker || '',
+        })),
+      };
+    });
     onSegmentsChange?.(updatedSegments);
     onClose?.();
-  }, [segmentInfos, onSegmentsChange, onClose]);
+  }, [segmentInfos, sentences, onSegmentsChange, onClose]);
 
   // Build a lookup map for each sentence: which segments contain it, start here, end here
   const sentenceLookup = useMemo(() => {

@@ -3097,7 +3097,7 @@ async def get_project_file(file_path: str):
 
 class UpdateSegmentBoundariesRequest(BaseModel):
     video_id: str
-    segments: List[dict]  # [{id, start_time, end_time, duration}, ...]
+    segments: List[dict]  # [{id, start_time, end_time, duration, sentences?: [...]}]
 
 
 @router.get("/transcript/{video_id}")
@@ -3248,6 +3248,7 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
         seg_id = update.get("id")
         new_start = update.get("start_time")
         new_end = update.get("end_time")
+        provided_sentences = update.get("sentences")  # Sent directly by the editor (preferred)
         
         # Find and update the segment
         for seg in existing_segments:
@@ -3256,36 +3257,56 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
                 seg["end_time"] = new_end
                 seg["duration"] = new_end - new_start
                 
-                # Rebuild text and dialogue from transcript segments within new boundaries
                 text_parts = []
                 raw_dialogue = []
-                
-                for ts in transcript_segments:
-                    ts_start = ts.get("start", 0)
-                    ts_end = ts.get("end", 0)
-                    # Include only if overlaps with segment
-                    if ts_end > new_start and ts_start < new_end:
-                        # Clip timestamps to segment boundaries
-                        eff_start = max(ts_start, new_start)
-                        eff_end = min(ts_end, new_end)
 
-                        # Use text_ru (Russian), fallback to text
-                        text = ts.get("text_ru") or ts.get("text", "")
-                        text_parts.append(text.strip())
-
-                        # Prefer NeMo speaker, fallback to transcript speaker
-                        if nemo_segments_list:
-                            speaker = _nemo_speaker_for_range(ts_start, ts_end) or ts.get("speaker", "SPEAKER_00")
-                        else:
-                            speaker = ts.get("speaker", "SPEAKER_00")
-
+                if provided_sentences:
+                    # ─── FAST PATH: use sentences passed directly from the editor ───
+                    # No time-based re-matching needed; editor already knows exactly
+                    # which sentences belong to this segment.
+                    for s in provided_sentences:
+                        text = (s.get("text") or "").strip()
+                        if not text:
+                            continue
+                        text_parts.append(text)
+                        # Editor sentences already carry NeMo speakers (assigned in
+                        # get_transcript_sentences), so we trust them directly.
+                        speaker = s.get("speaker") or "SPEAKER_00"
                         raw_dialogue.append({
                             "speaker": speaker,
-                            "text": text.strip(),
-                            "text_ru": text.strip(),
-                            "start": eff_start,
-                            "end": eff_end,
+                            "text": text,
+                            "text_ru": text,
+                            "start": s.get("start", new_start),
+                            "end": s.get("end", new_end),
                         })
+                else:
+                    # ─── FALLBACK: time-based matching from transcript_segments ───
+                    for ts in transcript_segments:
+                        ts_start = ts.get("start", 0)
+                        ts_end = ts.get("end", 0)
+                        # Include only if overlaps with segment
+                        if ts_end > new_start and ts_start < new_end:
+                            # Clip timestamps to segment boundaries
+                            eff_start = max(ts_start, new_start)
+                            eff_end = min(ts_end, new_end)
+
+                            # Use text_ru (Russian), fallback to text
+                            text = ts.get("text_ru") or ts.get("text", "")
+                            text_parts.append(text.strip())
+
+                            # Prefer NeMo speaker, fallback to transcript speaker
+                            if nemo_segments_list:
+                                speaker = _nemo_speaker_for_range(ts_start, ts_end) or ts.get("speaker", "SPEAKER_00")
+                            else:
+                                speaker = ts.get("speaker", "SPEAKER_00")
+
+                            raw_dialogue.append({
+                                "speaker": speaker,
+                                "text": text.strip(),
+                                "text_ru": text.strip(),
+                                "start": eff_start,
+                                "end": eff_end,
+                            })
 
                 # Merge consecutive turns with the same speaker to avoid
                 # unnecessary fragmentation (and accidental multi-speaker TTS)
