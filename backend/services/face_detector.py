@@ -214,6 +214,10 @@ class FaceDetector:
     # Minimum face width in pixels to filter out noise detections
     # Set to 16 to catch small faces on wide shots / profile views
     MIN_FACE_WIDTH_PX = 16
+    
+    # Minimum detection score to consider a face "real" (not a profile/back of head)
+    # InsightFace scores: 0.7+ = frontal face, 0.3-0.5 = profile, <0.3 = likely not a face
+    MIN_FACE_SCORE = 0.4
 
     def _detect_faces(self, frame: np.ndarray) -> Sequence[dict]:
         """Detect faces in frame using InsightFace."""
@@ -770,11 +774,12 @@ class FaceDetector:
             
             if ok and frame is not None:
                 faces = self._detect_faces(frame)
-                # Filter tiny faces
+                # Filter tiny faces and low-confidence detections
                 faces = [
                     f for f in faces
                     if f.get("w", 0) >= self.MIN_FACE_WIDTH_PX
                     and f.get("area", 0) >= 0.0005 * f.get("width", 1) * f.get("height", 1)
+                    and f.get("score", 0) >= self.MIN_FACE_SCORE
                 ]
                 
                 if faces:
@@ -946,11 +951,12 @@ class FaceDetector:
                     continue
                     
                 faces = self._detect_faces(frame)
-                # Filter tiny faces
+                # Filter tiny faces and low-confidence detections (profiles, back of heads)
                 faces = [
                     f for f in faces
                     if f.get("w", 0) >= self.MIN_FACE_WIDTH_PX
                     and f.get("area", 0) >= 0.0005 * f.get("width", 1) * f.get("height", 1)
+                    and f.get("score", 0) >= self.MIN_FACE_SCORE
                 ]
                 if faces:
                     all_faces.append(faces)
@@ -1245,11 +1251,12 @@ class FaceDetector:
                 timeline_raw.append((frame_idx / fps, None))
                 continue
             faces = self._detect_faces(frame)
-            # Filter tiny detections (already done in _detect_faces but double-check)
+            # Filter tiny detections and low-confidence (profiles/backs)
             faces = [
                 f for f in faces
                 if f.get("area", 0.0) >= 0.0005 * f.get("width", 1.0) * f.get("height", 1.0)
                 and f.get("w", 0.0) >= self.MIN_FACE_WIDTH_PX
+                and f.get("score", 0) >= self.MIN_FACE_SCORE
             ]
             if not faces:
                 timeline_raw.append((frame_idx / fps, None))
