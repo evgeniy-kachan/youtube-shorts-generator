@@ -3214,6 +3214,7 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
     """
     Update segment boundaries after manual adjustment in TranscriptEditor.
     Rebuilds text_ru and dialogue from transcript_segments within new boundaries.
+    Uses NeMo diarization speakers (if available) and merges consecutive same-speaker turns.
     """
     video_id = request.video_id
     
@@ -3223,7 +3224,24 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
     cached = analysis_results_cache[video_id]
     existing_segments = cached.get("segments", [])
     transcript_segments = cached.get("transcript_segments", [])
-    
+
+    # NeMo speaker lookup (same logic as get_transcript_sentences)
+    nemo_diar = cached.get("nemo_diarization", {})
+    nemo_segments_list = nemo_diar.get("segments", []) if nemo_diar else []
+
+    def _nemo_speaker_for_range(start_t: float, end_t: float) -> str:
+        """Return NeMo speaker with most overlap for [start_t, end_t]."""
+        best_speaker = ""
+        best_overlap = 0.0
+        for ns in nemo_segments_list:
+            ns_start = ns.get("start", 0)
+            ns_end = ns.get("end", 0)
+            overlap = max(0.0, min(end_t, ns_end) - max(start_t, ns_start))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_speaker = ns.get("speaker", "")
+        return best_speaker
+
     # Update segment boundaries
     updated_count = 0
     for update in request.segments:
@@ -3240,33 +3258,59 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
                 
                 # Rebuild text and dialogue from transcript segments within new boundaries
                 text_parts = []
-                new_dialogue = []
+                raw_dialogue = []
                 
                 for ts in transcript_segments:
                     ts_start = ts.get("start", 0)
                     ts_end = ts.get("end", 0)
-                    # Include if overlaps with segment
+                    # Include only if overlaps with segment
                     if ts_end > new_start and ts_start < new_end:
+                        # Clip timestamps to segment boundaries
+                        eff_start = max(ts_start, new_start)
+                        eff_end = min(ts_end, new_end)
+
                         # Use text_ru (Russian), fallback to text
                         text = ts.get("text_ru") or ts.get("text", "")
                         text_parts.append(text.strip())
-                        
-                        # Build dialogue entry
-                        new_dialogue.append({
-                            "speaker": ts.get("speaker", "SPEAKER_00"),
+
+                        # Prefer NeMo speaker, fallback to transcript speaker
+                        if nemo_segments_list:
+                            speaker = _nemo_speaker_for_range(ts_start, ts_end) or ts.get("speaker", "SPEAKER_00")
+                        else:
+                            speaker = ts.get("speaker", "SPEAKER_00")
+
+                        raw_dialogue.append({
+                            "speaker": speaker,
                             "text": text.strip(),
                             "text_ru": text.strip(),
-                            "start": ts_start,
-                            "end": ts_end,
+                            "start": eff_start,
+                            "end": eff_end,
                         })
-                
+
+                # Merge consecutive turns with the same speaker to avoid
+                # unnecessary fragmentation (and accidental multi-speaker TTS)
+                merged_dialogue = []
+                for turn in raw_dialogue:
+                    if merged_dialogue and merged_dialogue[-1]["speaker"] == turn["speaker"]:
+                        prev = merged_dialogue[-1]
+                        prev["text"] = (prev["text"] + " " + turn["text"]).strip()
+                        prev["text_ru"] = (prev["text_ru"] + " " + turn["text_ru"]).strip()
+                        prev["end"] = turn["end"]
+                    else:
+                        merged_dialogue.append(dict(turn))
+
                 if text_parts:
                     seg["text_ru"] = " ".join(text_parts)
                 
-                if new_dialogue:
-                    seg["dialogue"] = new_dialogue
-                
-                logger.debug(f"Segment {seg_id}: updated to {new_start:.2f}-{new_end:.2f}, {len(new_dialogue)} dialogue turns")
+                if merged_dialogue:
+                    seg["dialogue"] = merged_dialogue
+
+                n_speakers = len(set(t["speaker"] for t in merged_dialogue))
+                logger.info(
+                    f"Segment {seg_id}: updated to {new_start:.2f}-{new_end:.2f}, "
+                    f"{len(merged_dialogue)} dialogue turns (was {len(raw_dialogue)} raw), "
+                    f"{n_speakers} speaker(s)"
+                )
                 updated_count += 1
                 break
     
