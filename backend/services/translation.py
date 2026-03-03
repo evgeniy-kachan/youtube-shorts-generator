@@ -183,6 +183,32 @@ Use punctuation to control TTS pacing without adding words:
 • People: transliterate — 'Elon Musk' → 'Илон Маск'
 • Places: 'Silicon Valley' → 'Кремниевая долина'
 
+=== SPOKEN RUSSIAN — AVOID UNNATURAL CONSTRUCTIONS ===
+
+Podcasts are HEARD, not read. Heavy literary constructions confuse listeners.
+
+AVOID participial clauses — use relative clauses instead:
+✗ «расширение, являющееся ключом» → ✓ «расширение, которое является ключом»
+✗ «вопросы, связанные с сознанием» → ✓ «вопросы о сознании»
+
+AVOID "object-relative" inversions from English "X that is Y":
+English sometimes puts the known/concrete noun LAST: "the answer that is the universe"
+Russian listeners expect the concrete noun FIRST.
+✗ «об ответе, которым является вселенная»  ← listener gets lost before the key word
+✓ «о вселенной, которая сама является ответом»  ← concrete word first, then clarification
+
+RULE for "X that is Y" / "X which is Y":
+→ If Y is more concrete/known than X — put Y first: «Y, которая является X»
+→ Add «сама» or «именно» for emphasis if needed
+
+AVOID long participial tails at sentence end:
+✗ «мы поймём вопросы задавать об ответе, которым является вселенная»
+✓ «мы поймём — какие вопросы задавать вселенной, которая сама является ответом»
+
+USE dash (—) to break a complex clause into digestible pieces:
+✗ «мы поймём какие вопросы задавать вселенной которая является ответом»
+✓ «мы поймём — какие вопросы задавать вселенной, что сама является ответом»
+
 === IDIOMATIC EXPRESSIONS ===
 
 Translate idioms naturally, not literally. Preserve meaning, not words:
