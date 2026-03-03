@@ -130,7 +130,10 @@ const TranscriptEditor = ({
         
         return {
           id: seg.id,
-          globalIndex: -1, // Will be set below
+          // Use displayIndex injected by SegmentsList (the single source of truth).
+          // Fall back to self-calculated index only if displayIndex is not provided
+          // (e.g. editor opened without going through SegmentsList).
+          globalIndex: seg.displayIndex ?? -1,
           tier: seg.tier || 'extended',
           startIdx,
           endIdx,
@@ -140,38 +143,28 @@ const TranscriptEditor = ({
         };
       });
       
-      // Assign globalIndex matching SegmentsList numbering:
-      // SegmentsList groups by tier (strict → extended → fallback)
-      // and numbers them sequentially. We replicate this order.
-      // segments array comes in original order from API.
-      // SegmentsList splits into tiers keeping original array order within each tier.
-      const tierOrder = { strict: 0, extended: 1, fallback: 2 };
-      
-      // Create indexed list to track original positions
-      const indexed = segments.map((seg, i) => ({ 
-        idx: i, 
-        tier: seg.tier || 'extended' 
-      }));
-      
-      // Sort by tier (strict first, then extended, then fallback)
-      // Within same tier, keep original array order
-      // IMPORTANT: use ?? not || because tierOrder['strict'] = 0 and (0 || 1) = 1 in JS!
-      indexed.sort((a, b) => {
-        const tierDiff = (tierOrder[a.tier] ?? 1) - (tierOrder[b.tier] ?? 1);
-        if (tierDiff !== 0) return tierDiff;
-        return a.idx - b.idx; // Preserve original order within tier
-      });
-      
-      // Assign globalIndex: position in tier-sorted list + 1
-      const globalIndexMap = {};
-      indexed.forEach((item, pos) => {
-        globalIndexMap[item.idx] = pos + 1;
-      });
-      
-      // Apply to boundaries (which are in same order as segments at this point)
-      boundaries.forEach((b, i) => {
-        b.globalIndex = globalIndexMap[i] || (i + 1);
-      });
+      // If any boundary is missing globalIndex (displayIndex not provided),
+      // fall back to calculating it by tier-sort (same logic as SegmentsList).
+      const needsFallback = boundaries.some(b => b.globalIndex === -1);
+      if (needsFallback) {
+        const tierOrder = { strict: 0, extended: 1, fallback: 2 };
+        const indexed = segments.map((seg, i) => ({
+          idx: i,
+          tier: seg.tier || 'extended',
+        }));
+        indexed.sort((a, b) => {
+          const tierDiff = (tierOrder[a.tier] ?? 1) - (tierOrder[b.tier] ?? 1);
+          if (tierDiff !== 0) return tierDiff;
+          return a.idx - b.idx;
+        });
+        const globalIndexMap = {};
+        indexed.forEach((item, pos) => {
+          globalIndexMap[item.idx] = pos + 1;
+        });
+        boundaries.forEach((b, i) => {
+          if (b.globalIndex === -1) b.globalIndex = globalIndexMap[i] || (i + 1);
+        });
+      }
       
       // Sort by start time (chronological order in transcript)
       // but keep original globalIndex for display
