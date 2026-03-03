@@ -436,25 +436,27 @@ def _ensure_dialogue_russian(segment: dict, translator) -> None:
     if not dialogue:
         return
     
-    # Collect turns that need translation (have English text, no Russian)
+    # Collect turns that need Stage1 isochronic translation.
+    # Stage1 ALWAYS runs on the English source (Whisper `text` field) to produce
+    # timing-optimized Russian, even when `text_ru` from the fast batch-translate
+    # already exists.  The isochronic pass overwrites text_ru with a better fit.
     turns_needing_translation = []
     for idx, turn in enumerate(dialogue):
         text_ru = turn.get('text_ru', '')
-        text = turn.get('text', '')
-        
-        # If text_ru exists and has Cyrillic, it's already Russian
-        if text_ru and _has_cyrillic(text_ru):
-            continue
-        
-        # If text_ru is empty but text has Cyrillic (already Russian), copy it
-        if not text_ru and text and _has_cyrillic(text):
-            turn['text_ru'] = text
-            continue
-        
-        # Text is English (from words or not yet translated) - needs translation
-        source_text = text_ru or text
-        if source_text and source_text.strip():
+        text    = turn.get('text', '')
+
+        # Determine the English source for Stage1.
+        # `text` stores the original Whisper English; `text_ru` is the fast Russian.
+        # If `text` is Cyrillic it means English was never stored → fall back to text_ru.
+        if text and not _has_cyrillic(text):
+            # English source available → Stage1 can produce isochronic Russian
             turns_needing_translation.append(idx)
+        elif not text_ru and text and _has_cyrillic(text):
+            # Only Russian available, no English → just ensure text_ru is set
+            turn['text_ru'] = text
+        elif not text_ru and _has_cyrillic(text_ru if text_ru else ''):
+            pass  # already fine
+        # If neither has content, leave as-is
     
     if not turns_needing_translation:
         return
@@ -470,10 +472,12 @@ def _ensure_dialogue_russian(segment: dict, translator) -> None:
     turns_for_translation = []
     for idx in turns_needing_translation:
         turn = dialogue[idx]
-        source_text = turn.get('text_ru') or turn.get('text', '')
+        # Always use the English original (`text`) as the Stage1 source.
+        # `text` was preserved from Whisper so Stage1 can produce isochronic Russian.
+        source_text = turn.get('text', '') or turn.get('text_ru', '')
         turns_for_translation.append({
             'speaker': turn.get('speaker', f'SPEAKER_{idx:02d}'),
-            'text': source_text,  # English text to translate
+            'text': source_text,  # English source for isochronic translation
             'start': turn.get('start', 0),
             'end': turn.get('end', 0),
         })
@@ -490,8 +494,8 @@ def _ensure_dialogue_russian(segment: dict, translator) -> None:
         for i, idx in enumerate(turns_needing_translation):
             turn = dialogue[idx]
             translated = translated_turns[i]
-            turn['text_en'] = turn.get('text_ru') or turn.get('text', '')  # Preserve English
-            turn['text_ru'] = translated.get('text_ru', turn['text_en'])   # Set Russian
+            turn['text_en'] = turn.get('text', '') or turn.get('text_ru', '')  # Preserve English
+            turn['text_ru'] = translated.get('text_ru', turn['text_en'])       # Stage1 Russian
             
             # Log with timing info
             duration = turn.get('end', 0) - turn.get('start', 0)
@@ -3271,22 +3275,43 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
 
                 if provided_sentences:
                     # ─── FAST PATH: use sentences passed directly from the editor ───
-                    # No time-based re-matching needed; editor already knows exactly
-                    # which sentences belong to this segment.
+                    # Build a time-indexed lookup for transcript_segments so we can
+                    # retrieve the ORIGINAL ENGLISH text (needed for Stage1 isochronic
+                    # translation before TTS). The editor sentences carry the fast-
+                    # translated Russian, but Stage1 must re-translate from English.
+                    ts_by_time = {}
+                    for ts in transcript_segments:
+                        key = round(ts.get("start", 0), 2)
+                        ts_by_time[key] = ts
+
                     for s in provided_sentences:
-                        text = (s.get("text") or "").strip()
-                        if not text:
+                        text_ru = (s.get("text") or "").strip()  # fast-translated Russian
+                        if not text_ru:
                             continue
-                        text_parts.append(text)
-                        # Editor sentences already carry NeMo speakers (assigned in
-                        # get_transcript_sentences), so we trust them directly.
+
+                        # Look up English original from transcript_segments (same start time)
+                        s_start = s.get("start", new_start)
+                        s_end   = s.get("end",   new_end)
+                        ts_match = ts_by_time.get(round(s_start, 2))
+                        if ts_match is None:
+                            # Fallback: closest transcript_segment by start time
+                            ts_match = min(
+                                transcript_segments,
+                                key=lambda t: abs(t.get("start", 0) - s_start),
+                                default=None,
+                            )
+                        text_en = (ts_match.get("text", "") if ts_match else "") or text_ru
+
+                        text_parts.append(text_ru)  # display/fallback
                         speaker = s.get("speaker") or "SPEAKER_00"
                         raw_dialogue.append({
                             "speaker": speaker,
-                            "text": text,
-                            "text_ru": text,
-                            "start": s.get("start", new_start),
-                            "end": s.get("end", new_end),
+                            # text = English original → Stage1 will re-translate isochronically
+                            "text":    text_en,
+                            # text_ru  = fast Russian → display / Stage1 fallback
+                            "text_ru": text_ru,
+                            "start": s_start,
+                            "end":   s_end,
                         })
 
                     # Mark segment as manually edited so the render won't
