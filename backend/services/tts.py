@@ -3620,6 +3620,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
             _el_alignment_active = False
             _fa_alignment_active = False
+            whisper_raw_words = None  # Whisper path is disabled; kept for future use
 
             # 1. ElevenLabs Forced Alignment API — sends post-PHRASE_SYNC audio
             #    + text to /v1/forced-alignment, returns precise word-level timestamps.
