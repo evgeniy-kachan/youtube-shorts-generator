@@ -353,41 +353,6 @@ const SegmentsList = ({
     setSelectedSegments([]);
   };
 
-  // Open Transcript Editor
-  const openTranscriptEditor = useCallback(async () => {
-    if (!videoId) return;
-    setEditorLoading(true);
-    try {
-      const data = await getTranscriptSentences(videoId);
-
-      // Build globalIndex map from THIS component's numbering — the single source of truth.
-      // SegmentsList displays: strict first, then extended, then fallback, each in original order.
-      // We assign the SAME numbers to segments in the editor.
-      let counter = 1;
-      const indexMap = {};
-      strictSegments.forEach(s => { indexMap[s.id] = counter++; });
-      extendedSegments.forEach(s => { indexMap[s.id] = counter++; });
-      fallbackSegments.forEach(s => { indexMap[s.id] = counter++; });
-
-      // Inject displayIndex so TranscriptEditor doesn't have to guess
-      const enrichedSegments = (data.segments || []).map(s => ({
-        ...s,
-        displayIndex: indexMap[s.id] ?? null,
-      }));
-
-      setTranscriptData({
-        sentences: data.sentences || [],
-        segments: enrichedSegments,
-      });
-      setShowTranscriptEditor(true);
-    } catch (error) {
-      console.error('Failed to load transcript:', error);
-      alert('Не удалось загрузить транскрипцию');
-    } finally {
-      setEditorLoading(false);
-    }
-  }, [videoId, strictSegments, extendedSegments, fallbackSegments]);
-
   // Save updated segment boundaries (and optionally apply selection from editor)
   const handleSegmentBoundariesUpdate = useCallback(async (updatedSegments, checkedIds) => {
     if (!videoId) return;
@@ -429,6 +394,41 @@ const SegmentsList = ({
       fallbackSegments: fallback 
     };
   }, [segments]);
+
+  // Open Transcript Editor — defined AFTER tier groups so they're already in scope
+  const openTranscriptEditor = useCallback(async () => {
+    if (!videoId) return;
+    setEditorLoading(true);
+    try {
+      const data = await getTranscriptSentences(videoId);
+
+      // Build globalIndex map from THIS component's numbering — the single source of truth.
+      // SegmentsList displays: strict first, then extended, then fallback, each in original order.
+      // We assign the SAME numbers to segments in the editor.
+      let counter = 1;
+      const indexMap = {};
+      strictSegments.forEach(s => { indexMap[s.id] = counter++; });
+      extendedSegments.forEach(s => { indexMap[s.id] = counter++; });
+      fallbackSegments.forEach(s => { indexMap[s.id] = counter++; });
+
+      // Inject displayIndex so TranscriptEditor doesn't have to guess
+      const enrichedSegments = (data.segments || []).map(s => ({
+        ...s,
+        displayIndex: indexMap[s.id] ?? null,
+      }));
+
+      setTranscriptData({
+        sentences: data.sentences || [],
+        segments: enrichedSegments,
+      });
+      setShowTranscriptEditor(true);
+    } catch (error) {
+      console.error('Failed to load transcript:', error);
+      alert('Не удалось загрузить транскрипцию');
+    } finally {
+      setEditorLoading(false);
+    }
+  }, [videoId, strictSegments, extendedSegments, fallbackSegments]);
 
   const handleProcess = () => {
     if (selectedSegments.length > 0) {
