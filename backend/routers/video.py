@@ -1510,8 +1510,17 @@ def _process_segments_task(
                     segment['id'], num_speakers, detected_speakers
                 )
             
-            # Check if we have a dialogue structure for multi-speaker synthesis
-            has_dialogue = bool(segment.get('dialogue') and len(segment['dialogue']) > 1)
+            # Check if we have a dialogue structure for multi-speaker synthesis.
+            # For user-edited segments: even a single-turn dialogue is authoritative
+            # (editor explicitly chose the content), so we must NOT overwrite it with
+            # pseudo-dialogue built from the old English Whisper words.
+            dialogue_turns = segment.get('dialogue') or []
+            has_dialogue = bool(
+                dialogue_turns and (
+                    len(dialogue_turns) > 1          # real multi-speaker
+                    or segment.get('user_edited')    # editor set content explicitly
+                )
+            )
             
             if has_dialogue and voice_plan:
                 turn_speakers = [t.get('speaker', '?') for t in segment['dialogue']]
@@ -3279,6 +3288,18 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
                             "start": s.get("start", new_start),
                             "end": s.get("end", new_end),
                         })
+
+                    # Mark segment as manually edited so the render won't
+                    # overwrite the dialogue with pseudo-dialogue from old words.
+                    seg["user_edited"] = True
+
+                    # Filter words to the new time range so pseudo-dialogue
+                    # (if needed) uses only the correct portion of the transcript.
+                    if seg.get("words"):
+                        seg["words"] = [
+                            w for w in seg["words"]
+                            if w.get("end", 0) > new_start and w.get("start", new_start) < new_end
+                        ]
                 else:
                     # ─── FALLBACK: time-based matching from transcript_segments ───
                     for ts in transcript_segments:
