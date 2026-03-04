@@ -3445,9 +3445,13 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 # Only insert pauses at SPEAKER CHANGES — keeps fast natural
                 # TTD pacing within each speaker's block, but syncs the moment
                 # the voice switches so it matches the video.
-                _prev_speaker = dialogue_turns[i - 1].get("speaker", "")
-                _curr_speaker = dialogue_turns[i].get("speaker", "")
-                _is_speaker_change = _prev_speaker != _curr_speaker
+                _prev_speaker = dialogue_turns[i - 1].get("speaker") or ""
+                _curr_speaker = dialogue_turns[i].get("speaker") or ""
+                # Only treat as speaker change when BOTH speakers are explicitly set
+                # and different. Missing/None/empty → assume same speaker (no pause).
+                _is_speaker_change = bool(
+                    _prev_speaker and _curr_speaker and _prev_speaker != _curr_speaker
+                )
 
                 if PHRASE_SYNC_ENABLED and _is_speaker_change and silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS:
                     _prev_word = last_word_text_by_turn.get(i - 1, "")
