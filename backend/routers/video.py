@@ -3289,6 +3289,21 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
                         key = round(ts.get("start", 0), 2)
                         ts_by_time[key] = ts
 
+                    # ─── Collect ALL Whisper words in the segment range for word-level NeMo ───
+                    all_words_in_range = []
+                    if nemo_segments_list:
+                        for ts in transcript_segments:
+                            for w in (ts.get("words") or []):
+                                w_start = w.get("start", 0)
+                                w_end = w.get("end", 0)
+                                if w_end > new_start and w_start < new_end:
+                                    all_words_in_range.append(w)
+                        all_words_in_range.sort(key=lambda w: w.get("start", 0))
+                        logger.info(
+                            "Segment %s: found %d Whisper words in [%.2f-%.2f] for word-level NeMo",
+                            seg_id, len(all_words_in_range), new_start, new_end,
+                        )
+
                     for s in provided_sentences:
                         text_ru = (s.get("text") or "").strip()  # fast-translated Russian
                         if not text_ru:
@@ -3310,6 +3325,91 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
                         text_en = (ts_match.get("text_en", "") if ts_match else "") or text_ru
 
                         text_parts.append(text_ru)  # display/fallback
+
+                        # ─── Word-level NeMo speaker assignment ───
+                        # Instead of one speaker per sentence, find words within this
+                        # sentence's time range and assign NeMo speaker to each word.
+                        # This preserves short speaker changes WITHIN sentences.
+                        if nemo_segments_list and all_words_in_range:
+                            # Words that fall within this sentence's time range
+                            sent_words = [
+                                w for w in all_words_in_range
+                                if w.get("end", 0) > s_start and w.get("start", 0) < s_end
+                            ]
+                            if sent_words:
+                                # Assign NeMo speaker to each word
+                                for w in sent_words:
+                                    w_mid = (w.get("start", 0) + w.get("end", 0)) / 2
+                                    w["_nemo_spk"] = (
+                                        _get_nemo_speaker_for_time(nemo_segments_list, w_mid)
+                                        or s.get("speaker")
+                                        or "SPEAKER_00"
+                                    )
+
+                                # Group consecutive same-speaker words into sub-turns
+                                groups = []
+                                cur_spk = None
+                                cur_words = []
+                                for w in sent_words:
+                                    ws = w.pop("_nemo_spk", "SPEAKER_00")
+                                    if ws != cur_spk and cur_words:
+                                        groups.append((cur_spk, list(cur_words)))
+                                        cur_words = []
+                                    cur_spk = ws
+                                    cur_words.append(w)
+                                if cur_words:
+                                    groups.append((cur_spk, list(cur_words)))
+
+                                # Distribute sentence Russian text proportionally across groups
+                                total_dur = sum(
+                                    ww.get("end", 0) - ww.get("start", 0)
+                                    for g_spk, g_words in groups for ww in g_words
+                                ) or 1.0
+
+                                # Split Russian text across groups proportionally by duration
+                                ru_words_list = text_ru.split()
+                                ru_word_offset = 0
+
+                                for gi, (g_spk, g_words) in enumerate(groups):
+                                    g_start = g_words[0].get("start", s_start)
+                                    g_end = g_words[-1].get("end", s_end)
+                                    # English text: collect Whisper words directly
+                                    g_text_en = " ".join(
+                                        ww.get("word", "").strip() for ww in g_words
+                                    ).strip() or text_en
+
+                                    # Russian text: distribute proportionally by duration
+                                    if len(groups) == 1:
+                                        g_text_ru = text_ru
+                                    elif gi == len(groups) - 1:
+                                        # Last group gets remaining words (avoid rounding loss)
+                                        g_text_ru = " ".join(ru_words_list[ru_word_offset:]).strip()
+                                    else:
+                                        g_dur = sum(ww.get("end", 0) - ww.get("start", 0) for ww in g_words)
+                                        ratio = g_dur / total_dur
+                                        n = max(1, round(len(ru_words_list) * ratio))
+                                        g_text_ru = " ".join(ru_words_list[ru_word_offset:ru_word_offset + n]).strip()
+                                        ru_word_offset += n
+
+                                    if not g_text_ru:
+                                        g_text_ru = text_ru  # safety fallback
+
+                                    raw_dialogue.append({
+                                        "speaker": g_spk,
+                                        "text":    g_text_en,
+                                        "text_ru": g_text_ru,
+                                        "start":   g_start,
+                                        "end":     g_end,
+                                    })
+
+                                logger.info(
+                                    "Sentence %.2f-%.2f: NeMo split into %d sub-turns: %s",
+                                    s_start, s_end, len(groups),
+                                    [(g[0], f"{g[1][0].get('start',0):.1f}-{g[1][-1].get('end',0):.1f}") for g in groups],
+                                )
+                                continue  # skip the default single-turn append below
+
+                        # Default: single speaker per sentence (no NeMo or no words found)
                         speaker = s.get("speaker") or "SPEAKER_00"
                         raw_dialogue.append({
                             "speaker": speaker,
