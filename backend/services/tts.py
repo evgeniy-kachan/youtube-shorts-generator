@@ -3441,60 +3441,49 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
 
                 silence_needed_sec = en_start_i - output_pos_i
 
-                if PHRASE_SYNC_ENABLED and silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS:
+                # ── Speaker-change detection ──────────────────────────────
+                # Only insert pauses at SPEAKER CHANGES — keeps fast natural
+                # TTD pacing within each speaker's block, but syncs the moment
+                # the voice switches so it matches the video.
+                _prev_speaker = dialogue_turns[i - 1].get("speaker", "")
+                _curr_speaker = dialogue_turns[i].get("speaker", "")
+                _is_speaker_change = _prev_speaker != _curr_speaker
+
+                if PHRASE_SYNC_ENABLED and _is_speaker_change and silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS:
                     _prev_word = last_word_text_by_turn.get(i - 1, "")
-                    _is_sentence_end = bool(
-                        _prev_word and _prev_word.rstrip()[-1:] in ".!?…"
+
+                    _MIN_SAFE_GAP_MS = 0  # Speaker change = natural gap, safe to cut
+
+                    # ElevenLabs turn boundaries (authoritative source of truth)
+                    el_prev_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
+                    el_next_start = segment_timing_raw.get(i, {}).get("start", 0.0) + leading_sec
+                    el_gap_ms = int((el_next_start - el_prev_end) * 1000)
+
+                    silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
+                    cut_ms = max(0, int(el_prev_end * 1000))
+                    skip_to_ms = int(el_next_start * 1000)
+
+                    discard_ms = skip_to_ms - cut_ms
+                    insertions.append((cut_ms, silence_ms, skip_to_ms))
+                    cumulative_offset += (silence_ms - discard_ms) / 1000.0
+
+                    logger.info(
+                        "PHRASE_SYNC turn %d: SPEAKER CHANGE (%s→%s) cut=%.3fs, skip_to=%.3fs "
+                        "(gap=%dms, discard=%dms, +%dms) after %r ✓",
+                        i, _prev_speaker, _curr_speaker,
+                        cut_ms / 1000.0, skip_to_ms / 1000.0,
+                        el_gap_ms, discard_ms, silence_ms, _prev_word,
                     )
-                    if not _is_sentence_end:
-                        logger.info(
-                            "PHRASE_SYNC turn %d: SKIP — prev word %r not sentence-end "
-                            "(need +%dms but unsafe to cut mid-speech)",
-                            i, _prev_word, int(silence_needed_sec * 1000),
-                        )
-                        action = (
-                            f"SKIP mid-speech (would +{int(silence_needed_sec*1000)}ms, "
-                            f"last={_prev_word!r})"
-                        )
-                    else:
-                        _MIN_SAFE_GAP_MS = 100  # Skip cuts if ElevenLabs gap is too tiny (risk of mid-word cut)
-
-                        # ElevenLabs turn boundaries (authoritative source of truth)
-                        el_prev_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
-                        el_next_start = segment_timing_raw.get(i, {}).get("start", 0.0) + leading_sec
-                        el_gap_ms = int((el_next_start - el_prev_end) * 1000)
-
-                        if el_gap_ms < _MIN_SAFE_GAP_MS:
-                            logger.info(
-                                "PHRASE_SYNC turn %d: SKIP — gap=%dms < %dms "
-                                "(el_end=%.3fs, el_next=%.3fs, word=%r)",
-                                i, el_gap_ms, _MIN_SAFE_GAP_MS,
-                                el_prev_end, el_next_start, _prev_word,
-                            )
-                            action = (
-                                f"SKIP tiny-gap ({el_gap_ms}ms < {_MIN_SAFE_GAP_MS}ms, "
-                                f"word={_prev_word!r})"
-                            )
-                        else:
-                            silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
-                            cut_ms = max(0, int(el_prev_end * 1000))
-                            skip_to_ms = int(el_next_start * 1000)
-
-                            discard_ms = skip_to_ms - cut_ms
-                            insertions.append((cut_ms, silence_ms, skip_to_ms))
-                            cumulative_offset += (silence_ms - discard_ms) / 1000.0
-
-                            logger.info(
-                                "PHRASE_SYNC turn %d: cut=%.3fs, skip_to=%.3fs "
-                                "(gap=%dms, discard=%dms, +%dms) after %r ✓",
-                                i, cut_ms / 1000.0, skip_to_ms / 1000.0,
-                                el_gap_ms, discard_ms, silence_ms, _prev_word,
-                            )
-                            action = (
-                                f"+{silence_ms}ms pause, cut@{cut_ms}ms, "
-                                f"skip_to@{skip_to_ms}ms (discard {discard_ms}ms) "
-                                f"after {_prev_word!r} ✓"
-                            )
+                    action = (
+                        f"SPEAKER CHANGE ({_prev_speaker}→{_curr_speaker}) "
+                        f"+{silence_ms}ms pause, cut@{cut_ms}ms, "
+                        f"skip_to@{skip_to_ms}ms (discard {discard_ms}ms) ✓"
+                    )
+                elif PHRASE_SYNC_ENABLED and not _is_speaker_change and silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS:
+                    action = (
+                        f"SKIP same-speaker (would +{int(silence_needed_sec*1000)}ms, "
+                        f"{_curr_speaker})"
+                    )
                 elif silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS and not PHRASE_SYNC_ENABLED:
                     action = f"SYNC OFF (would +{int(silence_needed_sec*1000)}ms)"
                 elif silence_needed_sec < -0.1:
