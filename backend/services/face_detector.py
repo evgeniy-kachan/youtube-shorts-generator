@@ -1003,27 +1003,59 @@ class FaceDetector:
                     # In close-up shots, SCRFD may falsely detect a tiny "face"
                     # (hand, ear, shadow). Compare average sizes of the two largest
                     # face clusters: if one is 2x+ bigger, treat as close-up.
+                    # VARIANT C: also compare detection scores — a large profile/back-of-head
+                    # (low score) should NOT beat a small frontal face (high score).
                     large_face_areas: list[float] = []
                     small_face_areas: list[float] = []
                     large_face_positions: list[float] = []
+                    large_face_scores: list[float] = []
+                    small_face_scores: list[float] = []
+                    small_face_positions: list[float] = []
                     for faces in all_faces:
                         if len(faces) >= 2:
                             sorted_by_area = sorted(faces, key=lambda f: f.get("w", 0) * f.get("h", 0), reverse=True)
                             large_face_areas.append(sorted_by_area[0].get("w", 0) * sorted_by_area[0].get("h", 0))
                             small_face_areas.append(sorted_by_area[1].get("w", 0) * sorted_by_area[1].get("h", 0))
                             large_face_positions.append(sorted_by_area[0]["center_x"] / frame_width)
+                            small_face_positions.append(sorted_by_area[1]["center_x"] / frame_width)
+                            large_face_scores.append(sorted_by_area[0].get("score", 0))
+                            small_face_scores.append(sorted_by_area[1].get("score", 0))
                     
                     avg_large = sum(large_face_areas) / len(large_face_areas) if large_face_areas else 0
                     avg_small = sum(small_face_areas) / len(small_face_areas) if small_face_areas else 0
                     size_ratio = avg_large / avg_small if avg_small > 0 else 999.0
                     
+                    # Score comparison: average detection confidence for each cluster
+                    avg_large_score = sum(large_face_scores) / len(large_face_scores) if large_face_scores else 0
+                    avg_small_score = sum(small_face_scores) / len(small_face_scores) if small_face_scores else 0
+                    
                     if size_ratio >= 2.0 and large_face_positions:
-                        avg_pos = sum(large_face_positions) / len(large_face_positions)
-                        scene_focus = max(safe_min, min(safe_max, avg_pos))
-                        logger.info(
-                            "Scene %d [%.2f-%.2f]: 2 detections but DOMINANT FACE (ratio=%.1fx) → CLOSE-UP focus=%.3f",
-                            scene_idx, scene_start_t, scene_end_t, size_ratio, scene_focus
+                        # VARIANT C: if the smaller face has significantly HIGHER score
+                        # (frontal vs profile/back), don't treat the large face as dominant.
+                        # Typical: back-of-head score ~0.4, frontal face score ~0.7+
+                        small_is_better_quality = (
+                            avg_small_score > avg_large_score * 1.3
+                            and avg_small_score >= 0.55
                         )
+                        
+                        if small_is_better_quality:
+                            # Small face is frontal, large face is profile/back → use small face
+                            avg_pos = sum(small_face_positions) / len(small_face_positions)
+                            scene_focus = max(safe_min, min(safe_max, avg_pos))
+                            logger.info(
+                                "Scene %d [%.2f-%.2f]: DOMINANT by area (ratio=%.1fx) BUT small face "
+                                "has HIGHER SCORE (%.2f vs %.2f) → QUALITY WINS → focus=%.3f",
+                                scene_idx, scene_start_t, scene_end_t, size_ratio,
+                                avg_small_score, avg_large_score, scene_focus
+                            )
+                        else:
+                            avg_pos = sum(large_face_positions) / len(large_face_positions)
+                            scene_focus = max(safe_min, min(safe_max, avg_pos))
+                            logger.info(
+                                "Scene %d [%.2f-%.2f]: DOMINANT FACE (ratio=%.1fx, scores: large=%.2f small=%.2f) → CLOSE-UP focus=%.3f",
+                                scene_idx, scene_start_t, scene_end_t, size_ratio,
+                                avg_large_score, avg_small_score, scene_focus
+                            )
                     else:
                         # --- Two real faces of similar size ---
                         left_pos = min(all_positions)
