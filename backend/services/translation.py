@@ -714,13 +714,14 @@ class Translator:
         
         dialogue_str = "\n\n".join(dialogue_parts)
         
-        # Use the new isochronic prompt
-        prompt = STAGE1_PROMPT
-        
+        # Build user message: only variable content (dialogue + optional context).
+        # STAGE1_PROMPT goes into the SYSTEM role so DeepSeek prefix-caches it
+        # across all Stage-1 calls (saves ~4 000 tokens × cache-miss rate).
+        user_parts = []
         if segment_context:
-            prompt += f"\n=== CONTEXT ===\nThis is a podcast about: {segment_context}\n"
-        
-        prompt += f"\n=== DIALOGUE TO TRANSLATE ===\n{dialogue_str}\n"
+            user_parts.append(f"=== CONTEXT ===\nThis is a podcast about: {segment_context}")
+        user_parts.append(f"=== DIALOGUE TO TRANSLATE ===\n{dialogue_str}")
+        user_message = "\n\n".join(user_parts)
         
         logger.info("Stage 1: Isochronic translation for %d turns", len(dialogue_turns))
         
@@ -729,9 +730,9 @@ class Translator:
                 messages=[
                     {
                         "role": "system",
-                        "content": ISOCHRONIC_SYSTEM_MESSAGE,
+                        "content": STAGE1_PROMPT,   # ← cached by DeepSeek prefix cache
                     },
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": user_message},
                 ],
                 temperature=0.3,
             )
