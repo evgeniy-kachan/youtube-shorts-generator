@@ -3289,20 +3289,25 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
                         key = round(ts.get("start", 0), 2)
                         ts_by_time[key] = ts
 
-                    # ─── Collect ALL Whisper words in the segment range for word-level NeMo ───
+                    # ─── Collect ALL Whisper words in the segment range ───
+                    # Each word is tagged with its Pyannote speaker (from the parent
+                    # transcript_segment).  This allows word-level diarization with
+                    # EITHER NeMo (preferred) or Pyannote as fallback.
                     all_words_in_range = []
-                    if nemo_segments_list:
-                        for ts in transcript_segments:
-                            for w in (ts.get("words") or []):
-                                w_start = w.get("start", 0)
-                                w_end = w.get("end", 0)
-                                if w_end > new_start and w_start < new_end:
-                                    all_words_in_range.append(w)
-                        all_words_in_range.sort(key=lambda w: w.get("start", 0))
-                        logger.info(
-                            "Segment %s: found %d Whisper words in [%.2f-%.2f] for word-level NeMo",
-                            seg_id, len(all_words_in_range), new_start, new_end,
-                        )
+                    for ts in transcript_segments:
+                        ts_speaker = ts.get("speaker", "SPEAKER_00")
+                        for w in (ts.get("words") or []):
+                            w_start = w.get("start", 0)
+                            w_end = w.get("end", 0)
+                            if w_end > new_start and w_start < new_end:
+                                w["_pyannote_spk"] = ts_speaker  # tag with Pyannote speaker
+                                all_words_in_range.append(w)
+                    all_words_in_range.sort(key=lambda w: w.get("start", 0))
+                    diar_source = "NeMo" if nemo_segments_list else "Pyannote"
+                    logger.info(
+                        "Segment %s: found %d Whisper words in [%.2f-%.2f] for word-level %s",
+                        seg_id, len(all_words_in_range), new_start, new_end, diar_source,
+                    )
 
                     for s in provided_sentences:
                         text_ru = (s.get("text") or "").strip()  # fast-translated Russian
@@ -3326,32 +3331,44 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
 
                         text_parts.append(text_ru)  # display/fallback
 
-                        # ─── Word-level NeMo speaker assignment ───
+                        # ─── Word-level speaker assignment (NeMo or Pyannote) ───
                         # Instead of one speaker per sentence, find words within this
-                        # sentence's time range and assign NeMo speaker to each word.
-                        # This preserves short speaker changes WITHIN sentences.
-                        if nemo_segments_list and all_words_in_range:
+                        # sentence's time range and assign a speaker to each word.
+                        # NeMo (if available) is preferred; otherwise Pyannote speaker
+                        # tag from the parent transcript_segment is used.
+                        if all_words_in_range:
                             # Words that fall within this sentence's time range
                             sent_words = [
                                 w for w in all_words_in_range
                                 if w.get("end", 0) > s_start and w.get("start", 0) < s_end
                             ]
                             if sent_words:
-                                # Assign NeMo speaker to each word
+                                # Assign speaker to each word
                                 for w in sent_words:
-                                    w_mid = (w.get("start", 0) + w.get("end", 0)) / 2
-                                    w["_nemo_spk"] = (
-                                        _get_nemo_speaker_for_time(nemo_segments_list, w_mid)
-                                        or s.get("speaker")
-                                        or "SPEAKER_00"
-                                    )
+                                    if nemo_segments_list:
+                                        # NeMo: precise word-level lookup
+                                        w_mid = (w.get("start", 0) + w.get("end", 0)) / 2
+                                        w["_diar_spk"] = (
+                                            _get_nemo_speaker_for_time(nemo_segments_list, w_mid)
+                                            or w.get("_pyannote_spk")
+                                            or s.get("speaker")
+                                            or "SPEAKER_00"
+                                        )
+                                    else:
+                                        # Pyannote: use speaker from parent transcript_segment
+                                        w["_diar_spk"] = (
+                                            w.get("_pyannote_spk")
+                                            or s.get("speaker")
+                                            or "SPEAKER_00"
+                                        )
 
                                 # Group consecutive same-speaker words into sub-turns
                                 groups = []
                                 cur_spk = None
                                 cur_words = []
                                 for w in sent_words:
-                                    ws = w.pop("_nemo_spk", "SPEAKER_00")
+                                    ws = w.pop("_diar_spk", "SPEAKER_00")
+                                    w.pop("_pyannote_spk", None)  # clean up temp tag
                                     if ws != cur_spk and cur_words:
                                         groups.append((cur_spk, list(cur_words)))
                                         cur_words = []
@@ -3403,13 +3420,13 @@ async def update_segment_boundaries(request: UpdateSegmentBoundariesRequest):
                                     })
 
                                 logger.info(
-                                    "Sentence %.2f-%.2f: NeMo split into %d sub-turns: %s",
-                                    s_start, s_end, len(groups),
+                                    "Sentence %.2f-%.2f: %s split into %d sub-turns: %s",
+                                    s_start, s_end, diar_source, len(groups),
                                     [(g[0], f"{g[1][0].get('start',0):.1f}-{g[1][-1].get('end',0):.1f}") for g in groups],
                                 )
                                 continue  # skip the default single-turn append below
 
-                        # Default: single speaker per sentence (no NeMo or no words found)
+                        # Default: single speaker per sentence (no words found for this sentence)
                         speaker = s.get("speaker") or "SPEAKER_00"
                         raw_dialogue.append({
                             "speaker": speaker,
