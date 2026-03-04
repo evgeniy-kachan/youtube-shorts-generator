@@ -3179,10 +3179,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         Includes retry logic: if API doesn't return timing for all turns,
         retries up to 3 times with 30s wait before the 3rd attempt.
         
-        Set env var USE_TTS_PER_TURN=true to bypass TTD and synthesize
-        each turn individually via regular ElevenLabs TTS (no PHRASE_SYNC,
-        no mid-word cuts, but more API calls and less natural transitions).
-        
         Args:
             dialogue_turns: List of turns with speaker, text_ru/text, optional emotion
             output_path: Where to save the audio file
@@ -3197,32 +3193,6 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
         Raises:
             RuntimeError: If API fails to return valid timing after 3 attempts
         """
-        # ── Experiment: per-turn TTS instead of TTD ──────────────────────────
-        # Bypass TTD entirely — each turn is synthesized individually via
-        # ElevenLabsTTSService.synthesize(), then stitched together by the
-        # base-class synthesize_dialogue (overlap or linear mode).
-        # Keeps two speakers (voice_map), avoids PHRASE_SYNC audio cutting.
-        # Enable: export USE_TTS_PER_TURN=true  +  systemctl restart youtube-shorts-generator
-        _use_per_turn = os.getenv("USE_TTS_PER_TURN", "").lower() in ("true", "1", "yes")
-        if _use_per_turn:
-            logger.info(
-                "TTD BYPASS: USE_TTS_PER_TURN=true → synthesizing %d turns individually via TTS",
-                len(dialogue_turns),
-            )
-            # Call grandparent (BaseTTSService) synthesize_dialogue which
-            # iterates turns, calls self.synthesize() per turn (ElevenLabs TTS),
-            # and stitches audio with overlap/linear logic.
-            from backend.services.tts import BaseTTSService
-            return BaseTTSService.synthesize_dialogue(
-                self,
-                dialogue_turns=dialogue_turns,
-                output_path=output_path,
-                voice_map=voice_map,
-                pause_ms=pause_ms,
-                base_start=base_start,
-            )
-        # ─────────────────────────────────────────────────────────────────────
-
         import time
         
         # Log timeline info for debugging (speed adjustment is handled by FFmpeg in video.py)
@@ -3487,7 +3457,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             f"last={_prev_word!r})"
                         )
                     else:
-                        _MIN_SAFE_GAP_MS = 0  # TTD has no natural gaps; trust segment_timing_raw boundaries
+                        _MIN_SAFE_GAP_MS = 100  # Skip cuts if ElevenLabs gap is too tiny (risk of mid-word cut)
 
                         # ElevenLabs turn boundaries (authoritative source of truth)
                         el_prev_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec

@@ -217,7 +217,7 @@ class FaceDetector:
     
     # Minimum detection score to consider a face "real" (not a profile/back of head)
     # InsightFace scores: 0.7+ = frontal face, 0.3-0.5 = profile, <0.3 = likely not a face
-    MIN_FACE_SCORE = 0.4
+    MIN_FACE_SCORE = 0.5
 
     def _detect_faces(self, frame: np.ndarray) -> Sequence[dict]:
         """Detect faces in frame using InsightFace."""
