@@ -3457,7 +3457,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                             f"last={_prev_word!r})"
                         )
                     else:
-                        _MIN_SAFE_GAP_MS = 300
+                        _MIN_SAFE_GAP_MS = 0  # TTD has no natural gaps; trust segment_timing_raw boundaries
 
                         # ElevenLabs turn boundaries (authoritative source of truth)
                         el_prev_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
