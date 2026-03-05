@@ -3404,7 +3404,9 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             #   • Gain is significant (> PHRASE_SYNC_MIN_MS)
             #   • Not the very last turn (no point inserting silence at the end)
             #
-            PHRASE_SYNC_ENABLED = os.getenv("TTD_PHRASE_SYNC", "true").lower() in ("true", "1", "yes")
+            # PHRASE_SYNC disabled — TTD pacing is kept as-is without post-hoc cuts.
+            # To re-enable: change False → os.getenv("TTD_PHRASE_SYNC", "true").lower() in ("true", "1", "yes")
+            PHRASE_SYNC_ENABLED = False
             PHRASE_SYNC_MIN_MS  = 250   # Ignore micro-gaps below 250 ms
             PHRASE_SYNC_MAX_MS  = 1500  # Cap single insertion at 1.5 s (3 s was too jarring)
 
