@@ -3404,11 +3404,11 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             #   • Gain is significant (> PHRASE_SYNC_MIN_MS)
             #   • Not the very last turn (no point inserting silence at the end)
             #
-            # PHRASE_SYNC disabled — TTD pacing is kept as-is without post-hoc cuts.
-            # To re-enable: change False → os.getenv("TTD_PHRASE_SYNC", "true").lower() in ("true", "1", "yes")
-            PHRASE_SYNC_ENABLED = False
-            PHRASE_SYNC_MIN_MS  = 250   # Ignore micro-gaps below 250 ms
-            PHRASE_SYNC_MAX_MS  = 1500  # Cap single insertion at 1.5 s (3 s was too jarring)
+            # PHRASE_SYNC — soft mode: only speaker changes, conservative thresholds.
+            # Disable with env: TTD_PHRASE_SYNC=false + service restart
+            PHRASE_SYNC_ENABLED = os.getenv("TTD_PHRASE_SYNC", "true").lower() in ("true", "1", "yes")
+            PHRASE_SYNC_MIN_MS  = 500   # Ignore drifts below 500 ms (was 250)
+            PHRASE_SYNC_MAX_MS  = 1000  # Cap single insertion at 1.0 s (was 1500)
 
             logger.info(
                 "PHRASE_SYNC: %s (min=%dms, max=%dms) | "
@@ -3458,33 +3458,41 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 if PHRASE_SYNC_ENABLED and _is_speaker_change and silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS:
                     _prev_word = last_word_text_by_turn.get(i - 1, "")
 
-                    _MIN_SAFE_GAP_MS = 0  # Speaker change = natural gap, safe to cut
+                    _MIN_SAFE_GAP_MS = 80  # Require ≥80ms gap to avoid clipping word tails
 
                     # ElevenLabs turn boundaries (authoritative source of truth)
                     el_prev_end = segment_timing_raw.get(i - 1, {}).get("end", 0.0) + leading_sec
                     el_next_start = segment_timing_raw.get(i, {}).get("start", 0.0) + leading_sec
                     el_gap_ms = int((el_next_start - el_prev_end) * 1000)
 
-                    silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
-                    cut_ms = max(0, int(el_prev_end * 1000))
-                    skip_to_ms = int(el_next_start * 1000)
+                    # Safety: skip if the natural gap between segments is too small
+                    # — cutting here would clip the tail of the previous word.
+                    if el_gap_ms < _MIN_SAFE_GAP_MS:
+                        action = (
+                            f"SKIP unsafe gap ({el_gap_ms}ms < {_MIN_SAFE_GAP_MS}ms, "
+                            f"{_prev_speaker}→{_curr_speaker}) after {_prev_word!r}"
+                        )
+                    else:
+                        silence_ms = int(min(silence_needed_sec * 1000, PHRASE_SYNC_MAX_MS))
+                        cut_ms = max(0, int(el_prev_end * 1000))
+                        skip_to_ms = int(el_next_start * 1000)
 
-                    discard_ms = skip_to_ms - cut_ms
-                    insertions.append((cut_ms, silence_ms, skip_to_ms))
-                    cumulative_offset += (silence_ms - discard_ms) / 1000.0
+                        discard_ms = skip_to_ms - cut_ms
+                        insertions.append((cut_ms, silence_ms, skip_to_ms))
+                        cumulative_offset += (silence_ms - discard_ms) / 1000.0
 
-                    logger.info(
-                        "PHRASE_SYNC turn %d: SPEAKER CHANGE (%s→%s) cut=%.3fs, skip_to=%.3fs "
-                        "(gap=%dms, discard=%dms, +%dms) after %r ✓",
-                        i, _prev_speaker, _curr_speaker,
-                        cut_ms / 1000.0, skip_to_ms / 1000.0,
-                        el_gap_ms, discard_ms, silence_ms, _prev_word,
-                    )
-                    action = (
-                        f"SPEAKER CHANGE ({_prev_speaker}→{_curr_speaker}) "
-                        f"+{silence_ms}ms pause, cut@{cut_ms}ms, "
-                        f"skip_to@{skip_to_ms}ms (discard {discard_ms}ms) ✓"
-                    )
+                        logger.info(
+                            "PHRASE_SYNC turn %d: SPEAKER CHANGE (%s→%s) cut=%.3fs, skip_to=%.3fs "
+                            "(gap=%dms, discard=%dms, +%dms) after %r ✓",
+                            i, _prev_speaker, _curr_speaker,
+                            cut_ms / 1000.0, skip_to_ms / 1000.0,
+                            el_gap_ms, discard_ms, silence_ms, _prev_word,
+                        )
+                        action = (
+                            f"SPEAKER CHANGE ({_prev_speaker}→{_curr_speaker}) "
+                            f"+{silence_ms}ms pause, cut@{cut_ms}ms, "
+                            f"skip_to@{skip_to_ms}ms (discard {discard_ms}ms) ✓"
+                        )
                 elif PHRASE_SYNC_ENABLED and not _is_speaker_change and silence_needed_sec * 1000 >= PHRASE_SYNC_MIN_MS:
                     action = (
                         f"SKIP same-speaker (would +{int(silence_needed_sec*1000)}ms, "
