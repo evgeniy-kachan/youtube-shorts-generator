@@ -384,22 +384,11 @@ const SegmentsList = ({
     return counts;
   }, [segments]);
 
-  // Build original DeepSeek numbering: strict first, then extended, then fallback
+  // Chronological numbering: sort all segments by start_time, assign 1, 2, 3...
   const segmentNumberMap = useMemo(() => {
-    const strict = [];
-    const extended = [];
-    const fallback = [];
-    segments.forEach((seg, idx) => {
-      const tier = seg.tier || 'extended';
-      if (tier === 'strict') strict.push(seg);
-      else if (tier === 'fallback') fallback.push(seg);
-      else extended.push(seg);
-    });
-    let counter = 1;
+    const sorted = [...segments].sort((a, b) => (a.start_time || 0) - (b.start_time || 0));
     const map = {};
-    strict.forEach(s => { map[s.id] = counter++; });
-    extended.forEach(s => { map[s.id] = counter++; });
-    fallback.forEach(s => { map[s.id] = counter++; });
+    sorted.forEach((seg, idx) => { map[seg.id] = idx + 1; });
     return map;
   }, [segments]);
 
