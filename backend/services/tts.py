@@ -3735,19 +3735,55 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             interp_count = num_inputs - api_count
             
             # Phase 2: distribute groups of consecutive non-API turns
+            # Strategy: if segment_timing (from TTD voice_segments) is available
+            # for a turn, use its real duration instead of squeezing into the
+            # narrow gap between neighbouring FA turns.
             INTERP_GAP = 0.05
             idx = 0
             while idx < num_inputs:
                 if api_timed[idx]:
                     idx += 1
                     continue
-                
+
+                # ── Try per-turn segment_timing first ──────────────────────
+                # If every turn in this non-API run has its own voice_segment
+                # timing, assign each one individually — no gap-based squeeze.
                 group_start = idx
                 group_end = idx
                 while group_end + 1 < num_inputs and not api_timed[group_end + 1]:
                     group_end += 1
-                
-                # Find available window
+
+                all_have_seg_timing = all(
+                    g in segment_timing and (segment_timing[g].get("end", 0) - segment_timing[g].get("start", 0)) >= 0.1
+                    for g in range(group_start, group_end + 1)
+                )
+
+                if all_have_seg_timing:
+                    # Use real voice_segment durations (+ leading_sec & turn_offsets)
+                    for g_idx in range(group_start, group_end + 1):
+                        seg_t = segment_timing[g_idx]
+                        offset = turn_offsets[g_idx] if g_idx < len(turn_offsets) else 0.0
+                        s = seg_t.get("start", 0) + leading_sec + offset
+                        e = seg_t.get("end", 0) + leading_sec + offset
+                        dur = e - s
+
+                        turn = dialogue_turns[g_idx]
+                        turn["tts_start_offset"] = s
+                        turn["tts_duration"] = dur
+                        turn["tts_end_offset"] = e
+                        turn["_timing_source"] = "segment_timing"
+
+                        text = inputs[g_idx]["text"] if g_idx < len(inputs) else ""
+                        wc = len(text.split())
+                        logger.info(
+                            "TTD turn %d: segment_timing %.2f-%.2fs (%.2fs, %d words) — FA missed, using voice_segment",
+                            g_idx, s, e, dur, wc,
+                        )
+                    idx = group_end + 1
+                    continue
+
+                # ── Fallback: gap-based interpolation (original logic) ─────
+                # Find available window between neighbouring API-timed turns
                 window_start = leading_sec
                 if group_start > 0:
                     prev = dialogue_turns[group_start - 1]
@@ -3773,7 +3809,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
                 
                 if available_speech < group_size * 0.3:
                     logger.warning(
-                        "TTD INTERPOLATE: turns %d-%d only %.2fs for %d turns (%d words)",
+                        "TTD INTERPOLATE: turns %d-%d only %.2fs for %d turns (%d words) — no segment_timing available",
                         group_start, group_end, available, group_size, total_words
                     )
                 
