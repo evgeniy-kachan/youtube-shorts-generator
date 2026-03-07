@@ -27,9 +27,9 @@ NEXT_TOPIC_MAX_WORDS = 30
 # Logical boundary detection settings
 BOUNDARY_CHUNK_DURATION = 600  # 10 minutes per chunk for boundary detection
 CHUNK_OVERLAP_DURATION = 60    # Overlap between chunks to avoid cutting mid-thought (1 minute)
-MIN_SEGMENT_DURATION = 25      # Minimum segment duration after logical split
-MAX_SEGMENT_DURATION = 60      # Maximum segment duration (IDEAL for Shorts/Reels)
-MAX_MERGED_DURATION = 120      # Maximum duration when merging incomplete segments
+MIN_SEGMENT_DURATION = 40      # Minimum segment duration after logical split
+MAX_SEGMENT_DURATION = 130     # Maximum segment duration (podcast-friendly)
+MAX_MERGED_DURATION = 180      # Maximum duration when merging incomplete segments
 
 
 def get_min_highlights(video_duration: float) -> int:
@@ -513,7 +513,7 @@ class HighlightAnalyzer:
             merged_duration = seg_b['end'] - seg_a['start']
             
             # Merge conditions using DeepSeek's merge evaluation
-            # Use MAX_MERGED_DURATION (120s) as hard limit for Shorts/Reels
+            # Use MAX_MERGED_DURATION as hard limit for merges
             merge_limit = min(max_duration, MAX_MERGED_DURATION)
             
             should_merge = False
@@ -531,8 +531,8 @@ class HighlightAnalyzer:
                 if merge_benefit_a in ['high', 'medium'] or merge_benefit_b in ['high', 'medium']:
                     should_merge = True
                     merge_reason = "direct_link_approved"
-                # Even without explicit approval, if both need context and duration is short
-                elif merged_duration <= 90:
+                # Even without explicit approval, if both need context and duration is acceptable
+                elif merged_duration <= 130:
                     should_merge = True
                     merge_reason = "direct_link_short"
             
@@ -541,14 +541,14 @@ class HighlightAnalyzer:
                 if merge_benefit_a == 'high':
                     should_merge = True
                     merge_reason = "a_needs_next_high"
-                elif merge_benefit_a == 'medium' and merged_duration <= 90:
+                elif merge_benefit_a == 'medium' and merged_duration <= 130:
                     should_merge = True
                     merge_reason = "a_needs_next_medium"
                 # Fallback: both low-scored (original logic)
                 else:
                     score_a = self._calculate_highlight_score(scores_a)
                     score_b = self._calculate_highlight_score(scores_b)
-                    if score_a < 0.35 and score_b < 0.35 and merged_duration <= 90:
+                    if score_a < 0.35 and score_b < 0.35 and merged_duration <= 130:
                         should_merge = True
                         merge_reason = "both_low_score"
             
@@ -557,13 +557,13 @@ class HighlightAnalyzer:
                 if merge_benefit_b == 'high':
                     should_merge = True
                     merge_reason = "b_needs_prev_high"
-                elif merge_benefit_b == 'medium' and merged_duration <= 90:
+                elif merge_benefit_b == 'medium' and merged_duration <= 130:
                     should_merge = True
                     merge_reason = "b_needs_prev_medium"
                 # Fallback: A is low-scored
                 else:
                     score_a = self._calculate_highlight_score(scores_a)
-                    if score_a < 0.40 and merged_duration <= 90:
+                    if score_a < 0.40 and merged_duration <= 130:
                         should_merge = True
                         merge_reason = "b_needs_context"
             
@@ -1602,10 +1602,10 @@ class HighlightAnalyzer:
 
 Оцени этот фрагмент как потенциальный YouTube Short / Instagram Reel.
 
-ЦЕЛЕВАЯ ДЛИНА: 30-90 секунд (ИДЕАЛ: 30-60 секунд для лучшей виральности)
-КОЛИЧЕСТВО СЛОВ: ~70-210 слов (140 слов ≈ 60 секунд)
+ЦЕЛЕВАЯ ДЛИНА: 50-130 секунд (ИДЕАЛ: 60-90 секунд)
+КОЛИЧЕСТВО СЛОВ: ~120-300 слов (140 слов ≈ 60 секунд)
 
-Примечание: Сегменты длиннее 90 секунд плохо подходят для формата Shorts/Reels.
+Примечание: Длинные сегменты (90-130 сек) допустимы если контент захватывающий и содержит законченную арку.
 
 Оценивай для зрителей, которые ищут:
 
@@ -1644,7 +1644,7 @@ class HighlightAnalyzer:
 - Законченная арка: завязка → инсайт → вывод
 - Эмоциональный резонанс: удивление, вдохновение, подтверждение, любопытство
 
-Предполагай естественную речь (~140 слов в минуту). Фокусируйся на фрагментах примерно 70–210 слов (≈30–90 секунд, идеально 30-60с).
+Предполагай естественную речь (~140 слов в минуту). Фокусируйся на фрагментах примерно 120–300 слов (≈50–130 секунд, идеально 60-90с). НЕ занижай оценку только из-за длины — если контент захватывающий и законченный, длинный сегмент лучше обрезанного.
 
 КОНТЕКСТ:
 Предыдущая тема: {segment.get('prev_topic', 'Неизвестно')}
@@ -1748,17 +1748,17 @@ class HighlightAnalyzer:
 - "merged_completeness_score": Ожидаемая оценка completeness_arc (0.0-1.0) после объединения
 
 ОГРАНИЧЕНИЯ ОБЪЕДИНЕНИЯ:
-- ИДЕАЛЬНАЯ длительность объединённого: 60-90 секунд (лучше всего для Shorts/Reels)
-- ДОПУСТИМО: 90-120 секунд (только для исключительного контента)
-- МАКСИМУМ: 120 секунд (длиннее НЕ объединять, используй trim вместо этого)
-- Если объединённый превысит 120 секунд, установи merge_benefit в "none"
+- ИДЕАЛЬНАЯ длительность объединённого: 60-130 секунд
+- ДОПУСТИМО: 130-180 секунд (для исключительного контента с законченной аркой)
+- МАКСИМУМ: 180 секунд (длиннее НЕ объединять, используй trim вместо этого)
+- Если объединённый превысит 180 секунд, установи merge_benefit в "none"
 
 ОПРЕДЕЛЕНИЕ СПИСКА vs АРГУМЕНТА:
 - Если сегмент — просто СПИСОК идей без развития (типа «вот 10 проблем: А, Б, В, Г...»)
   → Значительно снизь ВСЕ оценки (это низкоценный контент для Shorts)
   → Добавь комментарий, что это нужно разделить или пропустить
 - Если сегмент — полный АРГУМЕНТ (тезис → доказательства → вывод)
-  → Сохрани высокие оценки даже если 90-120 секунд
+  → Сохрани высокие оценки независимо от длины (50-130 секунд — норма)
   → Это ценный контент, стоящий своей длины
 
 КАЛИБРОВОЧНЫЕ ПРИМЕРЫ (с новой системой оценки):
