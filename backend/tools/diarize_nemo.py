@@ -64,25 +64,50 @@ def _get_multiscale_params(duration: float, gpu_memory_gb: float = 16.0) -> dict
     """
     Choose multi-scale parameters based on audio duration and GPU memory.
 
-    The affinity matrix is N×N where N ~ segments count (duration / min_window).
-    For long audio this grows quadratically, causing OOM even on T4 (16GB).
+    The affinity matrix is N×N where N ~ speech_duration / min_shift.
+    NeMo holds num_scales similarity matrices (each N×N×float32) simultaneously.
+    For long audio this grows quadratically, causing OOM.
+
+    Memory budget for T4 (16 GB usable ~15.5 GB):
+      5 scales, 89 min → 5×N²×4 ≈ 8.8 GB similarity + 1.8 GB affinity
+        + models ~1.7 GB = 12.3 GB active → argsort needs 5.6 GB → OOM (17.9 GB)
+      3 scales, 89 min → 3×N²×4 ≈ 5.3 GB similarity + 1.8 GB affinity
+        + models ~1.7 GB = 8.8 GB active → argsort 5.6 GB → OK (14.4 GB)
 
     Strategy:
-    - Short  (<30 min):  5 scales (best quality, any GPU)
-    - Medium (30-90 min): 5 scales for >=12GB, 3 scales for smaller
-    - Long   (90-120 min): 3 scales for any GPU
-    - Very long (>120 min): 2 scales for any GPU
+      ≤30 min:    5 scales  (best quality, fits any GPU ≥6 GB)
+      30-60 min:  5 scales on ≥16 GB, 3 scales on smaller
+      60-90 min:  3 scales on ≤24 GB, 5 scales on ≥40 GB
+      90-120 min: 3 scales
+      >120 min:   2 scales (or use chunking)
     """
     duration_min = duration / 60.0
 
     if duration_min <= 30:
+        # Short audio — full 5 scales on any GPU
         return {
             "window_length_in_sec": [1.5, 1.25, 1.0, 0.75, 0.5],
             "shift_length_in_sec": [0.75, 0.625, 0.5, 0.375, 0.25],
             "multiscale_weights": [1, 1, 1, 1, 1],
         }
+    elif duration_min <= 60:
+        # Medium-short: 5 scales only on GPUs with ≥16 GB
+        if gpu_memory_gb >= 16:
+            return {
+                "window_length_in_sec": [1.5, 1.25, 1.0, 0.75, 0.5],
+                "shift_length_in_sec": [0.75, 0.625, 0.5, 0.375, 0.25],
+                "multiscale_weights": [1, 1, 1, 1, 1],
+            }
+        else:
+            return {
+                "window_length_in_sec": [1.5, 1.0, 0.5],
+                "shift_length_in_sec": [0.75, 0.5, 0.25],
+                "multiscale_weights": [1, 1, 1],
+            }
     elif duration_min <= 90:
-        if gpu_memory_gb >= 12:
+        # Medium-long: 5 scales only on big GPUs (A100 40 GB+)
+        # T4 (16 GB) MUST use 3 scales to avoid OOM on affinity matrix
+        if gpu_memory_gb >= 40:
             return {
                 "window_length_in_sec": [1.5, 1.25, 1.0, 0.75, 0.5],
                 "shift_length_in_sec": [0.75, 0.625, 0.5, 0.375, 0.25],
@@ -95,12 +120,14 @@ def _get_multiscale_params(duration: float, gpu_memory_gb: float = 16.0) -> dict
                 "multiscale_weights": [1, 1, 1],
             }
     elif duration_min <= 120:
+        # Long: 3 scales for any GPU
         return {
             "window_length_in_sec": [1.5, 1.0, 0.5],
             "shift_length_in_sec": [0.75, 0.5, 0.25],
             "multiscale_weights": [1, 1, 1],
         }
     else:
+        # Very long (>120 min): 2 scales (should use chunking instead)
         return {
             "window_length_in_sec": [1.5, 0.75],
             "shift_length_in_sec": [0.75, 0.375],
@@ -113,9 +140,16 @@ def _get_batch_sizes(duration: float, gpu_memory_gb: float = 16.0) -> tuple:
     duration_min = duration / 60.0
 
     if duration_min > 130:
+        # Very long audio: minimal batches
         batch_size = 18
         infer_batch_size = 10
-        logger.info("Long video (%.0f min): reduced batch_size=%d, infer=%d",
+        logger.info("Very long video (%.0f min): batch=%d, infer=%d",
+                     duration_min, batch_size, infer_batch_size)
+    elif duration_min > 60 and gpu_memory_gb <= 24:
+        # 60-130 min on T4/A10: reduce batch to leave more room for clustering
+        batch_size = 64
+        infer_batch_size = 25
+        logger.info("Long video on ≤24GB GPU (%.0f min): batch=%d, infer=%d",
                      duration_min, batch_size, infer_batch_size)
     elif gpu_memory_gb >= 12:
         batch_size = 128

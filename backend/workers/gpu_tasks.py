@@ -446,14 +446,6 @@ def transcribe_and_diarize(
             num_speakers=num_speakers,
             device=device,
         )
-        # TODO: re-enable Pyannote fallback after NeMo debugging:
-        # try:
-        #     return _transcribe_and_diarize_nemo(...)
-        # except Exception as nemo_err:
-        #     logger.warning("NeMo failed, falling back to Pyannote: %s", nemo_err)
-        #     result = _transcribe_and_diarize_whisperx_builtin(...)
-        #     result["diarizer_used"] = "pyannote (fallback)"
-        #     return result
     elif diarizer == "pyannote":
         # Pyannote: use WhisperX BUILT-IN diarization (fast, single process)
         return _transcribe_and_diarize_whisperx_builtin(
