@@ -424,29 +424,22 @@ def transcribe_and_diarize(
     
     if diarizer == "nemo":
         # NeMo: transcribe first, then diarize separately
-        # If NeMo fails → fallback to Pyannote
-        try:
-            return _transcribe_and_diarize_nemo(
-                audio_path=audio_path,
-                model=model,
-                language=language,
-                num_speakers=num_speakers,
-                device=device,
-            )
-        except Exception as nemo_err:
-            logger.warning(
-                "NeMo diarization failed, falling back to Pyannote: %s", nemo_err
-            )
-            result = _transcribe_and_diarize_whisperx_builtin(
-                audio_path=audio_path,
-                model=model,
-                language=language,
-                num_speakers=num_speakers,
-                device=device,
-                hf_token=hf_token,
-            )
-            result["diarizer_used"] = "pyannote (fallback)"
-            return result
+        # DEBUG MODE: Pyannote fallback DISABLED — let NeMo errors propagate
+        return _transcribe_and_diarize_nemo(
+            audio_path=audio_path,
+            model=model,
+            language=language,
+            num_speakers=num_speakers,
+            device=device,
+        )
+        # TODO: re-enable Pyannote fallback after NeMo debugging:
+        # try:
+        #     return _transcribe_and_diarize_nemo(...)
+        # except Exception as nemo_err:
+        #     logger.warning("NeMo failed, falling back to Pyannote: %s", nemo_err)
+        #     result = _transcribe_and_diarize_whisperx_builtin(...)
+        #     result["diarizer_used"] = "pyannote (fallback)"
+        #     return result
     elif diarizer == "pyannote":
         # Pyannote: use WhisperX BUILT-IN diarization (fast, single process)
         return _transcribe_and_diarize_whisperx_builtin(
