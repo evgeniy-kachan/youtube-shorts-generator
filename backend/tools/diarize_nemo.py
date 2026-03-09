@@ -16,13 +16,12 @@ Output JSON format:
     {"start": 0.00, "end": 3.12, "speaker": "speaker_0"},
     {"start": 3.12, "end": 7.45, "speaker": "speaker_1"},
     ...
-  ]
+  ],
+  "speaker_genders": {"speaker_0": "male", "speaker_1": "female"}
 }
 
 Requirements (venv-nemo):
     pip install nemo_toolkit[asr]
-    # or for full installation:
-    pip install nemo_toolkit[all]
 """
 from __future__ import annotations
 
@@ -42,16 +41,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 def extract_wav(input_path: str, dst_path: str, sample_rate: int = 16000) -> None:
     """Extract mono wav with desired sample rate."""
     cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        input_path,
-        "-ac",
-        "1",
-        "-ar",
-        str(sample_rate),
-        "-vn",
-        dst_path,
+        "ffmpeg", "-y", "-i", input_path,
+        "-ac", "1", "-ar", str(sample_rate), "-vn", dst_path,
     ]
     logger.info("Extracting audio: %s", " ".join(cmd))
     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -65,374 +56,542 @@ def is_wav_file(path: str) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Adaptive multi-scale parameters (from nemo_selectel/nemo_tasks.py)
+# ---------------------------------------------------------------------------
+
+def _get_multiscale_params(duration: float, gpu_memory_gb: float = 16.0) -> dict:
+    """
+    Choose multi-scale parameters based on audio duration and GPU memory.
+
+    The affinity matrix is N×N where N ~ segments count (duration / min_window).
+    For long audio this grows quadratically, causing OOM even on T4 (16GB).
+
+    Strategy:
+    - Short  (<30 min):  5 scales (best quality, any GPU)
+    - Medium (30-90 min): 5 scales for >=12GB, 3 scales for smaller
+    - Long   (90-120 min): 3 scales for any GPU
+    - Very long (>120 min): 2 scales for any GPU
+    """
+    duration_min = duration / 60.0
+
+    if duration_min <= 30:
+        return {
+            "window_length_in_sec": [1.5, 1.25, 1.0, 0.75, 0.5],
+            "shift_length_in_sec": [0.75, 0.625, 0.5, 0.375, 0.25],
+            "multiscale_weights": [1, 1, 1, 1, 1],
+        }
+    elif duration_min <= 90:
+        if gpu_memory_gb >= 12:
+            return {
+                "window_length_in_sec": [1.5, 1.25, 1.0, 0.75, 0.5],
+                "shift_length_in_sec": [0.75, 0.625, 0.5, 0.375, 0.25],
+                "multiscale_weights": [1, 1, 1, 1, 1],
+            }
+        else:
+            return {
+                "window_length_in_sec": [1.5, 1.0, 0.5],
+                "shift_length_in_sec": [0.75, 0.5, 0.25],
+                "multiscale_weights": [1, 1, 1],
+            }
+    elif duration_min <= 120:
+        return {
+            "window_length_in_sec": [1.5, 1.0, 0.5],
+            "shift_length_in_sec": [0.75, 0.5, 0.25],
+            "multiscale_weights": [1, 1, 1],
+        }
+    else:
+        return {
+            "window_length_in_sec": [1.5, 0.75],
+            "shift_length_in_sec": [0.75, 0.375],
+            "multiscale_weights": [1, 1],
+        }
+
+
+def _get_batch_sizes(duration: float, gpu_memory_gb: float = 16.0) -> tuple:
+    """Choose batch sizes based on duration and GPU memory."""
+    duration_min = duration / 60.0
+
+    if duration_min > 130:
+        batch_size = 18
+        infer_batch_size = 10
+        logger.info("Long video (%.0f min): reduced batch_size=%d, infer=%d",
+                     duration_min, batch_size, infer_batch_size)
+    elif gpu_memory_gb >= 12:
+        batch_size = 128
+        infer_batch_size = 50
+    elif duration > 1800 and gpu_memory_gb < 8:
+        batch_size = 32
+        infer_batch_size = 15
+    else:
+        batch_size = 64
+        infer_batch_size = 25
+
+    return batch_size, infer_batch_size
+
+
+# ---------------------------------------------------------------------------
+# Gender detection via F0 analysis (from nemo_selectel/nemo_tasks.py)
+# ---------------------------------------------------------------------------
+
+def _detect_speaker_genders(wav_path: str, segments: List[Dict]) -> Dict[str, str]:
+    """
+    Detect gender for each speaker using fundamental frequency (F0) analysis.
+
+    Male voices:   median F0 ~85-165 Hz
+    Female voices: median F0 ~165-255 Hz
+    Threshold: 165 Hz
+
+    Returns dict: {speaker_id: "male"/"female"/"unknown"}
+    """
+    try:
+        import librosa
+        import numpy as np
+
+        audio, sr = librosa.load(wav_path, sr=16000, mono=True)
+        total_dur = len(audio) / sr
+
+        speaker_f0: Dict[str, list] = {}
+        for seg in segments:
+            spk = seg["speaker"]
+            start = seg["start"]
+            end = min(seg["end"], total_dur)
+            dur = end - start
+            if dur < 0.3:
+                continue
+
+            s = int(start * sr)
+            e = int(end * sr)
+            chunk = audio[s:e]
+
+            try:
+                f0, voiced_flag, _ = librosa.pyin(
+                    chunk, fmin=60.0, fmax=400.0, sr=sr, frame_length=2048,
+                )
+                voiced_f0 = f0[voiced_flag & ~np.isnan(f0)]
+                if len(voiced_f0) > 0:
+                    speaker_f0.setdefault(spk, []).extend(voiced_f0.tolist())
+            except Exception:
+                pass
+
+        THRESHOLD_HZ = 165.0
+        genders: Dict[str, str] = {}
+        for spk, f0_vals in speaker_f0.items():
+            if not f0_vals:
+                genders[spk] = "unknown"
+                continue
+            import numpy as np
+            median_f0 = float(np.median(f0_vals))
+            gender = "female" if median_f0 >= THRESHOLD_HZ else "male"
+            genders[spk] = gender
+            logger.info("Gender: %s → median F0=%.1f Hz → %s", spk, median_f0, gender)
+
+        all_speakers = set(s["speaker"] for s in segments)
+        for spk in all_speakers:
+            genders.setdefault(spk, "unknown")
+
+        return genders
+
+    except Exception as e:
+        logger.warning("Gender detection failed: %s", e)
+        return {s["speaker"]: "unknown" for s in segments}
+
+
+# ---------------------------------------------------------------------------
+# Main diarization function
+# ---------------------------------------------------------------------------
+
 def run_nemo_diarization(
     wav_path: str,
     device: str = "cuda",
     num_speakers: Optional[int] = None,
     max_speakers: int = 8,
-) -> List[Dict]:
+    detect_gender: bool = False,
+) -> Dict:
     """
-    Run NeMo MSDD diarization and return list of segments.
-    
+    Run NeMo MSDD diarization and return segments + metadata.
+
     Args:
         wav_path: Path to WAV file (16kHz mono)
         device: Device to use (cuda/cpu)
         num_speakers: Expected number of speakers (None = auto-detect)
         max_speakers: Maximum number of speakers for auto-detection
-        
+        detect_gender: Whether to run F0-based gender detection
+
     Returns:
-        List of diarization segments
+        Dict with segments, speaker_genders, etc.
     """
     import torch
     import gc
-    
+
+    # Optimize CUDA memory allocation for large affinity matrices
+    os.environ.setdefault(
+        "PYTORCH_CUDA_ALLOC_CONF",
+        "expandable_segments:True,max_split_size_mb:512"
+    )
+
     # Check CUDA availability
     if device == "cuda" and not torch.cuda.is_available():
         logger.warning("CUDA requested but not available. Falling back to CPU.")
         device = "cpu"
-    
-    # Initialize CUDA context properly for subprocess
+
+    gpu_memory_gb = 0.0
     if device == "cuda":
         try:
-            # Force garbage collection first
             gc.collect()
-            
-            # Clear any existing CUDA state
             torch.cuda.empty_cache()
-            
-            # Set device explicitly
             torch.cuda.set_device(0)
-            
-            # Initialize fresh CUDA context with a small tensor
-            init_tensor = torch.zeros(1, device="cuda")
-            del init_tensor
+
+            total_mem = torch.cuda.get_device_properties(0).total_memory
+            free_mem, _ = torch.cuda.mem_get_info(0)
+            gpu_memory_gb = total_mem / (1024 ** 3)
+            free_gb = free_mem / (1024 ** 3)
+
+            logger.info("CUDA device: %s, VRAM total: %.1f GB, free: %.1f GB",
+                        torch.cuda.get_device_name(0), gpu_memory_gb, free_gb)
+
+            if free_gb < 2.0:
+                logger.warning("Low GPU memory (%.1f GB free). Aggressive cleanup...", free_gb)
+                for _ in range(3):
+                    gc.collect()
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                free_mem, _ = torch.cuda.mem_get_info(0)
+                logger.info("After cleanup: %.1f GB free", free_mem / (1024 ** 3))
+
+            # Warm up cuBLAS
+            a = torch.randn(64, 64, device="cuda")
+            b = torch.randn(64, 64, device="cuda")
+            _ = torch.mm(a, b)
+            del a, b, _
             torch.cuda.synchronize()
-            
-            # Enable TF32 for faster computation on Ampere+ GPUs
+            torch.cuda.empty_cache()
+
+            # Enable TF32 for faster computation
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
-            
-            # Log GPU info
-            gpu_name = torch.cuda.get_device_name(0)
-            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
-            logger.info("CUDA initialized: %s (%.1f GB)", gpu_name, gpu_memory)
-            logger.info("TF32 enabled for faster computation")
-            
+
+            logger.info("CUDA ready: %s, VRAM: %.1f GB, TF32 enabled",
+                        torch.cuda.get_device_name(0), gpu_memory_gb)
+
         except Exception as e:
             logger.warning("CUDA initialization failed: %s. Falling back to CPU.", e)
             device = "cpu"
-    
+
     logger.info("Loading NeMo diarization model on device: %s", device)
-    
+
     try:
         from nemo.collections.asr.models import ClusteringDiarizer
         from omegaconf import OmegaConf
+        import soundfile as sf
     except ImportError as e:
         logger.error("NeMo not installed. Install with: pip install nemo_toolkit[asr]")
         raise RuntimeError(f"NeMo import failed: {e}")
-    
-    # Create config for NeMo diarization
-    # Based on: https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/asr/speaker_diarization/configs.html
-    
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Create manifest file (NeMo requires this format)
-        manifest_path = Path(tmpdir) / "manifest.json"
-        output_dir = Path(tmpdir) / "output"
-        output_dir.mkdir(exist_ok=True)
-        
-        # Get audio duration
-        import soundfile as sf
-        audio_info = sf.info(wav_path)
-        duration = audio_info.duration
-        
-        # Write manifest
-        manifest_entry = {
-            "audio_filepath": wav_path,
-            "offset": 0,
-            "duration": duration,
-            "label": "infer",
-            "text": "-",
-            "num_speakers": num_speakers if num_speakers and num_speakers > 0 else None,
-            "rttm_filepath": None,
-            "uem_filepath": None,
-        }
-        with open(manifest_path, "w") as f:
-            json.dump(manifest_entry, f)
-            f.write("\n")
-        
-        logger.info("Created manifest for %.2fs audio", duration)
-        
-        # NeMo diarization config
-        # Using neural diarizer with MSDD (Multi-Scale Diarization Decoder)
-        config = OmegaConf.create({
-            "device": device,  # Required at root level for NeMo 2.x
-            "verbose": True,   # Required for NeMo 2.6.x ClusteringDiarizer
-            "num_workers": 1,
-            "sample_rate": 16000,
-            "batch_size": 64,
-            "diarizer": {
-                "manifest_filepath": str(manifest_path),
-                "out_dir": str(output_dir),
-                "oracle_vad": False,  # Use neural VAD
-                "collar": 0.25,  # Collar for evaluation (seconds)
-                "ignore_overlap": True,  # Ignore overlapping speech regions
-                
-                # Speaker embeddings (TitaNet)
-                "speaker_embeddings": {
-                    "model_path": "titanet_large",  # Pre-trained TitaNet
-                    "parameters": {
-                        "window_length_in_sec": [1.5, 1.25, 1.0, 0.75, 0.5],
-                        "shift_length_in_sec": [0.75, 0.625, 0.5, 0.375, 0.25],
-                        "multiscale_weights": [1, 1, 1, 1, 1],
-                        "save_embeddings": False,
-                    }
-                },
-                
-                # Clustering parameters
-                "clustering": {
-                    "parameters": {
-                        "oracle_num_speakers": num_speakers is not None and num_speakers > 0,
-                        "max_num_speakers": max_speakers,
-                        "enhanced_count_thres": 80,
-                        "max_rp_threshold": 0.25,
-                        "sparse_search_volume": 30,
-                        "maj_vote_spk_count": False,
-                    }
-                },
-                
-                # MSDD (Multi-Scale Diarization Decoder) - neural refinement
-                "msdd_model": {
-                    "model_path": "diar_msdd_telephonic",  # Pre-trained MSDD
-                    "parameters": {
-                        "use_speaker_model_from_ckpt": True,
-                        "infer_batch_size": 25,
-                        "sigmoid_threshold": [0.7],
-                        "seq_eval_mode": False,
-                        "split_infer": True,
-                        "diar_window_length": 50,
-                        "overlap_infer_spk_limit": 5,
-                    }
-                },
-                
-                # VAD (Voice Activity Detection)
-                "vad": {
-                    "model_path": "vad_multilingual_marblenet",
-                    "parameters": {
-                        "window_length_in_sec": 0.15,
-                        "shift_length_in_sec": 0.01,
-                        "smoothing": "median",
-                        "overlap": 0.5,
-                        "onset": 0.4,
-                        "offset": 0.3,
-                        "pad_onset": 0.05,
-                        "pad_offset": -0.1,
-                        "min_duration_on": 0.2,
-                        "min_duration_off": 0.2,
-                        "filter_speech_first": True,
-                    }
-                },
+
+    diarizer = None
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Get audio duration
+            audio_info = sf.info(wav_path)
+            duration = audio_info.duration
+            logger.info("Audio duration: %.2fs (%.1f min)", duration, duration / 60)
+
+            # Adaptive parameters based on duration and GPU
+            ms_params = _get_multiscale_params(duration, gpu_memory_gb)
+            batch_size, infer_batch_size = _get_batch_sizes(duration, gpu_memory_gb)
+            num_scales = len(ms_params["window_length_in_sec"])
+            logger.info("Using %d scales, batch=%d, infer_batch=%d (GPU: %.1fGB)",
+                        num_scales, batch_size, infer_batch_size, gpu_memory_gb)
+
+            # Create manifest
+            manifest_path = os.path.join(tmpdir, "manifest.json")
+            output_dir = os.path.join(tmpdir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+
+            manifest_entry = {
+                "audio_filepath": wav_path,
+                "offset": 0,
+                "duration": duration,
+                "label": "infer",
+                "text": "-",
+                "num_speakers": num_speakers if num_speakers and num_speakers > 0 else None,
+                "rttm_filepath": None,
+                "uem_filepath": None,
             }
-        })
-        
-        # Set number of speakers if specified
-        if num_speakers and num_speakers > 0:
-            config.diarizer.clustering.parameters.oracle_num_speakers = True
-            logger.info("Using fixed number of speakers: %d", num_speakers)
-        else:
-            config.diarizer.clustering.parameters.oracle_num_speakers = False
-            logger.info("Auto-detecting number of speakers (max: %d)", max_speakers)
-        
-        # Initialize and run diarizer
-        logger.info("Initializing NeMo ClusteringDiarizer...")
-        
-        try:
-            # Create diarizer
+            with open(manifest_path, "w") as f:
+                json.dump(manifest_entry, f)
+                f.write("\n")
+
+            # NeMo diarization config
+            config = OmegaConf.create({
+                "device": device,
+                "verbose": True,
+                "num_workers": 0,
+                "sample_rate": 16000,
+                "batch_size": batch_size,
+                "diarizer": {
+                    "manifest_filepath": manifest_path,
+                    "out_dir": output_dir,
+                    "oracle_vad": False,
+                    "collar": 0.25,
+                    "ignore_overlap": True,
+
+                    "speaker_embeddings": {
+                        "model_path": "titanet_large",
+                        "parameters": {
+                            **ms_params,
+                            "save_embeddings": False,
+                        }
+                    },
+
+                    "clustering": {
+                        "parameters": {
+                            "oracle_num_speakers": num_speakers is not None and num_speakers > 0,
+                            "max_num_speakers": max_speakers,
+                            "enhanced_count_thres": 80,
+                            "max_rp_threshold": 0.25,
+                            "sparse_search_volume": 30,
+                            "maj_vote_spk_count": False,
+                        }
+                    },
+
+                    "msdd_model": {
+                        "model_path": "diar_msdd_telephonic",
+                        "parameters": {
+                            "use_speaker_model_from_ckpt": True,
+                            "infer_batch_size": infer_batch_size,
+                            "sigmoid_threshold": [0.7],
+                            "seq_eval_mode": False,
+                            "split_infer": True,
+                            "diar_window_length": 50,
+                            "overlap_infer_spk_limit": 5,
+                        }
+                    },
+
+                    "vad": {
+                        "model_path": "vad_multilingual_marblenet",
+                        "parameters": {
+                            "window_length_in_sec": 0.15,
+                            "shift_length_in_sec": 0.01,
+                            "smoothing": "median",
+                            "overlap": 0.5,
+                            "onset": 0.4,
+                            "offset": 0.3,
+                            "pad_onset": 0.05,
+                            "pad_offset": -0.1,
+                            "min_duration_on": 0.2,
+                            "min_duration_off": 0.2,
+                            "filter_speech_first": True,
+                        }
+                    },
+                }
+            })
+
+            if num_speakers and num_speakers > 0:
+                config.diarizer.clustering.parameters.oracle_num_speakers = True
+                logger.info("Using fixed number of speakers: %d", num_speakers)
+            else:
+                config.diarizer.clustering.parameters.oracle_num_speakers = False
+                logger.info("Auto-detecting speakers (max: %d)", max_speakers)
+
+            logger.info("Initializing NeMo ClusteringDiarizer...")
             diarizer = ClusteringDiarizer(cfg=config)
-            
-            # Run diarization
+
             logger.info("Running NeMo diarization...")
             diarizer.diarize()
-            
+
             # Parse RTTM output
-            rttm_files = list(output_dir.glob("pred_rttms/*.rttm"))
+            rttm_files = list(Path(output_dir).glob("pred_rttms/*.rttm"))
             if not rttm_files:
-                logger.warning("No RTTM output found")
-                return []
-            
-            rttm_path = rttm_files[0]
-            segments = parse_rttm(str(rttm_path))
-            
-            # Log detailed quality metrics
+                raise RuntimeError("NeMo produced no RTTM output")
+
+            segments = parse_rttm(str(rttm_files[0]))
+
+            if not segments:
+                raise RuntimeError("NeMo RTTM file is empty — no speech segments found")
+
+            # Log quality metrics
             log_diarization_quality(segments, duration)
-            
-            return segments
-            
-        except Exception as e:
-            logger.error("NeMo diarization failed: %s", e, exc_info=True)
-            
-            # Fallback: try simpler clustering without MSDD
-            logger.info("Trying fallback without MSDD...")
-            config.diarizer.msdd_model.model_path = None
-            
-            try:
-                diarizer = ClusteringDiarizer(cfg=config)
-                diarizer.diarize()
-                
-                rttm_files = list(output_dir.glob("pred_rttms/*.rttm"))
+
+            # Gender detection
+            speaker_genders = {}
+            if detect_gender:
+                logger.info("Running F0-based gender detection...")
+                speaker_genders = _detect_speaker_genders(wav_path, segments)
+                logger.info("Genders: %s", speaker_genders)
+
+            speakers = set(s["speaker"] for s in segments)
+            total_speech = sum(s["end"] - s["start"] for s in segments)
+
+            return {
+                "segments": segments,
+                "num_speakers": len(speakers),
+                "total_speech_duration": total_speech,
+                "speaker_genders": speaker_genders,
+            }
+
+    except Exception as e:
+        # Check for OOM
+        if "OutOfMemoryError" in str(type(e).__name__) or "CUDA out of memory" in str(e):
+            logger.error("CUDA OOM during NeMo diarization: %s", e)
+            raise RuntimeError(
+                f"GPU memory exhausted ({gpu_memory_gb:.0f}GB). "
+                f"Try shorter audio or use Pyannote fallback."
+            ) from e
+
+        logger.error("NeMo diarization failed: %s", e, exc_info=True)
+
+        # Fallback: try without MSDD
+        logger.info("Trying fallback without MSDD...")
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir2:
+                audio_info = sf.info(wav_path)
+                duration = audio_info.duration
+                manifest_path = os.path.join(tmpdir2, "manifest.json")
+                output_dir = os.path.join(tmpdir2, "output")
+                os.makedirs(output_dir, exist_ok=True)
+
+                manifest_entry = {
+                    "audio_filepath": wav_path, "offset": 0, "duration": duration,
+                    "label": "infer", "text": "-",
+                    "num_speakers": num_speakers if num_speakers and num_speakers > 0 else None,
+                    "rttm_filepath": None, "uem_filepath": None,
+                }
+                with open(manifest_path, "w") as f:
+                    json.dump(manifest_entry, f)
+                    f.write("\n")
+
+                from nemo.collections.asr.models import ClusteringDiarizer
+                from omegaconf import OmegaConf
+
+                ms_params = _get_multiscale_params(duration, gpu_memory_gb)
+                config = OmegaConf.create({
+                    "device": device, "verbose": True, "num_workers": 0,
+                    "sample_rate": 16000, "batch_size": 64,
+                    "diarizer": {
+                        "manifest_filepath": manifest_path,
+                        "out_dir": output_dir,
+                        "oracle_vad": False, "collar": 0.25, "ignore_overlap": True,
+                        "speaker_embeddings": {
+                            "model_path": "titanet_large",
+                            "parameters": {**ms_params, "save_embeddings": False},
+                        },
+                        "clustering": {
+                            "parameters": {
+                                "oracle_num_speakers": num_speakers is not None and num_speakers > 0,
+                                "max_num_speakers": max_speakers,
+                                "enhanced_count_thres": 80, "max_rp_threshold": 0.25,
+                                "sparse_search_volume": 30, "maj_vote_spk_count": False,
+                            }
+                        },
+                        "msdd_model": {"model_path": None, "parameters": {}},
+                        "vad": {
+                            "model_path": "vad_multilingual_marblenet",
+                            "parameters": {
+                                "window_length_in_sec": 0.15, "shift_length_in_sec": 0.01,
+                                "smoothing": "median", "overlap": 0.5, "onset": 0.4,
+                                "offset": 0.3, "pad_onset": 0.05, "pad_offset": -0.1,
+                                "min_duration_on": 0.2, "min_duration_off": 0.2,
+                                "filter_speech_first": True,
+                            }
+                        },
+                    }
+                })
+                fb_diarizer = ClusteringDiarizer(cfg=config)
+                fb_diarizer.diarize()
+                rttm_files = list(Path(output_dir).glob("pred_rttms/*.rttm"))
                 if rttm_files:
-                    return parse_rttm(str(rttm_files[0]))
-            except Exception as fallback_e:
-                logger.error("Fallback also failed: %s", fallback_e)
-            
-            return []
+                    segments = parse_rttm(str(rttm_files[0]))
+                    if segments:
+                        speakers = set(s["speaker"] for s in segments)
+                        return {
+                            "segments": segments,
+                            "num_speakers": len(speakers),
+                            "total_speech_duration": sum(s["end"] - s["start"] for s in segments),
+                            "speaker_genders": {},
+                        }
+        except Exception as fb_e:
+            logger.error("NeMo fallback (no MSDD) also failed: %s", fb_e)
+
+        raise
+
+    finally:
+        # Cleanup GPU
+        try:
+            import gc as _gc
+            import torch as _torch
+            if diarizer is not None:
+                del diarizer
+            _gc.collect()
+            if _torch.cuda.is_available():
+                _torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 
 def log_diarization_quality(segments: List[Dict], total_duration: float) -> None:
-    """
-    Log detailed quality metrics for diarization results.
-    
-    Metrics:
-    - Number of speakers detected
-    - Total speech duration per speaker
-    - Average segment duration
-    - Speaker turn frequency
-    - Potential issues (very short segments, unbalanced speakers)
-    """
+    """Log detailed quality metrics for diarization results."""
     if not segments:
         logger.warning("QUALITY: No segments to analyze")
         return
-    
-    # Group segments by speaker
+
     speaker_stats = {}
     for seg in segments:
         speaker = seg.get("speaker", "unknown")
-        duration = seg.get("end", 0) - seg.get("start", 0)
-        
+        dur = seg.get("end", 0) - seg.get("start", 0)
         if speaker not in speaker_stats:
-            speaker_stats[speaker] = {
-                "segments": 0,
-                "total_duration": 0.0,
-                "min_duration": float("inf"),
-                "max_duration": 0.0,
-                "durations": [],
-            }
-        
+            speaker_stats[speaker] = {"segments": 0, "total_duration": 0.0,
+                                       "min_duration": float("inf"), "max_duration": 0.0}
         speaker_stats[speaker]["segments"] += 1
-        speaker_stats[speaker]["total_duration"] += duration
-        speaker_stats[speaker]["min_duration"] = min(speaker_stats[speaker]["min_duration"], duration)
-        speaker_stats[speaker]["max_duration"] = max(speaker_stats[speaker]["max_duration"], duration)
-        speaker_stats[speaker]["durations"].append(duration)
-    
+        speaker_stats[speaker]["total_duration"] += dur
+        speaker_stats[speaker]["min_duration"] = min(speaker_stats[speaker]["min_duration"], dur)
+        speaker_stats[speaker]["max_duration"] = max(speaker_stats[speaker]["max_duration"], dur)
+
     num_speakers = len(speaker_stats)
     total_speech = sum(s["total_duration"] for s in speaker_stats.values())
     speech_ratio = (total_speech / total_duration * 100) if total_duration > 0 else 0
-    
-    # Log summary
+
     logger.info("=" * 60)
     logger.info("NEMO DIARIZATION QUALITY REPORT")
     logger.info("=" * 60)
-    logger.info("Audio duration: %.2f sec", total_duration)
-    logger.info("Total speech: %.2f sec (%.1f%% of audio)", total_speech, speech_ratio)
-    logger.info("Speakers detected: %d", num_speakers)
-    logger.info("Total segments: %d", len(segments))
-    logger.info("-" * 60)
-    
-    # Log per-speaker stats
+    logger.info("Audio: %.2fs | Speech: %.2fs (%.1f%%) | Speakers: %d | Segments: %d",
+                total_duration, total_speech, speech_ratio, num_speakers, len(segments))
+
     for speaker in sorted(speaker_stats.keys()):
-        stats = speaker_stats[speaker]
-        avg_duration = stats["total_duration"] / stats["segments"] if stats["segments"] > 0 else 0
-        speaker_ratio = (stats["total_duration"] / total_speech * 100) if total_speech > 0 else 0
-        
-        logger.info(
-            "  %s: %d segments, %.1fs total (%.1f%%), avg=%.2fs, min=%.2fs, max=%.2fs",
-            speaker,
-            stats["segments"],
-            stats["total_duration"],
-            speaker_ratio,
-            avg_duration,
-            stats["min_duration"] if stats["min_duration"] != float("inf") else 0,
-            stats["max_duration"],
-        )
-    
-    logger.info("-" * 60)
-    
-    # Quality warnings
-    warnings = []
-    
-    # Check for very short segments (< 0.3s)
-    short_segments = [s for s in segments if (s.get("end", 0) - s.get("start", 0)) < 0.3]
-    if short_segments:
-        warnings.append(f"⚠ {len(short_segments)} very short segments (<0.3s) - may indicate noise or errors")
-    
-    # Check for unbalanced speakers (one speaker > 90% of speech)
-    for speaker, stats in speaker_stats.items():
-        if total_speech > 0 and stats["total_duration"] / total_speech > 0.9 and num_speakers > 1:
-            warnings.append(f"⚠ Speaker {speaker} dominates ({stats['total_duration']/total_speech*100:.1f}%) - check if diarization missed other speakers")
-    
-    # Check for too many speakers (> 5 usually indicates errors)
+        s = speaker_stats[speaker]
+        avg = s["total_duration"] / s["segments"] if s["segments"] else 0
+        pct = (s["total_duration"] / total_speech * 100) if total_speech > 0 else 0
+        logger.info("  %s: %d segs, %.1fs (%.1f%%), avg=%.2fs",
+                     speaker, s["segments"], s["total_duration"], pct, avg)
+
+    # Warnings
+    short_segs = sum(1 for s in segments if (s["end"] - s["start"]) < 0.3)
+    if short_segs:
+        logger.warning("⚠ %d very short segments (<0.3s)", short_segs)
+    for spk, st in speaker_stats.items():
+        if total_speech > 0 and st["total_duration"] / total_speech > 0.9 and num_speakers > 1:
+            logger.warning("⚠ %s dominates (%.1f%%)", spk, st["total_duration"] / total_speech * 100)
     if num_speakers > 5:
-        warnings.append(f"⚠ {num_speakers} speakers detected - unusually high, may indicate diarization errors")
-    
-    # Check for low speech ratio (< 50%)
-    if speech_ratio < 50:
-        warnings.append(f"⚠ Low speech ratio ({speech_ratio:.1f}%) - check VAD settings or audio quality")
-    
-    # Check for frequent speaker changes (> 1 per second on average)
-    if total_duration > 0 and len(segments) / total_duration > 1:
-        warnings.append(f"⚠ Very frequent speaker changes ({len(segments)/total_duration:.2f}/sec) - may indicate overlapping speech or errors")
-    
-    # Log warnings
-    if warnings:
-        logger.info("QUALITY WARNINGS:")
-        for w in warnings:
-            logger.warning(w)
-    else:
-        logger.info("✓ No quality issues detected")
-    
+        logger.warning("⚠ %d speakers — unusually high", num_speakers)
     logger.info("=" * 60)
-    
-    # Log first 10 segments for debugging
-    logger.info("First 10 segments:")
-    for i, seg in enumerate(segments[:10]):
-        logger.info(
-            "  [%d] %.2f-%.2fs (%s) duration=%.2fs",
-            i,
-            seg.get("start", 0),
-            seg.get("end", 0),
-            seg.get("speaker", "?"),
-            seg.get("end", 0) - seg.get("start", 0),
-        )
-    
-    if len(segments) > 10:
-        logger.info("  ... and %d more segments", len(segments) - 10)
 
 
 def parse_rttm(rttm_path: str) -> List[Dict]:
-    """
-    Parse RTTM file to list of segments.
-    
-    RTTM format:
-    SPEAKER <file_id> 1 <start> <duration> <NA> <NA> <speaker_id> <NA> <NA>
-    """
+    """Parse RTTM file to list of segments."""
     segments = []
-    
     with open(rttm_path, "r") as f:
         for line in f:
             parts = line.strip().split()
             if len(parts) >= 8 and parts[0] == "SPEAKER":
                 start = float(parts[3])
-                duration = float(parts[4])
-                speaker = parts[7]
-                
+                dur = float(parts[4])
                 segments.append({
                     "start": start,
-                    "end": start + duration,
-                    "speaker": speaker,
+                    "end": start + dur,
+                    "speaker": parts[7],
                 })
-    
-    # Sort by start time
     segments.sort(key=lambda x: x["start"])
-    
     return segments
 
 
@@ -441,60 +600,47 @@ def main():
     parser.add_argument("--input", required=True, help="Input video/audio file")
     parser.add_argument("--output", required=True, help="Output JSON path")
     parser.add_argument("--device", default="cuda", help="Device (cuda/cpu)")
-    parser.add_argument("--num_speakers", type=int, default=0, 
-                       help="Expected number of speakers (0 = auto-detect)")
+    parser.add_argument("--num_speakers", type=int, default=0,
+                        help="Expected number of speakers (0 = auto-detect)")
     parser.add_argument("--max_speakers", type=int, default=8,
-                       help="Maximum speakers for auto-detection (default: 8)")
+                        help="Maximum speakers for auto-detection")
+    parser.add_argument("--detect_gender", action="store_true",
+                        help="Run F0-based gender detection")
     args = parser.parse_args()
 
     input_path = Path(args.input)
-    output_path = Path(args.output)
-    
-    # num_speakers=0 means auto-detect
     num_speakers = args.num_speakers if args.num_speakers > 0 else None
 
-    # Check if input is already a valid WAV file
+    # Convert to WAV if needed
     if input_path.suffix.lower() == ".wav":
-        logger.info("Input is a WAV file, checking format...")
         import soundfile as sf
         info = sf.info(str(input_path))
-        
         if info.samplerate == 16000 and info.channels == 1:
-            logger.info("Input is already 16kHz mono WAV, using directly")
-            segments = run_nemo_diarization(
-                str(input_path),
-                device=args.device,
-                num_speakers=num_speakers,
-                max_speakers=args.max_speakers,
-            )
+            wav_path = str(input_path)
         else:
-            # Need to convert
-            with tempfile.TemporaryDirectory() as tmpdir:
-                wav_path = Path(tmpdir) / "audio.wav"
-                extract_wav(str(input_path), str(wav_path), sample_rate=16000)
-                segments = run_nemo_diarization(
-                    str(wav_path),
-                    device=args.device,
-                    num_speakers=num_speakers,
-                    max_speakers=args.max_speakers,
-                )
+            tmpdir = tempfile.mkdtemp()
+            wav_path = os.path.join(tmpdir, "audio.wav")
+            extract_wav(str(input_path), wav_path)
     else:
-        # Extract audio from video/other format
-        with tempfile.TemporaryDirectory() as tmpdir:
-            wav_path = Path(tmpdir) / "audio.wav"
-            extract_wav(str(input_path), str(wav_path), sample_rate=16000)
-            segments = run_nemo_diarization(
-                str(wav_path),
-                device=args.device,
-                num_speakers=num_speakers,
-                max_speakers=args.max_speakers,
-            )
+        tmpdir = tempfile.mkdtemp()
+        wav_path = os.path.join(tmpdir, "audio.wav")
+        extract_wav(str(input_path), wav_path)
+
+    result = run_nemo_diarization(
+        wav_path,
+        device=args.device,
+        num_speakers=num_speakers,
+        max_speakers=args.max_speakers,
+        detect_gender=args.detect_gender,
+    )
 
     # Save output
+    output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
-        json.dump({"segments": segments}, f, ensure_ascii=False, indent=2)
-    logger.info("Saved NeMo diarization to %s (%d segments)", output_path, len(segments))
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+    logger.info("Saved NeMo diarization to %s (%d segments)", output_path, len(result["segments"]))
 
 
 if __name__ == "__main__":

@@ -397,7 +397,7 @@ def diarize_nemo(
 
 def transcribe_and_diarize(
     audio_path: str,
-    diarizer: str = "pyannote",  # "pyannote" or "nemo"
+    diarizer: str = "nemo",  # "nemo" (primary) or "pyannote" (fallback)
     model: str = "large-v3",
     language: str = "en",
     num_speakers: int = 0,
@@ -409,16 +409,14 @@ def transcribe_and_diarize(
     
     This is the main entry point for video analysis.
     
-    For Pyannote: uses WhisperX BUILT-IN diarization (same process, same CUDA context).
-      This is 3x faster than separate subprocess because pyannote reuses WhisperX's
-      loaded audio and runs in the same GPU context.
-    For NeMo: uses separate subprocess (different venv).
+    Default: NeMo MSDD (best quality for podcasts).
+    Fallback: Pyannote via WhisperX built-in (if NeMo fails or unavailable).
     
     Returns:
         {
             "segments": [...],  # Transcribed segments with speaker labels
             "language": "en",
-            "diarizer_used": "pyannote",
+            "diarizer_used": "nemo",
             "num_speakers": 2,
         }
     """
@@ -426,17 +424,44 @@ def transcribe_and_diarize(
     
     if diarizer == "nemo":
         # NeMo: transcribe first, then diarize separately
-        return _transcribe_and_diarize_nemo(
+        # If NeMo fails → fallback to Pyannote
+        try:
+            return _transcribe_and_diarize_nemo(
+                audio_path=audio_path,
+                model=model,
+                language=language,
+                num_speakers=num_speakers,
+                device=device,
+            )
+        except Exception as nemo_err:
+            logger.warning(
+                "NeMo diarization failed, falling back to Pyannote: %s", nemo_err
+            )
+            result = _transcribe_and_diarize_whisperx_builtin(
+                audio_path=audio_path,
+                model=model,
+                language=language,
+                num_speakers=num_speakers,
+                device=device,
+                hf_token=hf_token,
+            )
+            result["diarizer_used"] = "pyannote (fallback)"
+            return result
+    elif diarizer == "pyannote":
+        # Pyannote: use WhisperX BUILT-IN diarization (fast, single process)
+        return _transcribe_and_diarize_whisperx_builtin(
             audio_path=audio_path,
             model=model,
             language=language,
             num_speakers=num_speakers,
             device=device,
+            hf_token=hf_token,
         )
     else:
-        # Pyannote: use WhisperX BUILT-IN diarization (fast, single process)
-        return _transcribe_and_diarize_whisperx_builtin(
+        logger.warning("Unknown diarizer '%s', using NeMo", diarizer)
+        return transcribe_and_diarize(
             audio_path=audio_path,
+            diarizer="nemo",
             model=model,
             language=language,
             num_speakers=num_speakers,

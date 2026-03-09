@@ -52,8 +52,8 @@ _services = {}
 class AnalyzeRequest(BaseModel):
     youtube_url: str
     diarizer: str = Field(
-        default="pyannote",
-        description="Speaker diarization system: pyannote (fast) or nemo (accurate)"
+        default="nemo",
+        description="Speaker diarization system: nemo (accurate, primary) or pyannote (fast, fallback)"
     )
 
 def get_service(name: str):
@@ -993,7 +993,7 @@ def _generate_thumbnail(video_path: str, video_id: str, timestamp: float = 5.0) 
         logger.warning("Thumbnail generation error for %s: %s", video_id, exc)
         return None
 
-def _analyze_video_task(task_id: str, youtube_url: str, diarizer: str = "pyannote"):
+def _analyze_video_task(task_id: str, youtube_url: str, diarizer: str = "nemo"):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Downloading video..."}
         
@@ -1013,7 +1013,7 @@ def _analyze_video_task(task_id: str, youtube_url: str, diarizer: str = "pyannot
         logger.error(f"Error in analysis task {task_id}: {e}", exc_info=True)
         tasks[task_id] = {"status": "failed", "progress": tasks[task_id]['progress'], "message": str(e)}
 
-def _analyze_local_video_task(task_id: str, filename: str, analysis_mode: str = "fast", diarizer: str = "pyannote"):
+def _analyze_local_video_task(task_id: str, filename: str, analysis_mode: str = "fast", diarizer: str = "nemo"):
     try:
         tasks[task_id] = {"status": "processing", "progress": 0.1, "message": "Processing local video..."}
         
@@ -1029,7 +1029,7 @@ def _analyze_local_video_task(task_id: str, filename: str, analysis_mode: str = 
         logger.error(f"Error in local analysis task {task_id}: {e}", exc_info=True)
         tasks[task_id] = {"status": "failed", "progress": tasks[task_id].get('progress', 0.1), "message": str(e)}
 
-def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysis_mode: str = "fast", diarizer: str = "pyannote"):
+def _run_analysis_pipeline(task_id: str, video_id: str, video_path: str, analysis_mode: str = "fast", diarizer: str = "nemo"):
     """Core analysis logic, shared by YouTube and local video."""
     
     thumbnail_path = _generate_thumbnail(video_path, video_id)
@@ -1896,7 +1896,7 @@ async def analyze_local_video(
     filename: str, 
     background_tasks: BackgroundTasks,
     analysis_mode: str = "fast",  # 'fast' (deepseek-chat) or 'deep' (deepseek-reasoner)
-    diarizer: str = "pyannote",  # 'pyannote' (fast) or 'nemo' (accurate)
+    diarizer: str = "nemo",  # 'nemo' (accurate, primary) or 'pyannote' (fast, fallback)
 ):
     task_id = str(uuid.uuid4())
     tasks[task_id] = {"status": "pending", "progress": 0.0, "message": "Task queued"}

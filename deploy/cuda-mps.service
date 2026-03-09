@@ -1,0 +1,22 @@
+[Unit]
+Description=NVIDIA CUDA MPS (Multi-Process Service)
+After=nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+
+[Service]
+Type=forking
+# Set GPU to EXCLUSIVE_PROCESS mode (required for MPS)
+ExecStartPre=/usr/bin/nvidia-smi -i 0 -c EXCLUSIVE_PROCESS
+# Start MPS control daemon
+ExecStart=/usr/bin/nvidia-cuda-mps-control -d
+# Stop MPS daemon and reset GPU mode
+ExecStop=/bin/bash -c 'echo quit | /usr/bin/nvidia-cuda-mps-control'
+ExecStopPost=/usr/bin/nvidia-smi -i 0 -c DEFAULT
+# MPS pipe directory (default)
+Environment=CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps
+Environment=CUDA_MPS_LOG_DIRECTORY=/var/log/nvidia-mps
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

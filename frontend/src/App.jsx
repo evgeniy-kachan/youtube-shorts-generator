@@ -474,9 +474,9 @@ function App() {
           : 'Файл загружен. Начинаем анализ...');
       }
 
-      // Always use Pyannote for initial analysis (faster)
+      // Use NeMo for initial analysis (best quality, Pyannote = fallback)
       // NeMo available as re-diarization option on segments page
-      const response = await analyzeLocalVideo(uploadedFilename, analysisMode, 'pyannote');
+      const response = await analyzeLocalVideo(uploadedFilename, analysisMode, 'nemo');
       setAnalysisTask(response.task_id);
     } catch (error) {
       console.error('Error starting analysis:', error);

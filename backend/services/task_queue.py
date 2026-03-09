@@ -10,7 +10,7 @@ Usage:
     queue = get_task_queue()
     
     # Enqueue a task
-    job = queue.enqueue_transcription(audio_path, diarizer="pyannote")
+    job = queue.enqueue_transcription(audio_path, diarizer="nemo")
     
     # Wait for result (blocking)
     result = job.wait_result(timeout=600)
@@ -91,7 +91,7 @@ class TaskQueue:
     def enqueue_transcription(
         self,
         audio_path: str,
-        diarizer: str = "pyannote",
+        diarizer: str = "nemo",
         model: str = "large-v3",
         language: str = "en",
         num_speakers: int = 0,
@@ -139,7 +139,7 @@ class TaskQueue:
     def enqueue_diarization_only(
         self,
         audio_path: str,
-        diarizer: str = "pyannote",
+        diarizer: str = "nemo",
         num_speakers: int = 0,
         device: str = "cuda",
         hf_token: Optional[str] = None,
