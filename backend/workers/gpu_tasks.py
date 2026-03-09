@@ -341,6 +341,20 @@ def diarize_nemo(
             # Ensure CUDA is visible
             env["CUDA_VISIBLE_DEVICES"] = "0"
             
+            # CRITICAL: Fix LD_LIBRARY_PATH for NeMo venv.
+            # venv-nemo has PyTorch cu128 (CUDA 12.8 libs in site-packages/nvidia/*/lib).
+            # System /usr/local/cuda/lib64 has CUDA 12.4 → libcublasLt version mismatch → SIGSEGV.
+            # Prepend NeMo venv's CUDA libs so they are found FIRST.
+            nemo_site = nemo_python.parent.parent / "lib" / "python3.10" / "site-packages" / "nvidia"
+            if nemo_site.exists():
+                nemo_cuda_libs = ":".join(
+                    str(p) for p in sorted(nemo_site.glob("*/lib")) if p.is_dir()
+                )
+                old_ld = env.get("LD_LIBRARY_PATH", "")
+                env["LD_LIBRARY_PATH"] = f"{nemo_cuda_libs}:{old_ld}" if old_ld else nemo_cuda_libs
+                logger.info("NeMo LD_LIBRARY_PATH prepended with %d venv CUDA lib dirs", 
+                           len(list(nemo_site.glob("*/lib"))))
+            
             result = subprocess.run(
                 cmd,
                 capture_output=True,
