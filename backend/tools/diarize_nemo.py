@@ -83,11 +83,13 @@ def _get_multiscale_params(duration: float, gpu_memory_gb: float = 16.0) -> dict
         Speaker boundary precision: ±0.5s instead of ±0.25s
         For podcasts (2 speakers, turns 2-10s): negligible DER difference (<1%)
 
+    NeMo validation: window > shift (strictly!) for EACH scale.
+
     Strategy (T4 16 GB):
         ≤30 min:    5 scales, shift 0.25s (best quality)
         30-60 min:  5 scales, shift 0.25s (still fits)
-        60-90 min:  3 scales, shift 0.5s  (N halved → fits with margin)
-        90-120 min: 3 scales, shift 0.5s
+        60-90 min:  3 scales, shift 0.5s, win [1.5,1.0,0.75] (N halved → fits)
+        90-120 min: 3 scales, shift 0.5s, win [1.5,1.0,0.75]
         >120 min:   2 scales, shift 0.75s (or use chunking)
     """
     duration_min = duration / 60.0
@@ -130,11 +132,12 @@ def _get_multiscale_params(duration: float, gpu_memory_gb: float = 16.0) -> dict
                 "multiscale_weights": [1, 1, 1, 1, 1],
             }
         else:
-            # T4 (16 GB): 3 scales + coarser shift to halve N → prevents OOM
+            # T4 (16 GB): 3 scales, min_shift=0.5s to halve N → prevents OOM
+            # NeMo requires: window > shift (strictly), both lists descending
             # N drops from ~27K to ~13K → memory drops ~4×
             return {
-                "window_length_in_sec": [1.5, 1.0, 0.5],
-                "shift_length_in_sec": [0.75, 0.5, 0.5],
+                "window_length_in_sec": [1.5, 1.0, 0.75],
+                "shift_length_in_sec": [1.0, 0.75, 0.5],
                 "multiscale_weights": [1, 1, 1],
             }
     elif duration_min <= 120:
@@ -145,17 +148,17 @@ def _get_multiscale_params(duration: float, gpu_memory_gb: float = 16.0) -> dict
                 "multiscale_weights": [1, 1, 1],
             }
         else:
-            # T4: 3 scales, coarser shift
+            # T4: 3 scales, min_shift=0.5s
             return {
-                "window_length_in_sec": [1.5, 1.0, 0.5],
-                "shift_length_in_sec": [0.75, 0.5, 0.5],
+                "window_length_in_sec": [1.5, 1.0, 0.75],
+                "shift_length_in_sec": [1.0, 0.75, 0.5],
                 "multiscale_weights": [1, 1, 1],
             }
     else:
         # Very long (>120 min): 2 scales with coarse shift (or use chunking)
         return {
-            "window_length_in_sec": [1.5, 0.75],
-            "shift_length_in_sec": [0.75, 0.75],
+            "window_length_in_sec": [1.5, 1.0],
+            "shift_length_in_sec": [1.0, 0.75],
             "multiscale_weights": [1, 1],
         }
 
