@@ -1270,6 +1270,10 @@ def _save_transcription_json(segments: list, output_dir: Path, video_id: str) ->
         full_text_parts_en = []
         
         for turn in dialogue:
+            # Skip merged turns — their words are already in the parent
+            if turn.get('_subtitle_merged'):
+                continue
+
             # Russian text
             turn_text_ru = turn.get('text_ru') or ''
             # Remove emotion tags

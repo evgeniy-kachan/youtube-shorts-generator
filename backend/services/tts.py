@@ -4158,7 +4158,96 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             
             if merged_count > 0:
                 logger.info("TTD: Merged %d short turns into previous turns for subtitle display", merged_count)
-            
+
+            # ── POST-MERGE: Redistribute bunched word timestamps ──────────
+            # When a short turn is merged into a previous one, its words
+            # often keep 0ms/near-0ms durations because TTD gave the turn
+            # an extremely short window. Phase 3 expansion can't help when
+            # ALL words share the same start time (no gaps to expand into).
+            #
+            # Fix: detect groups of 3+ consecutive micro-duration words and
+            # redistribute them evenly across available time.
+            _BUNCH_THRESH_MS = 50     # words < 50ms → "bunched"
+            _BUNCH_MIN_GROUP = 3      # minimum group size to trigger
+            _REDIST_MIN_MS   = 120    # target minimum ms per word
+            _total_redist = 0
+
+            for _ri in range(len(dialogue_turns)):
+                _rt = dialogue_turns[_ri]
+                if _rt.get("_subtitle_merged"):
+                    continue
+                _rw = _rt.get("tts_words")
+                if not _rw or len(_rw) < _BUNCH_MIN_GROUP:
+                    continue
+
+                _modified = False
+                _wi = 0
+                while _wi < len(_rw):
+                    _dur = (_rw[_wi]["end"] - _rw[_wi]["start"]) * 1000
+                    if _dur >= _BUNCH_THRESH_MS:
+                        _wi += 1
+                        continue
+
+                    # Found a bunched word — collect the full contiguous group
+                    _gs = _wi
+                    while _wi < len(_rw) and (_rw[_wi]["end"] - _rw[_wi]["start"]) * 1000 < _BUNCH_THRESH_MS:
+                        _wi += 1
+                    _ge = _wi          # exclusive
+                    _gc = _ge - _gs    # group size
+
+                    if _gc < _BUNCH_MIN_GROUP:
+                        continue       # 1-2 fast words are fine
+
+                    # ── Calculate redistribution window ──
+                    _ws = _rw[_gs]["start"]
+
+                    if _ge < len(_rw):
+                        # Next non-bunched word in same turn
+                        _we = _rw[_ge]["start"]
+                    else:
+                        # Bunched group is at the END of the turn
+                        _we = _rt.get("tts_end_offset", _rw[-1]["end"])
+                        # Try to use inter-turn gap
+                        for _ni in range(_ri + 1, len(dialogue_turns)):
+                            _nt = dialogue_turns[_ni]
+                            if _nt.get("_subtitle_merged"):
+                                continue
+                            _nw = _nt.get("tts_words", [])
+                            _ns = (_nw[0]["start"] if _nw
+                                   else _nt.get("tts_start_offset", _we))
+                            if _ns > _ws:
+                                # Use up to 80% of gap to next turn
+                                _we = _ws + (_ns - _ws) * 0.8
+                            break
+
+                    _needed = _gc * _REDIST_MIN_MS / 1000.0
+                    if _we - _ws < _needed:
+                        _we = _ws + _needed    # force-extend
+
+                    _wd = (_we - _ws) / _gc
+                    for _j in range(_gc):
+                        _rw[_gs + _j] = dict(
+                            _rw[_gs + _j],
+                            start=round(_ws + _j * _wd, 4),
+                            end=round(_ws + (_j + 1) * _wd, 4),
+                        )
+
+                    _modified = True
+                    _total_redist += _gc
+                    logger.info(
+                        "TTD REDIST: turn %d, %d bunched words [%.2f-%.2fs] → %.0fms/word",
+                        _ri, _gc, _ws, _we, _wd * 1000,
+                    )
+
+                if _modified:
+                    _rt["tts_words"] = _rw
+
+            if _total_redist > 0:
+                logger.info(
+                    "TTD REDIST TOTAL: redistributed %d bunched words across all turns",
+                    _total_redist,
+                )
+
             # Summary log: timing source for each turn
             _src_counts: dict[str, int] = {}
             for t in dialogue_turns:

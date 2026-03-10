@@ -1840,7 +1840,57 @@ class VideoProcessor:
                     "SUBTITLE DEDUP: removed %d duplicate/overlapping words",
                     len(all_words_flat) - len(deduped_words)
                 )
-            
+
+            # ── SAFETY NET: redistribute remaining bunched words ──────
+            # After dedup, there may still be groups of 3+ words with
+            # near-zero duration (e.g., when ElevenLabs TTD compressed
+            # a turn). Redistribute them so each word is readable.
+            _SN_BUNCH_MS   = 50     # words shorter than this → bunched
+            _SN_MIN_GROUP  = 3      # minimum group size
+            _SN_TARGET_MS  = 120    # target ms per word
+            _sn_fixes = 0
+            _swi = 0
+            while _swi < len(deduped_words):
+                _sd = (deduped_words[_swi].get("end", 0)
+                       - deduped_words[_swi].get("start", 0)) * 1000
+                if _sd >= _SN_BUNCH_MS:
+                    _swi += 1
+                    continue
+                _sg = _swi
+                while (_swi < len(deduped_words) and
+                       (deduped_words[_swi].get("end", 0)
+                        - deduped_words[_swi].get("start", 0)) * 1000
+                       < _SN_BUNCH_MS):
+                    _swi += 1
+                _se = _swi
+                _sc = _se - _sg
+                if _sc < _SN_MIN_GROUP:
+                    continue
+                _sws = deduped_words[_sg].get("start", 0)
+                if _se < len(deduped_words):
+                    _swe = deduped_words[_se].get("start", _sws)
+                else:
+                    _swe = deduped_words[-1].get("end", _sws)
+                _needed = _sc * _SN_TARGET_MS / 1000.0
+                if _swe - _sws < _needed:
+                    _swe = _sws + _needed
+                _swd = (_swe - _sws) / _sc
+                for _sj in range(_sc):
+                    deduped_words[_sg + _sj]["start"] = round(
+                        _sws + _sj * _swd, 4)
+                    deduped_words[_sg + _sj]["end"] = round(
+                        _sws + (_sj + 1) * _swd, 4)
+                _sn_fixes += _sc
+                logger.info(
+                    "SUBTITLE SAFETY: %d bunched words at %.2fs → %.0fms/word",
+                    _sc, _sws, _swd * 1000,
+                )
+            if _sn_fixes:
+                logger.info(
+                    "SUBTITLE SAFETY: redistributed %d bunched words total",
+                    _sn_fixes,
+                )
+
             # Rebuild subtitles from deduped words (group by proximity + line length)
             if deduped_words:
                 rebuilt_subtitles: List[Dict] = []
