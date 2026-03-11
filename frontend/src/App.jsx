@@ -398,7 +398,12 @@ function App() {
             localStorage.removeItem('currentTaskType');
             clearInterval(interval);
           } else if (status.status === 'failed') {
-            alert('Ошибка при обработке видео: ' + status.message);
+            const msg = status.message || '';
+            if (msg.includes('Перевод не удался') || msg.includes('DeepSeek')) {
+              alert('⚠️ Проблемы у DeepSeek — перевод не удался.\n\nПовторите попытку позже.\nТокены ElevenLabs не потрачены.');
+            } else {
+              alert('Ошибка при обработке видео: ' + msg);
+            }
             setStage('segments');
             localStorage.removeItem('currentProcessingTask');
             localStorage.removeItem('currentTaskType');

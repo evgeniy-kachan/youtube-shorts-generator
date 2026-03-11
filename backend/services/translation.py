@@ -1,5 +1,6 @@
 """Translation service powered by DeepSeek."""
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 
@@ -16,6 +17,11 @@ from backend.config import (
 from backend.services.deepseek_client import DeepSeekClient
 
 logger = logging.getLogger(__name__)
+
+
+class TranslationTimeoutError(Exception):
+    """Raised when DeepSeek translation fails after all retries (timeout)."""
+    pass
 
 # ============================================================================
 # POST-PROCESSING: deterministic false-friend corrections
@@ -398,6 +404,11 @@ class Translator:
             self.max_parallel,
         )
 
+    def _chat_with_timeout(self, messages, temperature=0.3, timeout=120):
+        """Call DeepSeek chat with a custom (larger) timeout for retries."""
+        retry_client = DeepSeekClient(model=self.model_name, timeout=timeout)
+        return retry_client.chat(messages=messages, temperature=temperature)
+
     def translate_batch(self, texts: List[str]) -> List[str]:
         """Translate multiple texts, preserving order."""
         if not texts:
@@ -725,17 +736,74 @@ class Translator:
         
         logger.info("Stage 1: Isochronic translation for %d turns", len(dialogue_turns))
         
+        # Retry logic for DeepSeek timeout
+        _MAX_RETRIES = 2
+        _RETRY_TIMEOUT = 120  # seconds — doubled from default
+        
+        last_exc = None
+        for attempt in range(1 + _MAX_RETRIES):
+            try:
+                # On retry: use increased timeout via a temporary client
+                if attempt > 0:
+                    logger.warning(
+                        "Stage 1: RETRY %d/%d with %ds timeout...",
+                        attempt, _MAX_RETRIES, _RETRY_TIMEOUT,
+                    )
+                    time.sleep(3)  # small backoff before retry
+                    response_json = self._chat_with_timeout(
+                        messages=[
+                            {"role": "system", "content": STAGE1_PROMPT},
+                            {"role": "user", "content": user_message},
+                        ],
+                        temperature=0.3,
+                        timeout=_RETRY_TIMEOUT,
+                    )
+                else:
+                    response_json = self.client.chat(
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": STAGE1_PROMPT,   # ← cached by DeepSeek prefix cache
+                            },
+                            {"role": "user", "content": user_message},
+                        ],
+                        temperature=0.3,
+                    )
+                # If we reach here — success, break out of retry loop
+                last_exc = None
+                break
+                
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.TimeoutException) as timeout_exc:
+                last_exc = timeout_exc
+                logger.warning(
+                    "Stage 1: attempt %d/%d TIMED OUT: %s",
+                    attempt + 1, 1 + _MAX_RETRIES, timeout_exc,
+                )
+                continue
+            except Exception as other_exc:
+                # Non-timeout errors — don't retry, break immediately
+                last_exc = other_exc
+                break
+        
+        if last_exc is not None:
+            # All retries exhausted or non-timeout error
+            if isinstance(last_exc, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.TimeoutException)):
+                logger.error(
+                    "Stage 1 translation FAILED after %d retries (DeepSeek timeout). "
+                    "NOT falling back to English to avoid wasting ElevenLabs tokens.",
+                    _MAX_RETRIES,
+                )
+                raise TranslationTimeoutError(
+                    "Перевод не удался: сервер DeepSeek не отвечает. "
+                    "Повторите попытку позже."
+                ) from last_exc
+            else:
+                logger.error("Stage 1 translation failed: %s", last_exc, exc_info=True)
+                raise TranslationTimeoutError(
+                    f"Перевод не удался: {last_exc}"
+                ) from last_exc
+        
         try:
-            response_json = self.client.chat(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": STAGE1_PROMPT,   # ← cached by DeepSeek prefix cache
-                    },
-                    {"role": "user", "content": user_message},
-                ],
-                temperature=0.3,
-            )
             response_text = DeepSeekClient.extract_text(response_json)
             parsed = DeepSeekClient.extract_json(response_text)
             translations = parsed.get("translations", [])
@@ -846,12 +914,14 @@ Respond with ONLY the Russian translation, no JSON, no quotes, just the text."""
             
             return dialogue_turns
             
+        except TranslationTimeoutError:
+            raise  # Already handled above — propagate to caller
         except Exception as exc:
-            logger.error("Stage 1 translation failed: %s", exc, exc_info=True)
-            for turn in dialogue_turns:
-                if "text_ru" not in turn:
-                    turn["text_ru"] = turn.get("text", "")
-            return dialogue_turns
+            logger.error("Stage 1 translation parse/apply failed: %s", exc, exc_info=True)
+            # Response was received but parsing failed — raise, don't silently use English
+            raise TranslationTimeoutError(
+                f"Перевод не удался (ошибка обработки ответа): {exc}"
+            ) from exc
     
     def _expand_short_turns(
         self, dialogue_turns: list[dict], segment_context: str = ""

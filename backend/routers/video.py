@@ -25,7 +25,7 @@ _render_semaphore = Semaphore(MAX_PARALLEL_RENDERS)
 from backend.services.youtube_downloader import YouTubeDownloader
 from backend.services.transcription import TranscriptionService
 from backend.services.highlight_analyzer import HighlightAnalyzer, get_min_highlights
-from backend.services.translation import Translator
+from backend.services.translation import Translator, TranslationTimeoutError
 from backend.services.tts import TTSService, ElevenLabsTTSService, ElevenLabsTTDService
 from backend.services.video_processor import VideoProcessor
 from backend.services.text_markup import TextMarkupService
@@ -511,6 +511,10 @@ def _ensure_dialogue_russian(segment: dict, translator) -> None:
                 idx, duration, en_words, ru_words,
                 turn['text_en'][:40], turn['text_ru'][:40]
             )
+    except TranslationTimeoutError:
+        # DeepSeek is down / timed out after retries — do NOT fall back to English!
+        # Re-raise so the render is cancelled (saves ElevenLabs tokens).
+        raise
     except Exception as e:
         logger.error("Failed isochronic translation for %s: %s, falling back to batch", segment.get('id'), e)
         # Fallback to simple batch translation
@@ -1843,6 +1847,13 @@ def _process_segments_task(
                     }
                     logger.info("Completed segment %s (%d/%d)", segment_id, completed_count, total_segments)
                     
+                except TranslationTimeoutError as tex:
+                    # DeepSeek is down — stop ALL rendering, don't waste ElevenLabs $
+                    logger.error(
+                        "Segment %s: translation timeout — aborting entire render batch. %s",
+                        segment_id, tex,
+                    )
+                    raise  # propagates to outer except → task "failed"
                 except Exception as exc:
                     logger.error("Segment %s failed: %s", segment_id, exc, exc_info=True)
                     # Continue with other segments
