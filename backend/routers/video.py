@@ -1675,6 +1675,7 @@ def _process_segments_task(
             duration_diff = abs(audio_duration - original_duration)
             if duration_diff > 0.2:  # More than 200ms difference
                 before_duration = audio_duration
+                scale = 1.0  # default — no tempo change
                 
                 logger.info(
                     "Applying tempo adjustment for %s: %.2fs -> %.2fs (range: 0.9x-1.35x)%s",
