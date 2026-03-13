@@ -796,6 +796,68 @@ def _refine_turn_boundaries(dialogue: list[dict] | None) -> None:
             )
 
 
+def _trim_segment_dead_start(segment: dict, buffer_sec: float = 0.3) -> None:
+    """
+    Trim dead silence/non-speech at the start of a segment.
+    
+    After _refine_turn_boundaries(), dialogue[0]["start"] points to the first
+    actual spoken word (from Whisper word-level timestamps).  If there is a
+    significant gap between segment['start_time'] and that first word, we
+    move start_time forward so the video begins right before actual speech.
+    
+    This prevents the common issue where 5-10 seconds of laughter / pauses /
+    wrong phrases play before the relevant content starts.
+    
+    Only modifies segment['start_time'] (and recalculates 'duration').
+    Dialogue turn timestamps remain absolute and are unaffected.
+    """
+    _DEAD_START_THRESHOLD_SEC = 1.5  # Only trim if gap > 1.5 seconds
+
+    dialogue = segment.get("dialogue")
+    if not dialogue:
+        return
+
+    seg_start = float(segment.get("start_time", 0))
+    seg_end = float(segment.get("end_time", 0))
+
+    # Find the first actual word timestamp across all turns
+    first_word_start = None
+    for turn in dialogue:
+        turn_start = turn.get("start")
+        if turn_start is not None:
+            first_word_start = turn_start
+            break
+        # Also check word-level timestamps within the turn
+        for w in (turn.get("words") or []):
+            ws = w.get("start")
+            if ws is not None:
+                first_word_start = ws
+                break
+        if first_word_start is not None:
+            break
+
+    if first_word_start is None:
+        return
+
+    dead_time = first_word_start - seg_start
+    if dead_time < _DEAD_START_THRESHOLD_SEC:
+        return
+
+    # Move start_time forward, leaving a small buffer before first word
+    new_start = max(seg_start, first_word_start - buffer_sec)
+    trimmed = new_start - seg_start
+
+    logger.info(
+        "TRIM DEAD START [%s]: %.2fs → %.2fs (trimmed %.1fs of dead time, "
+        "first word at %.2fs, buffer=%.1fs)",
+        segment.get("id", "?"), seg_start, new_start, trimmed,
+        first_word_start, buffer_sec,
+    )
+
+    segment["start_time"] = new_start
+    segment["duration"] = seg_end - new_start
+
+
 def _speed_match_audio_duration(
     audio_path: str,
     current_duration: float,
@@ -1549,6 +1611,9 @@ def _process_segments_task(
                 # Refine turn boundaries using word-level timestamps
                 _refine_turn_boundaries(segment['dialogue'])
                 
+                # Trim dead silence / non-speech at segment start
+                _trim_segment_dead_start(segment)
+                
                 # Ensure all dialogue turns have Russian text
                 # Existing turns from analysis should have text_ru, but NeMo-rediarized
                 # turns are rebuilt from English words and need translation
@@ -1586,6 +1651,9 @@ def _process_segments_task(
                         )
                         
                         _refine_turn_boundaries(segment['dialogue'])
+                        
+                        # Trim dead silence / non-speech at segment start
+                        _trim_segment_dead_start(segment)
                         
                         # Pseudo-dialogue is created from ENGLISH Whisper words!
                         # Must translate to Russian before TTS
