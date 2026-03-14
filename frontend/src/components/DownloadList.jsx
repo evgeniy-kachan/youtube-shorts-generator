@@ -366,7 +366,6 @@ ${cards}
                       )}
                     </div>
                   )}
-                </div>
 
                   {/* Action buttons */}
                   <div className="flex gap-2 mt-4 flex-wrap">
