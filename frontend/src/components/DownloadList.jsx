@@ -22,16 +22,21 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
     const link = document.createElement('a');
     link.href = url;
     link.download = filename;
+    link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
+    // Don't remove immediately — give browser time to start the download
+    setTimeout(() => {
+      try { document.body.removeChild(link); } catch (_) {}
+    }, 5000);
   };
 
   const downloadAll = () => {
+    // Stagger downloads with 2.5s delay — browsers throttle rapid programmatic downloads
     segments.forEach((segment, index) => {
       setTimeout(() => {
         handleDownload(segment.segment_id, segment.filename);
-      }, index * 1200);
+      }, index * 2500);
     });
   };
 
