@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { getDownloadUrl, getTranscriptionDownloadUrl, generateDescription } from '../services/api';
 
 const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments }) => {
@@ -103,18 +103,30 @@ ${cards}
         if (!desc) return `${separator}\n${segLabel}\n${separator}\n\nОписание не сгенерировано\n`;
         const parts = [separator, segLabel, separator, ''];
         if (desc.category) parts.push(`Категория: ${desc.category}`, '');
-        if (desc.title)    parts.push(desc.title, '');
-        // Clean description: remove CTA phrases like "смотри до конца"
-        if (desc.description) {
-          let cleanDesc = desc.description
-            .replace(/смотр[и|ите] до конца[!.,]?\s*/gi, '')
-            .replace(/досмотр[и|ите][!.,]?\s*/gi, '')
-            .replace(/не пропусти[!.,]?\s*/gi, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-          parts.push(cleanDesc, '');
+
+        // YouTube section
+        parts.push('▶ YOUTUBE', '');
+        if (desc.title) parts.push(`Заголовок: ${desc.title}`, '');
+        if (desc.title_alternatives?.length) {
+          parts.push('Альтернативы:');
+          desc.title_alternatives.forEach((alt, i) => {
+            const labels = ['Числовой', 'Цитатный', 'Интригующий'];
+            parts.push(`  ${labels[i] || i + 1}. ${alt}`);
+          });
+          parts.push('');
         }
-        if (desc.guest_bio)   parts.push(`О госте:\n${desc.guest_bio}`, '');
+        if (desc.description) {
+          parts.push(desc.description, '');
+        }
+        if (desc.guest_bio) parts.push(`О госте:\n${desc.guest_bio}`, '');
+
+        // TikTok section
+        if (desc.title_tiktok || desc.description_tiktok) {
+          parts.push('🎵 TIKTOK', '');
+          if (desc.title_tiktok) parts.push(`Заголовок: ${desc.title_tiktok}`, '');
+          if (desc.description_tiktok) parts.push(desc.description_tiktok, '');
+        }
+
         if (desc.hashtags?.length) parts.push(desc.hashtags.join(' '), '');
         return parts.join('\n');
       });
@@ -152,23 +164,27 @@ ${cards}
     }
   };
 
-  const [copyMode, setCopyMode] = useState('youtube'); // 'youtube' or 'tiktok'
-
-  const handleCopyAll = (segment) => {
+  const handleCopyYoutube = (segment) => {
     const desc = segment.description;
     if (!desc) return;
     const parts = [];
-    if (copyMode === 'tiktok' && (desc.title_tiktok || desc.description_tiktok)) {
-      if (desc.title_tiktok) parts.push(desc.title_tiktok);
-      if (desc.description_tiktok) parts.push(`\n${desc.description_tiktok}`);
-      if (desc.hashtags?.length) parts.push(`\n${desc.hashtags.join(' ')}`);
-    } else {
-      if (desc.title)       parts.push(desc.title);
-      if (desc.description) parts.push(`\n${desc.description}`);
-      if (desc.guest_bio)   parts.push(`\n${desc.guest_bio}`);
-      if (desc.hashtags?.length) parts.push(`\n${desc.hashtags.join(' ')}`);
-    }
-    handleCopy(parts.join('\n'), `all-${segment.segment_id}`);
+    if (desc.title) parts.push(desc.title);
+    if (desc.description) parts.push(`\n${desc.description}`);
+    if (desc.guest_bio) parts.push(`\n${desc.guest_bio}`);
+    if (desc.hashtags?.length) parts.push(`\n${desc.hashtags.join(' ')}`);
+    handleCopy(parts.join('\n'), `yt-${segment.segment_id}`);
+  };
+
+  const handleCopyTiktok = (segment) => {
+    const desc = segment.description;
+    if (!desc) return;
+    const parts = [];
+    if (desc.title_tiktok) parts.push(desc.title_tiktok);
+    else if (desc.title) parts.push(desc.title);
+    if (desc.description_tiktok) parts.push(`\n${desc.description_tiktok}`);
+    else if (desc.description) parts.push(`\n${desc.description}`);
+    if (desc.hashtags?.length) parts.push(`\n${desc.hashtags.join(' ')}`);
+    handleCopy(parts.join('\n'), `tt-${segment.segment_id}`);
   };
 
   const handleRegenerate = async (segment, index) => {
@@ -371,10 +387,10 @@ ${cards}
                   <div className="flex gap-2 mt-4 flex-wrap">
                     {/* Copy for YouTube */}
                     <button
-                      onClick={() => { setCopyMode('youtube'); setTimeout(() => handleCopyAll(segment), 0); }}
+                      onClick={() => handleCopyYoutube(segment)}
                       className="flex-1 py-2 px-3 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition text-sm flex items-center justify-center min-w-[140px]"
                     >
-                      {copiedField === `all-${segment.segment_id}` && copyMode === 'youtube' ? (
+                      {copiedField === `yt-${segment.segment_id}` ? (
                         <>✓ Скопировано!</>
                       ) : (
                         <>▶ Копировать YouTube</>
@@ -383,10 +399,10 @@ ${cards}
                     {/* Copy for TikTok */}
                     {(segment.description.title_tiktok || segment.description.description_tiktok) && (
                       <button
-                        onClick={() => { setCopyMode('tiktok'); setTimeout(() => handleCopyAll(segment), 0); }}
+                        onClick={() => handleCopyTiktok(segment)}
                         className="flex-1 py-2 px-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 transition text-sm flex items-center justify-center min-w-[140px]"
                       >
-                        {copiedField === `all-${segment.segment_id}` && copyMode === 'tiktok' ? (
+                        {copiedField === `tt-${segment.segment_id}` ? (
                           <>✓ Скопировано!</>
                         ) : (
                           <>🎵 Копировать TikTok</>
