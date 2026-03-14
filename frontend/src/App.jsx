@@ -71,8 +71,11 @@ function App() {
             start_time: originalSegment.start_time ?? null,
             end_time: originalSegment.end_time ?? null,
             download_path: relativePath,
-            // New: include description data
+            // Description data
             description: isNewFormat ? item.description : null,
+            // Original texts for description regeneration
+            text_en: isNewFormat ? (item.text_en || '') : '',
+            text_ru: isNewFormat ? (item.text_ru || '') : '',
           };
         });
       }

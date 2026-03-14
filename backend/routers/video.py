@@ -1879,11 +1879,28 @@ def _process_segments_task(
                 }
             
             relative_path = os.path.join(video_id, f"{segment_id}.mp4")
+
+            # Include original texts so the frontend can regenerate descriptions
+            seg_text_en = segment.get('text', '')
+            if not seg_text_en and segment.get('dialogue'):
+                seg_text_en = ' '.join(
+                    turn.get('text_en', '') or turn.get('text', '')
+                    for turn in segment['dialogue']
+                )
+            seg_text_ru = segment.get('text_ru', '')
+            if not seg_text_ru and segment.get('dialogue'):
+                seg_text_ru = ' '.join(
+                    turn.get('text_ru', '') or turn.get('text', '')
+                    for turn in segment['dialogue']
+                )
+
             return {
                 "idx": idx,
                 "path": relative_path,
                 "segment_id": segment_id,
-                "description": description_data
+                "description": description_data,
+                "text_en": seg_text_en,
+                "text_ru": seg_text_ru,
             }
         
         # Render segments in parallel (limited by semaphore)
@@ -2381,7 +2398,10 @@ class GenerateDescriptionRequest(BaseModel):
 class GenerateDescriptionResponse(BaseModel):
     """Response with generated description."""
     title: str
+    title_alternatives: List[str] = []
+    title_tiktok: str = ""
     description: str
+    description_tiktok: str = ""
     hashtags: List[str]
 
 
@@ -2405,7 +2425,10 @@ async def generate_description(request: GenerateDescriptionRequest):
         
         return GenerateDescriptionResponse(
             title=result.get("title", ""),
+            title_alternatives=result.get("title_alternatives", []),
+            title_tiktok=result.get("title_tiktok", ""),
             description=result.get("description", ""),
+            description_tiktok=result.get("description_tiktok", ""),
             hashtags=result.get("hashtags", ["#shorts"]),
         )
     except Exception as e:

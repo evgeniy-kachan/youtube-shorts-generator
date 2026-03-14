@@ -3408,7 +3408,7 @@ class ElevenLabsTTDService(ElevenLabsTTSService):
             # Disable with env: TTD_PHRASE_SYNC=false + service restart
             PHRASE_SYNC_ENABLED = os.getenv("TTD_PHRASE_SYNC", "true").lower() in ("true", "1", "yes")
             PHRASE_SYNC_MIN_MS  = 500   # Ignore drifts below 500 ms (was 250)
-            PHRASE_SYNC_MAX_MS  = 1000  # Cap single insertion at 1.0 s (was 1500)
+            PHRASE_SYNC_MAX_MS  = 2000  # Cap single insertion at 2.0 s (was 1000)
 
             logger.info(
                 "PHRASE_SYNC: %s (min=%dms, max=%dms) | "

@@ -40,12 +40,21 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
       const desc = segment.description;
       if (!desc) return `<div class="card"><h2>${segment.filename}</h2><p class="empty">Описание не сгенерировано</p></div>`;
 
+      const alts = (desc.title_alternatives || []).map(a => `<li>${a}</li>`).join('');
       return `<div class="card">
         <h2>${segment.filename}</h2>
         ${desc.category ? `<p class="badge">${desc.category}</p>` : ''}
+        <div class="platform-label yt">▶ YouTube</div>
         ${desc.title ? `<h3>${desc.title}</h3>` : ''}
+        ${alts ? `<p class="alts"><strong>Альтернативы:</strong><ul>${alts}</ul></p>` : ''}
         ${desc.description ? `<p class="desc">${desc.description.replace(/\n/g, '<br>')}</p>` : ''}
         ${desc.guest_bio ? `<div class="guest"><strong>О госте:</strong><br>${desc.guest_bio.replace(/\n/g, '<br>')}</div>` : ''}
+        ${(desc.title_tiktok || desc.description_tiktok) ? `
+          <div class="tiktok-block">
+            <div class="platform-label tt">🎵 TikTok</div>
+            ${desc.title_tiktok ? `<h3>${desc.title_tiktok}</h3>` : ''}
+            ${desc.description_tiktok ? `<p class="desc">${desc.description_tiktok.replace(/\n/g, '<br>')}</p>` : ''}
+          </div>` : ''}
         ${desc.hashtags?.length ? `<p class="tags">${desc.hashtags.join(' ')}</p>` : ''}
       </div>`;
     }).join('\n');
@@ -62,6 +71,10 @@ const DownloadList = ({ processedSegments, videoId, onReset, onBackToSegments })
   .desc{font-size:15px;line-height:1.6;color:#333;margin:0 0 12px}
   .guest{font-size:14px;line-height:1.6;color:#555;background:#f9f9fb;border-radius:10px;padding:12px;margin-bottom:12px}
   .tags{font-size:13px;color:#7c3aed;margin:0;font-weight:500}
+  .alts{font-size:14px;color:#555;margin:0 0 12px} .alts ul{margin:4px 0 0;padding-left:18px} .alts li{margin-bottom:2px}
+  .platform-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+  .yt{color:#dc2626} .tt{color:#fff}
+  .tiktok-block{background:#1c1c1e;border-radius:10px;padding:14px;margin:12px 0} .tiktok-block h3{color:#fff} .tiktok-block .desc{color:#ccc}
   .empty{color:#aaa;font-style:italic}
   @media(prefers-color-scheme:dark){body{background:#1c1c1e;color:#f5f5f7}.card{background:#2c2c2e}.desc{color:#e0e0e0}.guest{background:#3a3a3c;color:#ccc}.badge{background:#3d2a5a}}
 </style></head><body>
@@ -139,25 +152,31 @@ ${cards}
     }
   };
 
+  const [copyMode, setCopyMode] = useState('youtube'); // 'youtube' or 'tiktok'
+
   const handleCopyAll = (segment) => {
     const desc = segment.description;
     if (!desc) return;
     const parts = [];
-    if (desc.category)    parts.push(`Категория: ${desc.category}`);
-    if (desc.title)       parts.push(`\n${desc.title}`);
-    if (desc.description) parts.push(`\n${desc.description}`);
-    if (desc.guest_bio)   parts.push(`\n${desc.guest_bio}`);
-    if (desc.hashtags?.length) parts.push(`\n${desc.hashtags.join(' ')}`);
+    if (copyMode === 'tiktok' && (desc.title_tiktok || desc.description_tiktok)) {
+      if (desc.title_tiktok) parts.push(desc.title_tiktok);
+      if (desc.description_tiktok) parts.push(`\n${desc.description_tiktok}`);
+      if (desc.hashtags?.length) parts.push(`\n${desc.hashtags.join(' ')}`);
+    } else {
+      if (desc.title)       parts.push(desc.title);
+      if (desc.description) parts.push(`\n${desc.description}`);
+      if (desc.guest_bio)   parts.push(`\n${desc.guest_bio}`);
+      if (desc.hashtags?.length) parts.push(`\n${desc.hashtags.join(' ')}`);
+    }
     handleCopy(parts.join('\n'), `all-${segment.segment_id}`);
   };
 
   const handleRegenerate = async (segment, index) => {
     setRegeneratingId(segment.segment_id);
     try {
-      // We need original text - use segment_id to find it or use existing description context
       const result = await generateDescription(
-        '', // text_en not available here, but DeepSeek can work with just Russian
-        segment.description?.title || segment.filename, // Use title as context
+        segment.text_en || '',
+        segment.text_ru || '',
         segment.duration || 60,
         0
       );
@@ -246,13 +265,18 @@ ${cards}
               {/* Description */}
               {segment.description && (
                 <div className="p-4">
-                  {/* Combined description block */}
+                  {/* YouTube block */}
                   <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-red-500 text-sm">▶</span>
+                      <span className="text-xs font-bold text-red-600 uppercase tracking-wide">YouTube</span>
+                    </div>
+
                     {/* Category */}
                     {segment.description.category && (
                       <div>
-                        <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">Категория</span>
-                        <p className="text-gray-800 font-medium mt-1">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Категория</span>
+                        <p className="text-gray-800 font-medium mt-0.5 text-sm">
                           {segment.description.category}
                         </p>
                       </div>
@@ -260,16 +284,33 @@ ${cards}
 
                     {/* Title */}
                     <div>
-                      <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">Заголовок</span>
-                      <p className="text-gray-900 font-semibold mt-1">
+                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Заголовок</span>
+                      <p className="text-gray-900 font-semibold mt-0.5">
                         {segment.description.title}
                       </p>
                     </div>
 
+                    {/* Alternative titles */}
+                    {segment.description.title_alternatives && segment.description.title_alternatives.length > 0 && (
+                      <div>
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Альтернативы</span>
+                        <ul className="mt-0.5 space-y-0.5">
+                          {segment.description.title_alternatives.map((alt, i) => (
+                            <li key={i} className="text-gray-600 text-sm flex items-start gap-1.5">
+                              <span className="text-gray-400 mt-0.5 text-xs">
+                                {i === 0 ? '🔢' : i === 1 ? '💬' : '❓'}
+                              </span>
+                              {alt}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
                     {/* Description text */}
                     <div>
-                      <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">Описание</span>
-                      <p className="text-gray-700 mt-1 whitespace-pre-wrap">
+                      <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Описание</span>
+                      <p className="text-gray-700 mt-0.5 whitespace-pre-wrap text-sm">
                         {segment.description.description}
                       </p>
                     </div>
@@ -277,8 +318,8 @@ ${cards}
                     {/* Guest bio */}
                     {segment.description.guest_bio && (
                       <div>
-                        <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">О госте</span>
-                        <p className="text-gray-700 mt-1 whitespace-pre-wrap">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">О госте</span>
+                        <p className="text-gray-700 mt-0.5 whitespace-pre-wrap text-sm">
                           {segment.description.guest_bio}
                         </p>
                       </div>
@@ -287,36 +328,72 @@ ${cards}
                     {/* Hashtags */}
                     {segment.description.hashtags && segment.description.hashtags.length > 0 && (
                       <div>
-                        <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide">Хэштеги</span>
-                        <p className="text-purple-700 mt-1">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Хэштеги</span>
+                        <p className="text-purple-700 mt-0.5 text-sm">
                           {segment.description.hashtags.join(' ')}
                         </p>
                       </div>
                     )}
                   </div>
 
+                  {/* TikTok block */}
+                  {(segment.description.title_tiktok || segment.description.description_tiktok) && (
+                    <div className="bg-gray-900 rounded-lg p-4 space-y-2 mt-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm">🎵</span>
+                        <span className="text-xs font-bold text-white uppercase tracking-wide">TikTok</span>
+                      </div>
+                      {segment.description.title_tiktok && (
+                        <div>
+                          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Заголовок</span>
+                          <p className="text-white font-semibold mt-0.5">
+                            {segment.description.title_tiktok}
+                          </p>
+                        </div>
+                      )}
+                      {segment.description.description_tiktok && (
+                        <div>
+                          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Описание</span>
+                          <p className="text-gray-300 mt-0.5 whitespace-pre-wrap text-sm">
+                            {segment.description.description_tiktok}
+                          </p>
+                        </div>
+                      )}
+                      {segment.description.hashtags && segment.description.hashtags.length > 0 && (
+                        <p className="text-cyan-400 text-sm">
+                          {segment.description.hashtags.join(' ')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                   {/* Action buttons */}
-                  <div className="flex gap-3 mt-4">
+                  <div className="flex gap-2 mt-4 flex-wrap">
+                    {/* Copy for YouTube */}
                     <button
-                      onClick={() => handleCopyAll(segment)}
-                      className="flex-1 py-2.5 px-4 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition text-sm flex items-center justify-center"
+                      onClick={() => { setCopyMode('youtube'); setTimeout(() => handleCopyAll(segment), 0); }}
+                      className="flex-1 py-2 px-3 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition text-sm flex items-center justify-center min-w-[140px]"
                     >
-                      {copiedField === `all-${segment.segment_id}` ? (
-                        <>
-                          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                          Скопировано!
-                        </>
+                      {copiedField === `all-${segment.segment_id}` && copyMode === 'youtube' ? (
+                        <>✓ Скопировано!</>
                       ) : (
-                        <>
-                          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                          </svg>
-                          Копировать описание
-                        </>
+                        <>▶ Копировать YouTube</>
                       )}
                     </button>
+                    {/* Copy for TikTok */}
+                    {(segment.description.title_tiktok || segment.description.description_tiktok) && (
+                      <button
+                        onClick={() => { setCopyMode('tiktok'); setTimeout(() => handleCopyAll(segment), 0); }}
+                        className="flex-1 py-2 px-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 transition text-sm flex items-center justify-center min-w-[140px]"
+                      >
+                        {copiedField === `all-${segment.segment_id}` && copyMode === 'tiktok' ? (
+                          <>✓ Скопировано!</>
+                        ) : (
+                          <>🎵 Копировать TikTok</>
+                        )}
+                      </button>
+                    )}
                     <button
                       onClick={() => handleRegenerate(segment, index)}
                       disabled={regeneratingId === segment.segment_id}
