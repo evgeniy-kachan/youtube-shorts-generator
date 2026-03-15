@@ -154,12 +154,13 @@ export const getCachedVideo = async (videoId) => {
   return response.data;
 };
 
-export const generateDescription = async (textEn, textRu, duration, highlightScore = 0) => {
+export const generateDescription = async (textEn, textRu, duration, highlightScore = 0, guestName = '') => {
   const response = await api.post('/api/video/generate-description', {
     text_en: textEn,
     text_ru: textRu,
     duration: duration,
     highlight_score: highlightScore,
+    guest_name: guestName,
   });
   return response.data;
 };

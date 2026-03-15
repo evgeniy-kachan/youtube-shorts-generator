@@ -76,6 +76,7 @@ function App() {
             // Original texts for description regeneration
             text_en: isNewFormat ? (item.text_en || '') : '',
             text_ru: isNewFormat ? (item.text_ru || '') : '',
+            guest_name: isNewFormat ? (item.guest_name || '') : '',
           };
         });
       }

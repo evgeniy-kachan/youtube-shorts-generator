@@ -1901,6 +1901,7 @@ def _process_segments_task(
                 "description": description_data,
                 "text_en": seg_text_en,
                 "text_ru": seg_text_ru,
+                "guest_name": guest_name,
             }
         
         # Render segments in parallel (limited by semaphore)
@@ -2393,6 +2394,7 @@ class GenerateDescriptionRequest(BaseModel):
     text_ru: str
     duration: float
     highlight_score: float = 0.0
+    guest_name: str = ""
 
 
 class GenerateDescriptionResponse(BaseModel):
@@ -2402,6 +2404,7 @@ class GenerateDescriptionResponse(BaseModel):
     title_tiktok: str = ""
     description: str
     description_tiktok: str = ""
+    guest_bio: str = ""
     hashtags: List[str]
 
 
@@ -2420,6 +2423,7 @@ async def generate_description(request: GenerateDescriptionRequest):
             text_ru=request.text_ru,
             duration=request.duration,
             highlight_score=request.highlight_score,
+            guest_name=request.guest_name,
         )
         client.close()
         
@@ -2429,6 +2433,7 @@ async def generate_description(request: GenerateDescriptionRequest):
             title_tiktok=result.get("title_tiktok", ""),
             description=result.get("description", ""),
             description_tiktok=result.get("description_tiktok", ""),
+            guest_bio=result.get("guest_bio", ""),
             hashtags=result.get("hashtags", ["#shorts"]),
         )
     except Exception as e:

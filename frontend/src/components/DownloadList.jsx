@@ -199,7 +199,8 @@ ${cards}
         segment.text_en || '',
         segment.text_ru || '',
         segment.duration || 60,
-        0
+        0,
+        segment.guest_name || ''
       );
       
       // Update segment with new description
