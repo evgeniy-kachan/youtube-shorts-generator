@@ -1107,8 +1107,14 @@ class HighlightAnalyzer:
 ГРАНИЦЫ:"""
 
         try:
-            response = self.client.generate(prompt, max_tokens=100, temperature=0.3)
+            response = self.client.generate(prompt, max_tokens=200, temperature=0.3)
             response_text = response.strip()
+            
+            logger.info(
+                "DeepSeek boundary response for chunk at %.1fs: '%s'",
+                chunk_start_time,
+                response_text[:200]
+            )
             
             if response_text.upper() == "NONE" or not response_text:
                 return []
@@ -1124,42 +1130,55 @@ class HighlightAnalyzer:
                     continue
             
             if not boundary_sentences:
+                logger.warning(
+                    "Could not parse any sentence numbers from DeepSeek response: '%s'",
+                    response_text[:200]
+                )
                 return []
             
-            # Map sentence numbers to timestamps using word positions
+            logger.info(
+                "Parsed %d boundary sentences: %s",
+                len(boundary_sentences),
+                boundary_sentences
+            )
+            
+            # Map sentence numbers to timestamps using PROPORTIONAL POSITION mapping.
+            # NOTE: text is Russian (translated) but words[] may be English (from WhisperX).
+            # Text-based matching would fail across languages, so we use word-count
+            # proportional mapping: sentence N starts at Russian word offset P,
+            # which maps to English word index ≈ P * len(words) / total_ru_words.
             boundary_times = []
-            current_word_idx = 0
-            current_sentence_idx = 0
+            
+            # Calculate cumulative word offset for each sentence
+            sentence_word_offsets = []
+            cumulative = 0
+            for s in sentences:
+                sentence_word_offsets.append(cumulative)
+                cumulative += len(s.split())
+            total_text_words = cumulative
+            
+            total_timestamp_words = len(words)
+            
+            if total_text_words == 0 or total_timestamp_words == 0:
+                logger.warning("Empty text or words array, cannot map boundaries")
+                return []
             
             for sentence_num in sorted(set(boundary_sentences)):
-                # Find the start of this sentence in words
-                target_sentence = sentences[sentence_num - 1] if sentence_num <= len(sentences) else None
-                if not target_sentence:
+                if sentence_num < 1 or sentence_num > len(sentences):
                     continue
                 
-                # Find first word of this sentence
-                first_words = target_sentence.split()[:3]  # First 3 words
-                first_words_lower = [w.lower().strip('.,!?') for w in first_words]
+                # Get word offset of this sentence in the text
+                text_word_offset = sentence_word_offsets[sentence_num - 1]
                 
-                # Search in words array
-                for i in range(current_word_idx, len(words)):
-                    word_text = (words[i].get('word') or words[i].get('text', '')).lower().strip('.,!?')
-                    if word_text in first_words_lower:
-                        # Found potential match, verify next words
-                        match = True
-                        for j, fw in enumerate(first_words_lower[1:], 1):
-                            if i + j < len(words):
-                                next_word = (words[i+j].get('word') or words[i+j].get('text', '')).lower().strip('.,!?')
-                                if next_word != fw:
-                                    match = False
-                                    break
-                        
-                        if match:
-                            word_start = words[i].get('start')
-                            if word_start is not None:
-                                boundary_times.append(word_start)
-                                current_word_idx = i
-                            break
+                # Map proportionally to the word timestamps array
+                ts_word_idx = min(
+                    int(text_word_offset / total_text_words * total_timestamp_words),
+                    total_timestamp_words - 1
+                )
+                
+                word_start = words[ts_word_idx].get('start')
+                if word_start is not None:
+                    boundary_times.append(word_start)
 
             logger.info(
                 "Detected %d logical boundaries in chunk starting at %.1fs: %s",
