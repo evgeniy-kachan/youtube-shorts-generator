@@ -21,15 +21,15 @@ MIN_HIGHLIGHTS_BASE = 3             # Base minimum highlights
 MIN_HIGHLIGHTS_PER_20MIN = 1        # Add +1 to minimum for every 20 minutes of video
 MAX_HIGHLIGHTS = 60                 # Never return more than this
 FALLBACK_MIN_SCORE = 0.15           # Fallback segments must be at least this good
-PREV_TOPIC_MAX_WORDS = 50
-NEXT_TOPIC_MAX_WORDS = 30
+PREV_TOPIC_MAX_WORDS = 100
+NEXT_TOPIC_MAX_WORDS = 80
 
 # Logical boundary detection settings
 BOUNDARY_CHUNK_DURATION = 600  # 10 minutes per chunk for boundary detection
 CHUNK_OVERLAP_DURATION = 60    # Overlap between chunks to avoid cutting mid-thought (1 minute)
-MIN_SEGMENT_DURATION = 40      # Minimum segment duration after logical split
-MAX_SEGMENT_DURATION = 130     # Maximum segment duration (podcast-friendly)
-MAX_MERGED_DURATION = 180      # Maximum duration when merging incomplete segments
+MIN_SEGMENT_DURATION = 30      # Minimum segment duration after logical split
+MAX_SEGMENT_DURATION = 180     # Maximum segment duration (podcast-friendly, aligned with prompts)
+MAX_MERGED_DURATION = 200      # Maximum duration when merging incomplete segments
 
 
 def get_min_highlights(video_duration: float) -> int:
@@ -532,7 +532,7 @@ class HighlightAnalyzer:
                     should_merge = True
                     merge_reason = "direct_link_approved"
                 # Even without explicit approval, if both need context and duration is acceptable
-                elif merged_duration <= 130:
+                elif merged_duration <= 180:
                     should_merge = True
                     merge_reason = "direct_link_short"
             
@@ -541,14 +541,14 @@ class HighlightAnalyzer:
                 if merge_benefit_a == 'high':
                     should_merge = True
                     merge_reason = "a_needs_next_high"
-                elif merge_benefit_a == 'medium' and merged_duration <= 130:
+                elif merge_benefit_a == 'medium' and merged_duration <= 180:
                     should_merge = True
                     merge_reason = "a_needs_next_medium"
                 # Fallback: both low-scored (original logic)
                 else:
                     score_a = self._calculate_highlight_score(scores_a)
                     score_b = self._calculate_highlight_score(scores_b)
-                    if score_a < 0.35 and score_b < 0.35 and merged_duration <= 130:
+                    if score_a < 0.35 and score_b < 0.35 and merged_duration <= 180:
                         should_merge = True
                         merge_reason = "both_low_score"
             
@@ -557,13 +557,13 @@ class HighlightAnalyzer:
                 if merge_benefit_b == 'high':
                     should_merge = True
                     merge_reason = "b_needs_prev_high"
-                elif merge_benefit_b == 'medium' and merged_duration <= 130:
+                elif merge_benefit_b == 'medium' and merged_duration <= 180:
                     should_merge = True
                     merge_reason = "b_needs_prev_medium"
                 # Fallback: A is low-scored
                 else:
                     score_a = self._calculate_highlight_score(scores_a)
-                    if score_a < 0.40 and merged_duration <= 130:
+                    if score_a < 0.40 and merged_duration <= 180:
                         should_merge = True
                         merge_reason = "b_needs_context"
             
@@ -920,35 +920,32 @@ class HighlightAnalyzer:
 Найти логические границы в этом 10-минутном фрагменте транскрипции. Каждый получившийся сегмент станет отдельным коротким видео.
 
 ============================================================================
-ЧАСТЬ 1: ПРАВИЛА ДЛИНЫ СЕГМЕНТОВ (КРИТИЧНО ДЛЯ SHORTS/REELS)
+ЧАСТЬ 1: ПРАВИЛА ДЛИНЫ СЕГМЕНТОВ
 ============================================================================
 
-ИЕРАРХИЯ ДЛИНЫ (от лучшего к худшему):
+ЦЕЛЕВАЯ ДЛИНА: 50–180 секунд (~120–420 слов при ~140 слов/мин)
 
-1. ИДЕАЛ: 30-60 секунд (70-140 слов)
-   → Лучшее вовлечение, максимальный охват, идеально для формата shorts
+ИЕРАРХИЯ ДЛИНЫ (от лучшего к допустимому):
+
+1. ИДЕАЛ: 50–90 секунд (120–210 слов)
+   → Лучшее вовлечение для Shorts/Reels
    → Стремись к этому по возможности
 
-2. ДОПУСТИМО: 60-90 секунд (140-210 слов)
-   → Всё ещё работает, но меньше вирусный потенциал
-   → Только если мысль действительно требует такой длины
+2. ХОРОШО: 90–130 секунд (210–300 слов)
+   → Работает отлично, если контент захватывающий и есть законченная арка
+   → Предпочтительно для развёрнутых аргументов и историй
 
-3. ТЕРПИМО: 90-120 секунд (210-280 слов)
-   → Будет штрафоваться при финальной оценке
-   → Используй ТОЛЬКО для исключительного контента, который нельзя разделить
+3. ДОПУСТИМО: 130–180 секунд (300–420 слов)
+   → Только для исключительного контента с полной аркой (завязка → развитие → вывод)
+   → Не штрафуется если контент действительно того стоит
 
-4. НЕДОПУСТИМО: >120 секунд
-   → НЕ создавай сегменты длиннее 120 секунд ни при каких обстоятельствах
+ИСКЛЮЧЕНИЯ:
+- Короче 50 сек: ДОПУСТИМО если мысль полностью самодостаточна (яркая цитата, факт, шутка)
+- Длиннее 180 сек: ДОПУСТИМО (до ~200 сек) ТОЛЬКО если это единая неделимая история с потрясающим контентом
 
-ИСКЛЮЧЕНИЯ ДЛЯ ПОЛНЫХ АРГУМЕНТОВ:
-Полные аргументы (тезис + доказательства + вывод) могут быть до 120 секунд, НО:
-- 60-90 секунд: идеально для большинства аргументов
-- 90-120 секунд: допустимо ТОЛЬКО если доказательства детальны и необходимы
-- Аргумент ДОЛЖЕН быть действительно полным (вопрос → ответ → доказательство → вывод)
-
-ПРАВИЛО ПРЕДПОЧТЕНИЯ:
-Если можешь разделить 90-секундный сегмент на 45+45 без нарушения логики — ВСЕГДА ДЕЛАЙ ЭТО.
-Короткие законченные мысли лучше длинных.
+ГЛАВНОЕ ПРАВИЛО:
+Законченная мысль важнее длины. Лучше сегмент 150 секунд с полной аркой,
+чем два сегмента по 75 секунд, каждый из которых неполон.
 
 ============================================================================
 ЧАСТЬ 2: ГДЕ ДЕЛИТЬ
@@ -1437,15 +1434,26 @@ class HighlightAnalyzer:
             # Add chunk boundaries
             all_boundaries = [chunk_start] + sorted(boundary_times) + [chunk_end]
             
+            # Pre-filter: remove boundaries that create segments shorter than MIN_SEGMENT_DURATION
+            # Instead of dropping short segments, merge them with the next segment
+            filtered_boundaries = [all_boundaries[0]]
+            for b in all_boundaries[1:]:
+                if b - filtered_boundaries[-1] >= MIN_SEGMENT_DURATION:
+                    filtered_boundaries.append(b)
+            # Ensure last boundary is always chunk_end
+            if filtered_boundaries[-1] != chunk_end:
+                if len(filtered_boundaries) > 1 and chunk_end - filtered_boundaries[-1] < MIN_SEGMENT_DURATION:
+                    # Last gap too short — extend the previous segment to chunk_end
+                    filtered_boundaries[-1] = chunk_end
+                else:
+                    filtered_boundaries.append(chunk_end)
+            
+            all_boundaries = filtered_boundaries
+            
             # Create segments between boundaries
             for i in range(len(all_boundaries) - 1):
                 seg_start = all_boundaries[i]
                 seg_end = all_boundaries[i + 1]
-                seg_duration = seg_end - seg_start
-                
-                # Skip if too short
-                if seg_duration < MIN_SEGMENT_DURATION:
-                    continue
                 
                 # Find whisper segments in this range
                 seg_whisper = [
@@ -1471,7 +1479,7 @@ class HighlightAnalyzer:
                                 sc = build_chunk(sub_current)
                                 if sc["text"]:
                                     merged.append(sc)
-                else:
+                        else:
                             merged.append(sub_chunk)
 
         # Fallback: if merging collapsed everything into a single tiny chunk, reuse original window logic
@@ -1602,10 +1610,10 @@ class HighlightAnalyzer:
 
 Оцени этот фрагмент как потенциальный YouTube Short / Instagram Reel.
 
-ЦЕЛЕВАЯ ДЛИНА: 50-130 секунд (ИДЕАЛ: 60-90 секунд)
-КОЛИЧЕСТВО СЛОВ: ~120-300 слов (140 слов ≈ 60 секунд)
+ЦЕЛЕВАЯ ДЛИНА: 50–180 секунд (ИДЕАЛ: 60–90 секунд)
+КОЛИЧЕСТВО СЛОВ: ~120–420 слов (140 слов ≈ 60 секунд)
 
-Примечание: Длинные сегменты (90-130 сек) допустимы если контент захватывающий и содержит законченную арку.
+Примечание: Длинные сегменты (90–180 сек) допустимы если контент захватывающий и содержит законченную арку. Короткие (30–50 сек) тоже ОК если мысль самодостаточна.
 
 Оценивай для зрителей, которые ищут:
 
@@ -1644,7 +1652,7 @@ class HighlightAnalyzer:
 - Законченная арка: завязка → инсайт → вывод
 - Эмоциональный резонанс: удивление, вдохновение, подтверждение, любопытство
 
-Предполагай естественную речь (~140 слов в минуту). Фокусируйся на фрагментах примерно 120–300 слов (≈50–130 секунд, идеально 60-90с). НЕ занижай оценку только из-за длины — если контент захватывающий и законченный, длинный сегмент лучше обрезанного.
+Предполагай естественную речь (~140 слов в минуту). Фокусируйся на фрагментах примерно 120–420 слов (≈50–180 секунд, идеально 60–90с). НЕ занижай оценку только из-за длины — если контент захватывающий и законченный, длинный сегмент (до 180с) лучше обрезанного. Короткие самодостаточные фрагменты (30–50с) тоже допустимы.
 
 КОНТЕКСТ:
 Предыдущая тема: {segment.get('prev_topic', 'Неизвестно')}
@@ -1748,17 +1756,18 @@ class HighlightAnalyzer:
 - "merged_completeness_score": Ожидаемая оценка completeness_arc (0.0-1.0) после объединения
 
 ОГРАНИЧЕНИЯ ОБЪЕДИНЕНИЯ:
-- ИДЕАЛЬНАЯ длительность объединённого: 60-130 секунд
-- ДОПУСТИМО: 130-180 секунд (для исключительного контента с законченной аркой)
-- МАКСИМУМ: 180 секунд (длиннее НЕ объединять, используй trim вместо этого)
-- Если объединённый превысит 180 секунд, установи merge_benefit в "none"
+- ИДЕАЛЬНАЯ длительность объединённого: 60–130 секунд
+- ХОРОШО: 130–180 секунд (для контента с законченной аркой)
+- ДОПУСТИМО: 180–200 секунд (ТОЛЬКО для исключительного неделимого контента)
+- МАКСИМУМ: 200 секунд (длиннее НЕ объединять, используй trim вместо этого)
+- Если объединённый превысит 200 секунд, установи merge_benefit в "none"
 
 ОПРЕДЕЛЕНИЕ СПИСКА vs АРГУМЕНТА:
 - Если сегмент — просто СПИСОК идей без развития (типа «вот 10 проблем: А, Б, В, Г...»)
   → Значительно снизь ВСЕ оценки (это низкоценный контент для Shorts)
   → Добавь комментарий, что это нужно разделить или пропустить
 - Если сегмент — полный АРГУМЕНТ (тезис → доказательства → вывод)
-  → Сохрани высокие оценки независимо от длины (50-130 секунд — норма)
+  → Сохрани высокие оценки независимо от длины (50–180 секунд — норма)
   → Это ценный контент, стоящий своей длины
 
 КАЛИБРОВОЧНЫЕ ПРИМЕРЫ (с новой системой оценки):
